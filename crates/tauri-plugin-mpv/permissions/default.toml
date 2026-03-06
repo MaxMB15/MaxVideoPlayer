@@ -1,0 +1,11 @@
+[default]
+description = "Allows all MPV player commands"
+permissions = [
+    "allow-mpv-load",
+    "allow-mpv-play",
+    "allow-mpv-pause",
+    "allow-mpv-stop",
+    "allow-mpv-seek",
+    "allow-mpv-set-volume",
+    "allow-mpv-get-state",
+]

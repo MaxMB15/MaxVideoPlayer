@@ -1,0 +1,73 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { PlayerState, Channel, Provider } from "./types";
+
+// --- MPV Player Commands ---
+
+export async function mpvLoad(url: string): Promise<void> {
+  return invoke("plugin:mpv|mpv_load", { url });
+}
+
+export async function mpvPlay(): Promise<void> {
+  return invoke("plugin:mpv|mpv_play");
+}
+
+export async function mpvPause(): Promise<void> {
+  return invoke("plugin:mpv|mpv_pause");
+}
+
+export async function mpvStop(): Promise<void> {
+  return invoke("plugin:mpv|mpv_stop");
+}
+
+export async function mpvSeek(position: number): Promise<void> {
+  return invoke("plugin:mpv|mpv_seek", { position });
+}
+
+export async function mpvSetVolume(volume: number): Promise<void> {
+  return invoke("plugin:mpv|mpv_set_volume", { volume });
+}
+
+export async function mpvGetState(): Promise<PlayerState> {
+  return invoke("plugin:mpv|mpv_get_state");
+}
+
+// --- Core IPTV Commands ---
+
+export async function loadM3uPlaylist(
+  name: string,
+  url: string
+): Promise<Channel[]> {
+  return invoke("load_m3u_playlist", { name, url });
+}
+
+export async function loadM3uFile(
+  name: string,
+  path: string
+): Promise<Channel[]> {
+  return invoke("load_m3u_file", { name, path });
+}
+
+export async function loadXtreamProvider(
+  name: string,
+  url: string,
+  username: string,
+  password: string
+): Promise<Channel[]> {
+  return invoke("load_xtream_provider", { name, url, username, password });
+}
+
+export async function getProviders(): Promise<Provider[]> {
+  return invoke("get_providers");
+}
+
+export async function removeProvider(id: string): Promise<void> {
+  return invoke("remove_provider", { id });
+}
+
+export async function getAllChannels(): Promise<Channel[]> {
+  return invoke("get_all_channels");
+}
+
+export async function toggleFavorite(channelId: string): Promise<boolean> {
+  return invoke("toggle_favorite", { channelId });
+}

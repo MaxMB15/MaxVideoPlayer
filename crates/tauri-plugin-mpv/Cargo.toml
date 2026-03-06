@@ -1,0 +1,30 @@
+[package]
+name = "tauri-plugin-mpv"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri v2 plugin for MPV video playback"
+links = "tauri-plugin-mpv"
+
+[lints.rust]
+# objc crate's msg_send! uses cfg(feature = "cargo-clippy") - expect it to avoid warnings
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tauri = { version = "2", features = [] }
+libmpv2 = { version = "5", features = ["render"] }
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+core-graphics = "0.24"
+objc2 = "0.5"
+dispatch = "0.2"
+libc = "0.2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

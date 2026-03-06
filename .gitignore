@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+target/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Tauri
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Bundled resources
+apps/desktop/resources/
+
+# Pre-built libraries (workspace: desktop uses macos/linux/windows, ios uses ios/, android uses android/)
+libs/macos/*.dylib
+libs/macos-bundle/
+libs/linux/*.so
+libs/windows/*.dll
+libs/ios/*.a
+libs/android/**/*.so

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-mpv-stop"
+description = "Enables the mpv_stop command without any pre-configured scope."
+commands.allow = ["mpv_stop"]
+
+[[permission]]
+identifier = "deny-mpv-stop"
+description = "Denies the mpv_stop command without any pre-configured scope."
+commands.deny = ["mpv_stop"]
