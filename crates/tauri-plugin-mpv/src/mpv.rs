@@ -1,79 +1,140 @@
-//! MPV plugin state - wraps MpvEngine and exposes a thread-safe API.
+//! Thread-safe MPV plugin state.
+//! Owns MpvEngine + the platform renderer, coordinates load/fallback.
 
-pub use super::engine::{MpvEngine, PlayerState};
-use std::sync::Mutex;
+pub use crate::engine::PlayerState;
+use crate::engine::MpvEngine;
+use crate::renderer::PlatformRenderer;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 
 #[cfg(target_os = "macos")]
-use {crate::desktop::MacosSurface, dispatch::Queue};
+use crate::macos::{embedded_options, fallback_options, MacosGlRenderer};
 
-/// Managed state for the MPV plugin.
-/// Holds the embedded LibMPV engine and optional video surface (macOS).
 pub struct MpvState {
     inner: Mutex<MpvEngine>,
-    #[cfg(target_os = "macos")]
-    surface: Mutex<Option<MacosSurface>>,
+    renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
+    fallback_active: AtomicBool,
 }
 
 impl MpvState {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(MpvEngine::new()),
-            #[cfg(target_os = "macos")]
-            surface: Mutex::new(None),
+            renderer: Mutex::new(None),
+            fallback_active: AtomicBool::new(false),
         }
     }
 
     pub fn load<R: tauri::Runtime>(
         &self,
         url: &str,
-        app: Option<&tauri::AppHandle<R>>,
+        app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
-        self.load_with_path(url, None, app)
-    }
+        // Teardown any existing renderer + engine before starting fresh.
+        {
+            let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
+            *renderer = None;
+        }
+        self.inner.lock().map_err(|e| e.to_string())?.stop();
+        self.fallback_active.store(false, Ordering::Release);
 
-    #[cfg(not(target_os = "macos"))]
-    pub fn load_with_path<R: tauri::Runtime>(
-        &self,
-        url: &str,
-        mpv_path: Option<std::path::PathBuf>,
-        _app: Option<&tauri::AppHandle<R>>,
-    ) -> Result<(), String> {
-        // Windows/Linux: vo=libmpv requires render context (macOS only for now).
-        // Use vo=gpu which opens a separate window until embedded support is added.
-        self.inner
-            .lock()
-            .map_err(|e| e.to_string())?
-            .load_with_path(url, mpv_path)
+        self.load_impl(url, app)
     }
 
     #[cfg(target_os = "macos")]
-    pub fn load_with_path<R: tauri::Runtime>(
+    fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
-        _mpv_path: Option<std::path::PathBuf>,
-        app: Option<&tauri::AppHandle<R>>,
+        app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
-        if let Some(app) = app {
-            let mut surf = self.surface.lock().map_err(|e| e.to_string())?;
-            if surf.is_none() {
-                // NSOpenGLContext/NSOpenGLView MUST be created on the main thread.
-                // mpv_load runs on tokio worker, so we dispatch synchronously to main.
-                let app = app.clone();
-                let surface = Queue::main().exec_sync(|| MacosSurface::create(&app, "main"))?;
-                *surf = Some(surface);
-                tracing::info!("[MPV] created video surface");
+        // Create the NSOpenGLView renderer (main-thread work happens inside new()).
+        let mut gl_renderer = match MacosGlRenderer::new(app) {
+            Ok(r) => r,
+            Err(e) => return self.launch_fallback(url, app, &e),
+        };
+
+        // Create mpv with embedded options and attach the renderer.
+        let attach_result = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            match engine.create(&embedded_options()) {
+                Ok(mpv) => gl_renderer.attach(mpv),
+                Err(e) => Err(e),
             }
-            drop(surf);
+        };
+
+        if let Err(e) = attach_result {
+            self.inner.lock().map_err(|e| e.to_string())?.stop();
+            return self.launch_fallback(url, app, &e);
         }
-        let guard = self.surface.lock().map_err(|e| e.to_string())?;
-        let surf = guard
-            .as_ref()
-            .ok_or_else(|| "No video surface".to_string())?;
-        self.inner
-            .lock()
-            .map_err(|e| e.to_string())?
-            .load_with_surface(url, surf)?;
+
+        {
+            let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
+            *renderer = Some(Box::new(gl_renderer));
+        }
+
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
         Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn load_impl<R: tauri::Runtime>(
+        &self,
+        url: &str,
+        _app: &tauri::AppHandle<R>,
+    ) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.create(&[])?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
+        Ok(())
+    }
+
+    fn launch_fallback<R: tauri::Runtime>(
+        &self,
+        url: &str,
+        app: &tauri::AppHandle<R>,
+        reason: &str,
+    ) -> Result<(), String> {
+        use tauri::Emitter;
+        tracing::warn!(
+            "[MPV] embedded renderer failed ({}), launching fallback window",
+            reason
+        );
+        self.fallback_active.store(true, Ordering::Release);
+        let _ = app.emit("mpv://render-fallback", serde_json::json!({ "reason": reason }));
+
+        self.launch_fallback_impl(url)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.create(&fallback_options())?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.create(&[])?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
+        Ok(())
+    }
+
+    /// Forward a window resize to the active renderer (e.g. from Tauri WindowEvent::Resized).
+    pub fn resize(&self, width: u32, height: u32) {
+        if let Ok(mut renderer) = self.renderer.lock() {
+            if let Some(ref mut r) = *renderer {
+                r.resize(width, height);
+            }
+        }
     }
 
     pub fn play(&self) -> Result<(), String> {
@@ -85,6 +146,10 @@ impl MpvState {
     }
 
     pub fn stop(&self) {
+        {
+            let mut renderer = self.renderer.lock().unwrap();
+            *renderer = None;
+        }
         self.inner.lock().unwrap().stop();
     }
 
@@ -98,20 +163,5 @@ impl MpvState {
 
     pub fn get_state(&self) -> PlayerState {
         self.inner.lock().unwrap().get_state()
-    }
-
-    /// Access the engine for render setup (macOS). Use with care - holds the lock.
-    pub fn engine(&self) -> std::sync::MutexGuard<'_, MpvEngine> {
-        self.inner.lock().unwrap()
-    }
-
-    /// Update the macOS video surface frame (e.g. on window resize). No-op if no surface.
-    #[cfg(target_os = "macos")]
-    pub fn update_surface_frame(&self) {
-        if let Ok(guard) = self.surface.lock() {
-            if let Some(ref surf) = *guard {
-                surf.update_frame();
-            }
-        }
     }
 }

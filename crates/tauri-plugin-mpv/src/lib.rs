@@ -10,7 +10,7 @@ pub mod mpv;
 mod renderer;
 
 #[cfg(target_os = "macos")]
-mod desktop;
+mod macos;
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "android")]

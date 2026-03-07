@@ -8,7 +8,7 @@ pub async fn mpv_load<R: Runtime>(
     url: String,
 ) -> Result<(), String> {
     tracing::info!("[MPV cmd] load url={}", url);
-    state.load_with_path(&url, None, Some(&app))?;
+    state.load(&url, &app)?;
     tracing::debug!("[MPV cmd] load complete, state={:?}", state.get_state());
     Ok(())
 }

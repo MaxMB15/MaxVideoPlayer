@@ -54,9 +54,9 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("main") {
                     let handle = app.handle().clone();
                     window.on_window_event(move |event| {
-                        if let tauri::WindowEvent::Resized(_) = event {
+                        if let tauri::WindowEvent::Resized(size) = event {
                             if let Some(state) = handle.try_state::<tauri_plugin_mpv::MpvState>() {
-                                state.update_surface_frame();
+                                state.resize(size.width, size.height);
                             }
                         }
                     });
