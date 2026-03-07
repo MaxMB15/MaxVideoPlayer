@@ -151,6 +151,22 @@ impl MacosGlRenderer {
             return Err("NSOpenGLView returned nil openGLContext".to_string());
         }
 
+        // Disable WKWebView background drawing so the NSOpenGLView below shows through.
+        // WKWebView.drawsBackground defaults to YES; setting it NO makes it transparent
+        // at the native layer. The HTML/CSS must also have a transparent background
+        // (done via JS on the player route) for the video to be visible.
+        // Use respondsToSelector: so this is a no-op on any non-WKWebView subview.
+        let existing: *mut objc::runtime::Object = msg_send![content_view, subviews];
+        let count: usize = msg_send![existing, count];
+        let sel_draws_bg = objc::sel!(setDrawsBackground:);
+        for i in 0..count {
+            let sv: *mut objc::runtime::Object = msg_send![existing, objectAtIndex: i];
+            if msg_send![sv, respondsToSelector: sel_draws_bg] {
+                let _: () = msg_send![sv, setDrawsBackground: false as i8];
+                tracing::debug!("[macOS renderer] disabled WKWebView background drawing");
+            }
+        }
+
         // Position our view BELOW the WKWebView (NSWindowBelow = -1).
         let _: () = msg_send![
             content_view,

@@ -20,6 +20,15 @@ export function PlayerView() {
     channelName?: string;
   } | null;
 
+  // Make body transparent while on the player route so the NSOpenGLView below
+  // the WKWebView is visible. Restored on unmount (when leaving the player).
+  useEffect(() => {
+    document.body.style.backgroundColor = "transparent";
+    return () => {
+      document.body.style.backgroundColor = "";
+    };
+  }, []);
+
   useEffect(() => {
     if (navState?.url) {
       mpv.load(navState.url).catch(() => {});
