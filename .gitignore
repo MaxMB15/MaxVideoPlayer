@@ -38,3 +38,5 @@ libs/linux/*.so
 libs/windows/*.dll
 libs/ios/*.a
 libs/android/**/*.so
+libs/mpv-src/
+libs/macos/

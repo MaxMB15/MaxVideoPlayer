@@ -11,23 +11,55 @@ LIBS_DIR="$(cd "$(dirname "$0")/.." && pwd)/libs"
 
 case "$PLATFORM" in
   macos)
-    echo "==> Building/fetching libmpv for macOS..."
+    echo "==> Building libmpv from source for macOS..."
     mkdir -p "$LIBS_DIR/macos"
 
-    if command -v brew &>/dev/null; then
-      MPV_PREFIX="$(brew --prefix mpv 2>/dev/null || true)"
-      if [ -n "$MPV_PREFIX" ] && [ -d "$MPV_PREFIX/lib" ]; then
-        echo "    Using Homebrew mpv at $MPV_PREFIX"
-        cp "$MPV_PREFIX/lib/libmpv.dylib" "$LIBS_DIR/macos/" 2>/dev/null || \
-        cp "$MPV_PREFIX/lib/libmpv.2.dylib" "$LIBS_DIR/macos/libmpv.dylib" 2>/dev/null || \
-        echo "    Warning: could not copy dylib"
-        echo "    Done."
-        exit 0
+    # Check build tools
+    for tool in meson ninja pkg-config; do
+      if ! command -v "$tool" &>/dev/null; then
+        echo "Error: $tool not found. Run: brew install meson ninja pkg-config"
+        exit 1
       fi
+    done
+
+    if ! pkg-config --exists libavcodec; then
+      echo "Error: ffmpeg not found. Run: brew install ffmpeg"
+      exit 1
     fi
 
-    echo "    No libmpv found. Run: brew install mpv"
-    exit 1
+    # Clone mpv source (shallow, latest)
+    MPV_SRC="$LIBS_DIR/mpv-src"
+    if [[ ! -d "$MPV_SRC/.git" ]]; then
+      echo "    Cloning mpv source..."
+      git clone https://github.com/mpv-player/mpv.git --depth=1 "$MPV_SRC"
+    else
+      echo "    mpv source already present, skipping clone."
+    fi
+
+    # Build
+    BUILD_DIR="$MPV_SRC/build-macos"
+    echo "    Running meson setup..."
+    meson setup "$BUILD_DIR" "$MPV_SRC" \
+      --buildtype=release \
+      --wipe \
+      -Dlibmpv=true \
+      -Dgl=enabled \
+      -Dvulkan=enabled \
+      -Dcocoa=enabled
+
+    echo "    Building libmpv dylib only (this takes a few minutes)..."
+    ninja -C "$BUILD_DIR" libmpv.2.dylib
+
+    # Copy dylib to libs/macos/
+    DYLIB=$(find "$BUILD_DIR" -name "libmpv*.dylib" | head -1)
+    if [[ -z "$DYLIB" ]]; then
+      echo "Error: libmpv.dylib not found after build"
+      exit 1
+    fi
+    rm -f "$LIBS_DIR/macos/libmpv.dylib"
+    cp "$DYLIB" "$LIBS_DIR/macos/libmpv.dylib"
+    echo "    Built libmpv -> $LIBS_DIR/macos/libmpv.dylib"
+    echo "    Done."
     ;;
 
   ios)
