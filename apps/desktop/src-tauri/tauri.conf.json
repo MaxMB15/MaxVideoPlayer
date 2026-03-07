@@ -17,12 +17,12 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "MaxVideoPlayer",
         "width": 1280,
         "height": 720,
         "resizable": true,
         "fullscreen": false,
-        "transparent": true,
         "decorations": true
       }
     ],
