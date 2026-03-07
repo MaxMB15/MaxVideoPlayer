@@ -7,6 +7,7 @@ extern crate objc;
 mod commands;
 mod engine;
 pub mod mpv;
+mod renderer;
 
 #[cfg(target_os = "macos")]
 mod desktop;
