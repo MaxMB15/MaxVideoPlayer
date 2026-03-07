@@ -41,26 +41,23 @@ const NS_OPENGL_PROFILE_VERSION_3_2_CORE: u32 = 0x3200;
 // CGLGetProcAddress — resolves OpenGL function pointers for libmpv
 // ---------------------------------------------------------------------------
 
-fn cgl_get_proc_address(name: *const c_char) -> *mut c_void {
-    type CGLGetProcAddressFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    static mut FUNC: Option<CGLGetProcAddressFn> = None;
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let lib =
+/// Resolve an OpenGL function pointer on macOS.
+///
+/// `CGLGetProcAddress` only resolves CGL *extension* functions — it returns NULL
+/// for every core OpenGL function (glClear, glViewport, etc.).
+/// The correct approach on macOS is `dlsym` on the OpenGL framework, which
+/// resolves both core functions and extensions.
+fn gl_get_proc_address(name: *const c_char) -> *mut c_void {
+    static HANDLE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let lib = *HANDLE.get_or_init(|| {
+        let path =
             CString::new("/System/Library/Frameworks/OpenGL.framework/OpenGL").unwrap();
-        let handle = unsafe { libc::dlopen(lib.as_ptr(), libc::RTLD_LAZY) };
-        if !handle.is_null() {
-            let sym = CString::new("CGLGetProcAddress").unwrap();
-            let addr = unsafe { libc::dlsym(handle, sym.as_ptr()) };
-            if !addr.is_null() {
-                unsafe { FUNC = Some(std::mem::transmute(addr)) };
-            }
-        }
+        unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) as usize }
     });
-    match unsafe { FUNC } {
-        Some(f) => unsafe { f(name) },
-        None => std::ptr::null_mut(),
+    if lib == 0 {
+        return std::ptr::null_mut();
     }
+    unsafe { libc::dlsym(lib as *mut c_void, name) }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +202,7 @@ impl PlatformRenderer for MacosGlRenderer {
 
                 fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
                     match CString::new(name) {
-                        Ok(c) => cgl_get_proc_address(c.as_ptr()),
+                        Ok(c) => gl_get_proc_address(c.as_ptr()),
                         Err(_) => std::ptr::null_mut(),
                     }
                 }
