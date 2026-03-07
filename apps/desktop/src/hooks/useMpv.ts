@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { PlayerState } from "@/lib/types";
 import {
   mpvLoad,
@@ -22,10 +23,26 @@ const DEFAULT_STATE: PlayerState = {
 export function useMpv() {
   const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
   const [error, setError] = useState<string | null>(null);
+  const [fallbackActive, setFallbackActive] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const loadingRef = useRef(false);
+
+  // Listen for fallback event emitted when embedded renderer fails.
+  useEffect(() => {
+    const unlistenPromise = listen<{ reason: string }>("mpv://render-fallback", (event) => {
+      console.warn("[useMpv] render fallback:", event.payload.reason);
+      setFallbackActive(true);
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn());
+    };
+  }, []);
 
   const load = useCallback(async (url: string) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setError(null);
+    setFallbackActive(false);
     try {
       await mpvLoad(url);
       setState((s) => ({ ...s, currentUrl: url, isPlaying: true, isPaused: false }));
@@ -33,6 +50,8 @@ export function useMpv() {
       const msg = String(e);
       setError(msg);
       throw e;
+    } finally {
+      loadingRef.current = false;
     }
   }, []);
 
@@ -113,5 +132,5 @@ export function useMpv() {
     };
   }, [refresh]);
 
-  return { state, error, load, play, pause, stop, seek, setVolume, refresh };
+  return { state, error, fallbackActive, load, play, pause, stop, seek, setVolume, refresh };
 }

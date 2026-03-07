@@ -94,14 +94,21 @@ export function PlayerView() {
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
+      {/* Fallback banner: shown when embedded renderer failed and video is in a separate window */}
+      {mpv.fallbackActive && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-yellow-500/40 bg-yellow-950/80 px-4 py-2 text-yellow-200 text-sm shadow-lg backdrop-blur-sm max-w-xl">
+          <span>⚠</span>
+          <span>Video is playing in a separate window with native controls (embedded renderer unavailable).</span>
+        </div>
+      )}
+
       {/* Embedded MPV renders below; transparent so native video shows through */}
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent">
         {mpv.error && (
           <div className="text-center p-6 max-w-md">
             <p className="text-destructive text-sm mb-2">{mpv.error}</p>
             <p className="text-muted-foreground text-xs">
-              Ensure libmpv is installed (brew install mpv on macOS). Run
-              ./scripts/build-libmpv.sh macos before dev/build.
+              Run ./scripts/build-libmpv.sh macos before dev/build.
             </p>
           </div>
         )}
@@ -113,11 +120,6 @@ export function PlayerView() {
               Select a channel to start watching
             </p>
           )}
-        {!mpv.error && mpv.state.currentUrl && (
-          <p className="text-muted-foreground text-sm opacity-60">
-            Video embedded in player
-          </p>
-        )}
       </div>
 
       {activeChannelName && showControls && (
@@ -126,22 +128,24 @@ export function PlayerView() {
         </div>
       )}
 
-      <Controls
-        state={{
-          isPlaying: mpv.state.isPlaying,
-          isPaused: mpv.state.isPaused,
-          currentUrl: mpv.state.currentUrl,
-          volume: mpv.state.volume,
-          position: mpv.state.position,
-          duration: mpv.state.duration,
-        }}
-        visible={showControls}
-        onPlay={mpv.play}
-        onPause={mpv.pause}
-        onStop={handleStop}
-        onSeek={mpv.seek}
-        onVolumeChange={mpv.setVolume}
-      />
+      {!mpv.fallbackActive && (
+        <Controls
+          state={{
+            isPlaying: mpv.state.isPlaying,
+            isPaused: mpv.state.isPaused,
+            currentUrl: mpv.state.currentUrl,
+            volume: mpv.state.volume,
+            position: mpv.state.position,
+            duration: mpv.state.duration,
+          }}
+          visible={showControls}
+          onPlay={mpv.play}
+          onPause={mpv.pause}
+          onStop={handleStop}
+          onSeek={mpv.seek}
+          onVolumeChange={mpv.setVolume}
+        />
+      )}
 
       {showChannelOsd && (
         <ChannelOverlay
