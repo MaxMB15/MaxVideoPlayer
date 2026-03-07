@@ -33,7 +33,15 @@ fn link_libmpv() {
         if libs_macos.join("libmpv.dylib").exists()
             || libs_macos.join("libmpv.2.dylib").exists()
         {
-            println!("cargo:rustc-link-search=native={}", libs_macos.display());
+            // Canonicalize to get the absolute path for the rpath entry.
+            if let Ok(abs) = libs_macos.canonicalize() {
+                println!("cargo:rustc-link-search=native={}", abs.display());
+                // Bake an rpath into the binary so it finds libmpv.2.dylib at runtime
+                // without requiring DYLD_LIBRARY_PATH.
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", abs.display());
+            } else {
+                println!("cargo:rustc-link-search=native={}", libs_macos.display());
+            }
             return;
         }
         // Fallback: Homebrew path (for development)

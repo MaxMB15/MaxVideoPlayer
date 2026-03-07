@@ -56,8 +56,10 @@ case "$PLATFORM" in
       echo "Error: libmpv.dylib not found after build"
       exit 1
     fi
-    rm -f "$LIBS_DIR/macos/libmpv.dylib"
+    rm -f "$LIBS_DIR/macos/libmpv.dylib" "$LIBS_DIR/macos/libmpv.2.dylib"
     cp "$DYLIB" "$LIBS_DIR/macos/libmpv.dylib"
+    # Symlink for the versioned install name (@rpath/libmpv.2.dylib)
+    ln -sf libmpv.dylib "$LIBS_DIR/macos/libmpv.2.dylib"
     echo "    Built libmpv -> $LIBS_DIR/macos/libmpv.dylib"
     echo "    Done."
     ;;
