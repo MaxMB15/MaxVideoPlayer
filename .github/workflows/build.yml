@@ -44,7 +44,7 @@ jobs:
         run: npm run build:desktop
 
       - name: Build Tauri app (macOS)
-        run: bash -c 'cd apps/desktop && cargo tauri build'
+        run: bash -c 'cd apps/desktop && npx tauri build'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
@@ -97,7 +97,7 @@ jobs:
         run: npm run build:desktop
 
       - name: Build Tauri Android (arm64)
-        run: bash -c 'cd apps/desktop && cargo tauri android build --target aarch64'
+        run: bash -c 'cd apps/desktop && npx tauri android build --target aarch64'
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
 
@@ -136,7 +136,7 @@ jobs:
         run: npm run build:desktop
 
       - name: Build Tauri iOS
-        run: bash -c 'cd apps/desktop && cargo tauri ios build'
+        run: bash -c 'cd apps/desktop && npx tauri ios build'
         env:
           APPLE_DEVELOPMENT_TEAM: ""
 
