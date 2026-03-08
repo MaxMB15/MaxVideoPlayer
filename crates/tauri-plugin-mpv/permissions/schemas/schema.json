@@ -355,6 +355,30 @@
           "markdownDescription": "Denies the mpv_seek command without any pre-configured scope."
         },
         {
+          "description": "Enables the mpv_set_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mpv-set-bounds",
+          "markdownDescription": "Enables the mpv_set_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mpv_set_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mpv-set-bounds",
+          "markdownDescription": "Denies the mpv_set_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mpv_set_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mpv-set-visible",
+          "markdownDescription": "Enables the mpv_set_visible command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mpv_set_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mpv-set-visible",
+          "markdownDescription": "Denies the mpv_set_visible command without any pre-configured scope."
+        },
+        {
           "description": "Enables the mpv_set_volume command without any pre-configured scope.",
           "type": "string",
           "const": "allow-mpv-set-volume",
@@ -379,10 +403,10 @@
           "markdownDescription": "Denies the mpv_stop command without any pre-configured scope."
         },
         {
-          "description": "Allows all MPV player commands\n#### This default permission set includes:\n\n- `allow-mpv-load`\n- `allow-mpv-play`\n- `allow-mpv-pause`\n- `allow-mpv-stop`\n- `allow-mpv-seek`\n- `allow-mpv-set-volume`\n- `allow-mpv-get-state`",
+          "description": "Allows all MPV player commands\n#### This default permission set includes:\n\n- `allow-mpv-load`\n- `allow-mpv-play`\n- `allow-mpv-pause`\n- `allow-mpv-stop`\n- `allow-mpv-seek`\n- `allow-mpv-set-volume`\n- `allow-mpv-set-bounds`\n- `allow-mpv-set-visible`\n- `allow-mpv-get-state`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MPV player commands\n#### This default permission set includes:\n\n- `allow-mpv-load`\n- `allow-mpv-play`\n- `allow-mpv-pause`\n- `allow-mpv-stop`\n- `allow-mpv-seek`\n- `allow-mpv-set-volume`\n- `allow-mpv-get-state`"
+          "markdownDescription": "Allows all MPV player commands\n#### This default permission set includes:\n\n- `allow-mpv-load`\n- `allow-mpv-play`\n- `allow-mpv-pause`\n- `allow-mpv-stop`\n- `allow-mpv-seek`\n- `allow-mpv-set-volume`\n- `allow-mpv-set-bounds`\n- `allow-mpv-set-visible`\n- `allow-mpv-get-state`"
         }
       ]
     }

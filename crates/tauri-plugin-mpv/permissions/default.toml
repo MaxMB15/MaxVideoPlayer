@@ -7,5 +7,7 @@ permissions = [
     "allow-mpv-stop",
     "allow-mpv-seek",
     "allow-mpv-set-volume",
+    "allow-mpv-set-bounds",
+    "allow-mpv-set-visible",
     "allow-mpv-get-state",
 ]

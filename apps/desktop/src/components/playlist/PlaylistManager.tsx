@@ -33,7 +33,7 @@ export function PlaylistManager() {
   };
 
   return (
-    <div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto">
+    <div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto h-full overflow-y-auto">
       <h1 className="text-2xl font-bold">Playlists</h1>
 
       <AddProvider

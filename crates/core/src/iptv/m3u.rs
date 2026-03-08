@@ -36,12 +36,54 @@ pub fn parse_m3u(content: &str) -> Result<Vec<Channel>, M3uError> {
     Ok(channels)
 }
 
-/// Stream-parse an M3U file from disk. Reads line-by-line with a buffered
-/// reader so even multi-GB files use only a few MB of memory.
+/// Parse an M3U file from disk using a memory-mapped view of the file.
+/// The OS maps the file into virtual memory without copying it — no per-line
+/// allocations, and parallel block detection runs across all CPU cores.
 pub fn parse_m3u_file(path: &Path) -> Result<Vec<Channel>, M3uError> {
     let file = std::fs::File::open(path)?;
-    let reader = BufReader::with_capacity(256 * 1024, file);
-    parse_m3u_reader(reader)
+    // SAFETY: the file is read-only and not modified while the map is live.
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    parse_m3u_bytes(&mmap)
+}
+
+/// Parse M3U from a byte slice (e.g. a memory-mapped file).
+/// Lines are zero-copy &str slices into the input; blocks are found in parallel
+/// via par_windows(2) and parsed in parallel with rayon.
+fn parse_m3u_bytes(bytes: &[u8]) -> Result<Vec<Channel>, M3uError> {
+    let content = std::str::from_utf8(bytes).map_err(|e| M3uError::Parse {
+        line: 0,
+        message: format!("UTF-8 decode error: {e}"),
+    })?;
+    let content = strip_bom(content.trim_start());
+    if !content.starts_with("#EXTM3U") {
+        return Err(M3uError::MissingHeader);
+    }
+
+    // Collect lines as &str slices into the mmap — no heap allocation per line.
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Find (extinf, url) pairs in parallel. par_windows(2) examines every
+    // consecutive pair of lines across all rayon threads simultaneously.
+    let blocks: Vec<(&str, &str)> = lines
+        .par_windows(2)
+        .filter_map(|pair| {
+            let a = pair[0].trim();
+            let b = pair[1].trim();
+            if a.starts_with("#EXTINF:") && !b.is_empty() && !b.starts_with('#') {
+                Some((a, b))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let channels: Vec<Channel> = blocks
+        .par_iter()
+        .enumerate()
+        .filter_map(|(idx, (extinf, url))| parse_extinf_block(idx, extinf, url))
+        .collect();
+
+    Ok(channels)
 }
 
 /// Stream-parse M3U from any `BufRead` source. Collects EXTINF+URL pairs

@@ -157,6 +157,11 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -171,4 +176,5 @@ jobs:
         run: cargo test -p mvp-core
 
       - name: Run desktop tests
-        run: npm run test:desktop
+        working-directory: apps/desktop
+        run: npm test

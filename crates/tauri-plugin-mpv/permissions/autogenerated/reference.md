@@ -10,6 +10,8 @@ Allows all MPV player commands
 - `allow-mpv-stop`
 - `allow-mpv-seek`
 - `allow-mpv-set-volume`
+- `allow-mpv-set-bounds`
+- `allow-mpv-set-visible`
 - `allow-mpv-get-state`
 
 ## Permission Table
@@ -147,6 +149,58 @@ Enables the mpv_seek command without any pre-configured scope.
 <td>
 
 Denies the mpv_seek command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mpv:allow-mpv-set-bounds`
+
+</td>
+<td>
+
+Enables the mpv_set_bounds command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mpv:deny-mpv-set-bounds`
+
+</td>
+<td>
+
+Denies the mpv_set_bounds command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mpv:allow-mpv-set-visible`
+
+</td>
+<td>
+
+Enables the mpv_set_visible command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mpv:deny-mpv-set-visible`
+
+</td>
+<td>
+
+Denies the mpv_set_visible command without any pre-configured scope.
 
 </td>
 </tr>

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-mpv-set-visible"
+description = "Enables the mpv_set_visible command without any pre-configured scope."
+commands.allow = ["mpv_set_visible"]
+
+[[permission]]
+identifier = "deny-mpv-set-visible"
+description = "Denies the mpv_set_visible command without any pre-configured scope."
+commands.deny = ["mpv_set_visible"]

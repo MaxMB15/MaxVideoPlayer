@@ -66,6 +66,29 @@ pub async fn mpv_set_volume<R: Runtime>(
 }
 
 #[command]
+pub async fn mpv_set_bounds<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, MpvState>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    state.set_bounds(x, y, w, h);
+    Ok(())
+}
+
+#[command]
+pub async fn mpv_set_visible<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, MpvState>,
+    visible: bool,
+) -> Result<(), String> {
+    state.set_visible(visible);
+    Ok(())
+}
+
+#[command]
 pub async fn mpv_get_state<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, MpvState>,

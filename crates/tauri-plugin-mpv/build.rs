@@ -5,6 +5,8 @@ const COMMANDS: &[&str] = &[
     "mpv_stop",
     "mpv_seek",
     "mpv_set_volume",
+    "mpv_set_bounds",
+    "mpv_set_visible",
     "mpv_get_state",
 ];
 

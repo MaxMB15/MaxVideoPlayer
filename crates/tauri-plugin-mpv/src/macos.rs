@@ -68,6 +68,10 @@ struct RenderInner {
     ctx: RenderContext,
     gl_view: *mut c_void,
     gl_context: *mut c_void,
+    /// Called once when the first frame is rendered, then cleared.
+    first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
+    /// Shared with MacosGlRenderer::set_visible; skips GPU calls when false.
+    video_active: Arc<AtomicBool>,
 }
 
 unsafe impl Send for RenderInner {}
@@ -88,6 +92,11 @@ pub struct MacosGlRenderer {
     valid: Arc<AtomicBool>,
     /// Heap-stable render state. Box address is captured in the update callback.
     render_inner: Option<Box<RenderInner>>,
+    /// Called once on first rendered frame; moved into RenderInner during attach().
+    first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
+    /// Controls whether GPU rendering happens. Toggled by set_visible().
+    /// Starts true (video visible when player page is first entered).
+    video_active: Arc<AtomicBool>,
 }
 
 unsafe impl Send for MacosGlRenderer {}
@@ -151,21 +160,32 @@ impl MacosGlRenderer {
             return Err("NSOpenGLView returned nil openGLContext".to_string());
         }
 
-        // Disable WKWebView background drawing so the NSOpenGLView below shows through.
-        // WKWebView.drawsBackground defaults to YES; setting it NO makes it transparent
-        // at the native layer. The HTML/CSS must also have a transparent background
-        // (done via JS on the player route) for the video to be visible.
-        // Use respondsToSelector: so this is a no-op on any non-WKWebView subview.
-        let existing: *mut objc::runtime::Object = msg_send![content_view, subviews];
-        let count: usize = msg_send![existing, count];
-        let sel_draws_bg = objc::sel!(setDrawsBackground:);
-        for i in 0..count {
-            let sv: *mut objc::runtime::Object = msg_send![existing, objectAtIndex: i];
-            if msg_send![sv, respondsToSelector: sel_draws_bg] {
-                let _: () = msg_send![sv, setDrawsBackground: false as i8];
-                tracing::debug!("[macOS renderer] disabled WKWebView background drawing");
+        // --- Diagnostic: log the view hierarchy to find where WKWebView lives ---
+        {
+            let class_ns: *mut objc::runtime::Object = msg_send![content_view, className];
+            let class_ptr: *const c_char = msg_send![class_ns, UTF8String];
+            let cv_name = if class_ptr.is_null() { "?" }
+                else { std::ffi::CStr::from_ptr(class_ptr).to_str().unwrap_or("?") };
+            tracing::debug!("[macOS renderer] content_view class = {cv_name}");
+
+            let subs: *mut objc::runtime::Object = msg_send![content_view, subviews];
+            let n: usize = msg_send![subs, count];
+            tracing::debug!("[macOS renderer] content_view has {n} direct subviews");
+            for i in 0..n {
+                let sv: *mut objc::runtime::Object = msg_send![subs, objectAtIndex: i];
+                let sv_class_ns: *mut objc::runtime::Object = msg_send![sv, className];
+                let sv_ptr: *const c_char = msg_send![sv_class_ns, UTF8String];
+                let sv_name = if sv_ptr.is_null() { "?" }
+                    else { std::ffi::CStr::from_ptr(sv_ptr).to_str().unwrap_or("?") };
+                let sub_subs: *mut objc::runtime::Object = msg_send![sv, subviews];
+                let sub_count: usize = msg_send![sub_subs, count];
+                tracing::debug!("[macOS renderer]   subview[{i}] = {sv_name} ({sub_count} children)");
             }
         }
+
+        // WKWebView transparency is handled by "transparent": true in tauri.conf.json.
+        // wry calls [webView setValue:@NO forKey:@"drawsBackground"] during initialization
+        // when the window is configured as transparent, so no manual call is needed here.
 
         // Position our view BELOW the WKWebView (NSWindowBelow = -1).
         let _: () = msg_send![
@@ -182,7 +202,13 @@ impl MacosGlRenderer {
             content_view: content_view as *mut c_void,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
+            first_frame_cb: None,
+            video_active: Arc::new(AtomicBool::new(true)),
         })
+    }
+    /// Set a callback that fires exactly once when the first video frame is rendered.
+    pub fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
+        self.first_frame_cb = Some(cb);
     }
 }
 
@@ -244,6 +270,8 @@ impl PlatformRenderer for MacosGlRenderer {
             ctx: render_ctx,
             gl_view,
             gl_context,
+            first_frame_cb: self.first_frame_cb.take(),
+            video_active: self.video_active.clone(),
         });
 
         // The raw pointer into the Box contents is stable (heap address never changes).
@@ -266,7 +294,18 @@ impl PlatformRenderer for MacosGlRenderer {
     }
 
     fn resize(&mut self, _width: u32, _height: u32) {
-        // Cast to usize so the closure is Send (raw pointers are not Send).
+        // The frame is owned exclusively by set_frame() (driven by the JS ResizeObserver).
+        // We must NOT call setFrame: here — that races with set_frame() and causes the
+        // x position to toggle between 0 and sidebar_width on every resize event.
+        // Only [ctx update] is needed to inform the GL context the drawable geometry changed.
+        let gl_context_ptr = self.gl_context as usize;
+        Queue::main().exec_async(move || unsafe {
+            let ctx = gl_context_ptr as *mut objc::runtime::Object;
+            let _: () = msg_send![ctx, update];
+        });
+    }
+
+    fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64) {
         let gl_view_ptr = self.gl_view as usize;
         let gl_context_ptr = self.gl_context as usize;
         let content_view_ptr = self.content_view as usize;
@@ -274,10 +313,39 @@ impl PlatformRenderer for MacosGlRenderer {
             let view = gl_view_ptr as *mut objc::runtime::Object;
             let ctx = gl_context_ptr as *mut objc::runtime::Object;
             let parent = content_view_ptr as *mut objc::runtime::Object;
-            let bounds: NSRect = NSView::bounds(parent);
-            let _: () = msg_send![view, setFrame: bounds];
-            // Required after resize to update the GL context's drawable geometry.
+            // CSS / AppKit points share the same logical pixel space.
+            // AppKit's Y origin is bottom-left in non-flipped views; flip Y if needed.
+            let is_flipped: bool = msg_send![parent, isFlipped];
+            let appkit_y = if is_flipped {
+                y
+            } else {
+                let bounds: NSRect = NSView::bounds(parent);
+                bounds.size.height - y - h
+            };
+            use cocoa::foundation::NSPoint;
+            let frame = NSRect::new(
+                NSPoint::new(x, appkit_y),
+                cocoa::foundation::NSSize::new(w, h),
+            );
+            let _: () = msg_send![view, setFrame: frame];
             let _: () = msg_send![ctx, update];
+        });
+    }
+
+    fn set_visible(&mut self, visible: bool) {
+        // Stop GPU rendering immediately (atomic, no dispatch needed).
+        // When false: render_frame early-returns, skipping rc.render() + flushBuffer.
+        // Audio continues unaffected (CoreAudio is independent of the render context).
+        self.video_active.store(visible, Ordering::Release);
+
+        let gl_view_ptr = self.gl_view as usize;
+        if gl_view_ptr == 0 {
+            return;
+        }
+        Queue::main().exec_async(move || unsafe {
+            let view = gl_view_ptr as *mut objc::runtime::Object;
+            let hidden: bool = !visible;
+            let _: () = msg_send![view, setHidden: hidden];
         });
     }
 
@@ -285,20 +353,35 @@ impl PlatformRenderer for MacosGlRenderer {
         // Signal all queued callbacks to bail before we free the render state.
         self.valid.store(false, Ordering::Release);
 
-        // Drop RenderContext first — calls mpv_render_context_free internally.
-        self.render_inner = None;
+        let gl_view_ptr = self.gl_view as usize;
+        let gl_context_ptr = self.gl_context as usize;
 
-        // Remove the GL view from the window hierarchy on the main thread.
-        let gl_view = self.gl_view;
-        if !gl_view.is_null() {
-            let gl_view_ptr = gl_view as usize;
-            // exec_sync ensures removal completes before we return (no dangling).
-            Queue::main().exec_sync(move || unsafe {
+        // Take ownership of render_inner here. The heap-stable inner_ptr captured by
+        // any queued render_frame closures remains valid until this Box is dropped —
+        // which we defer until we're on the main thread with the GL context current.
+        let render_inner = self.render_inner.take();
+
+        // Run cleanup on the main thread:
+        //   1. drain any pending render_frame closures (exec_sync runs after all
+        //      previously-queued exec_async items, valid=false so they early-return)
+        //   2. make GL context current so mpv_render_context_free() can call
+        //      glDeleteFramebuffers / gl_tex_destroy etc. safely
+        //   3. drop RenderContext → mpv_render_context_free()
+        //   4. remove the NSOpenGLView from the window hierarchy
+        Queue::main().exec_sync(move || unsafe {
+            if gl_context_ptr != 0 {
+                let ctx = gl_context_ptr as *mut objc::runtime::Object;
+                cocoa::appkit::NSOpenGLContext::makeCurrentContext(ctx);
+            }
+            // Drop RenderContext (→ mpv_render_context_free) with GL context current.
+            drop(render_inner);
+            if gl_view_ptr != 0 {
                 let view = gl_view_ptr as *mut objc::runtime::Object;
                 let _: () = msg_send![view, removeFromSuperview];
-            });
-            self.gl_view = std::ptr::null_mut();
-        }
+            }
+        });
+
+        self.gl_view = std::ptr::null_mut();
         tracing::info!("[macOS renderer] detached");
     }
 }
@@ -316,10 +399,19 @@ impl Drop for MacosGlRenderer {
 /// Render one frame. Called on the main thread by the update callback.
 /// Safety: caller must verify `valid = true`; `inner_ptr` must be live (owned by MacosGlRenderer).
 unsafe fn render_frame(inner_ptr: usize) {
-    let inner = &*(inner_ptr as *const RenderInner);
+    static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let inner = &mut *(inner_ptr as *mut RenderInner);
+
+    // Skip GPU work when the player page is not active (set_visible(false) clears this flag).
+    // MPV's update callback still fires so internal state stays consistent; we just don't
+    // submit OpenGL commands or flip the back buffer.
+    if !inner.video_active.load(Ordering::Acquire) {
+        return;
+    }
+
     let view = inner.gl_view as *mut objc::runtime::Object;
     let ctx = inner.gl_context as *mut objc::runtime::Object;
-    let rc = &inner.ctx;
+    let rc = &inner.ctx as *const RenderContext; // raw ptr so we can also mutably borrow inner below
 
     cocoa::appkit::NSOpenGLContext::setView_(ctx, view);
     cocoa::appkit::NSOpenGLContext::makeCurrentContext(ctx);
@@ -337,6 +429,7 @@ unsafe fn render_frame(inner_ptr: usize) {
         return;
     }
 
+    let rc: &RenderContext = &*rc;
     match rc.update() {
         Ok(flags) => {
             if flags & mpv_render_update::Frame != 0 {
@@ -345,10 +438,20 @@ unsafe fn render_frame(inner_ptr: usize) {
                     tracing::trace!("[macOS renderer] render error: {}", e);
                     return;
                 }
+                // Only present and report swap after actually rendering a frame.
+                // Unconditional flushBuffer would show undefined back-buffer contents
+                // when the update callback fires for non-frame events.
+                cocoa::appkit::NSOpenGLContext::flushBuffer(ctx);
+                rc.report_swap();
+                let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
+                if n < 5 || n % 60 == 0 {
+                    tracing::debug!("[macOS renderer] frame presented (#{n})");
+                }
+                // Notify on first frame so the frontend can switch from opaque to transparent.
+                if let Some(cb) = inner.first_frame_cb.take() {
+                    cb();
+                }
             }
-            // Present the frame.
-            cocoa::appkit::NSOpenGLContext::flushBuffer(ctx);
-            rc.report_swap();
         }
         Err(e) => tracing::trace!("[macOS renderer] update error: {}", e),
     }

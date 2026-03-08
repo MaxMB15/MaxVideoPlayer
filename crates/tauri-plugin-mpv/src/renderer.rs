@@ -22,6 +22,13 @@ pub trait PlatformRenderer: Send + Sync {
     /// Update render surface dimensions on window resize.
     fn resize(&mut self, width: u32, height: u32);
 
+    /// Reposition and resize the video surface to a specific rect (in CSS/logical pixels).
+    /// Called by the frontend to align the NSOpenGLView with the player content area.
+    fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64);
+
+    /// Show or hide the video surface without stopping playback.
+    fn set_visible(&mut self, visible: bool);
+
     /// Tear down the surface. Must be idempotent.
     fn detach(&mut self);
 }

@@ -1,8 +1,9 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
+import { mpvSetBounds } from "@/lib/tauri";
 import type { Channel } from "@/lib/types";
 
 export function PlayerView() {
@@ -10,6 +11,7 @@ export function PlayerView() {
   const location = useLocation();
   const navigate = useNavigate();
   const [showControls, setShowControls] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [showChannelOsd, setShowChannelOsd] = useState(false);
   const [activeChannelName, setActiveChannelName] = useState<string | null>(
     null
@@ -20,14 +22,36 @@ export function PlayerView() {
     channelName?: string;
   } | null;
 
-  // Make body transparent while on the player route so the NSOpenGLView below
-  // the WKWebView is visible. Restored on unmount (when leaving the player).
+  // Make html/body transparent only once the first video frame has rendered so the
+  // NSOpenGLView shows through. While loading keep the background opaque/black.
   useEffect(() => {
-    document.body.style.backgroundColor = "transparent";
+    const color = mpv.firstFrameReady ? "transparent" : "black";
+    document.documentElement.style.backgroundColor = color;
+    document.body.style.backgroundColor = color;
     return () => {
+      document.documentElement.style.backgroundColor = "";
       document.body.style.backgroundColor = "";
     };
-  }, []);
+  }, [mpv.firstFrameReady]);
+
+  // Report the player container's exact CSS-pixel bounds to the native renderer
+  // so the NSOpenGLView covers only the player area (excluding the sidebar).
+  // Re-run when currentUrl changes: each mpv_load creates a new NSOpenGLView at
+  // full-window bounds, so we must re-apply the correct bounds after every load.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      mpvSetBounds(r.x, r.y, r.width, r.height).catch(() => {});
+    };
+
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mpv.state.currentUrl]);
 
   useEffect(() => {
     if (navState?.url) {
@@ -97,6 +121,7 @@ export function PlayerView() {
 
   return (
     <div
+      ref={containerRef}
       className="player-container relative h-full w-full bg-transparent focus:outline-none"
       onMouseMove={handleMouseMove}
       onClick={() => setShowControls(true)}

@@ -1,6 +1,8 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { usePlatform } from "@/hooks/usePlatform";
 import { cn } from "@/lib/utils";
+import { useEffect } from "react";
+import { mpvSetVisible } from "@/lib/tauri";
 import {
   Tv,
   List,
@@ -32,9 +34,21 @@ export function AppLayout() {
 }
 
 function DesktopLayout() {
+  const { pathname } = useLocation();
+  const isPlayer = pathname === "/player";
+
+  // Hide the native NSOpenGLView when not on the player route so it doesn't
+  // bleed through transparent areas on other pages.
+  useEffect(() => {
+    mpvSetVisible(isPlayer).catch(() => {});
+  }, [isPlayer]);
+
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="w-16 flex flex-col items-center py-4 gap-1 border-r border-border bg-card/50">
+      <aside className={cn(
+        "w-16 flex flex-col items-center py-4 gap-1 border-r border-border",
+        isPlayer ? "bg-card" : "bg-card/50"
+      )}>
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -54,7 +68,7 @@ function DesktopLayout() {
           </NavLink>
         ))}
       </aside>
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden relative">
         <Outlet />
       </main>
     </div>

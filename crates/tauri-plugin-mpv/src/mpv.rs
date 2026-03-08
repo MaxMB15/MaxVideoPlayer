@@ -32,11 +32,13 @@ impl MpvState {
         url: &str,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
-        // Teardown any existing renderer + engine before starting fresh.
-        {
-            let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
-            *renderer = None;
-        }
+        // Take the old renderer OUT of the mutex before dropping it.
+        // detach() calls Queue::main().exec_sync(), which blocks the background thread
+        // until the main thread processes the closure. The main thread's on_window_event
+        // resize handler also needs the renderer mutex — holding the mutex while calling
+        // exec_sync causes a deadlock. Dropping outside the lock avoids this.
+        let old_renderer = self.renderer.lock().map_err(|e| e.to_string())?.take();
+        drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().map_err(|e| e.to_string())?.stop();
         self.fallback_active.store(false, Ordering::Release);
 
@@ -54,6 +56,16 @@ impl MpvState {
             Ok(r) => r,
             Err(e) => return self.launch_fallback(url, app, &e),
         };
+
+        // Emit mpv://first-frame when the first video frame is rendered so the
+        // frontend knows to make the WKWebView transparent.
+        {
+            use tauri::Emitter;
+            let app_clone = app.clone();
+            gl_renderer.set_first_frame_callback(Box::new(move || {
+                let _ = app_clone.emit("mpv://first-frame", ());
+            }));
+        }
 
         // Create mpv with embedded options and attach the renderer.
         let attach_result = {
@@ -128,6 +140,23 @@ impl MpvState {
         Ok(())
     }
 
+    /// Reposition the video surface to a CSS-pixel rect reported by the frontend.
+    pub fn set_visible(&self, visible: bool) {
+        if let Ok(mut renderer) = self.renderer.lock() {
+            if let Some(ref mut r) = *renderer {
+                r.set_visible(visible);
+            }
+        }
+    }
+
+    pub fn set_bounds(&self, x: f64, y: f64, w: f64, h: f64) {
+        if let Ok(mut renderer) = self.renderer.lock() {
+            if let Some(ref mut r) = *renderer {
+                r.set_frame(x, y, w, h);
+            }
+        }
+    }
+
     /// Forward a window resize to the active renderer (e.g. from Tauri WindowEvent::Resized).
     pub fn resize(&self, width: u32, height: u32) {
         if let Ok(mut renderer) = self.renderer.lock() {
@@ -146,10 +175,8 @@ impl MpvState {
     }
 
     pub fn stop(&self) {
-        {
-            let mut renderer = self.renderer.lock().unwrap();
-            *renderer = None;
-        }
+        let old_renderer = self.renderer.lock().unwrap().take();
+        drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().unwrap().stop();
     }
 

@@ -31,6 +31,12 @@
   * {
     @apply border-border;
   }
+  html,
+  body {
+    /* Disable WKWebView elastic/bounce scroll — this is an app, not a webpage. */
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;

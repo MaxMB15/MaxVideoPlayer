@@ -31,6 +31,19 @@ export async function mpvGetState(): Promise<PlayerState> {
   return invoke("plugin:mpv|mpv_get_state");
 }
 
+export async function mpvSetVisible(visible: boolean): Promise<void> {
+  return invoke("plugin:mpv|mpv_set_visible", { visible });
+}
+
+export async function mpvSetBounds(
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Promise<void> {
+  return invoke("plugin:mpv|mpv_set_bounds", { x, y, w, h });
+}
+
 // --- Core IPTV Commands ---
 
 export async function loadM3uPlaylist(

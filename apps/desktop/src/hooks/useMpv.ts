@@ -24,6 +24,7 @@ export function useMpv() {
   const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
   const [error, setError] = useState<string | null>(null);
   const [fallbackActive, setFallbackActive] = useState(false);
+  const [firstFrameReady, setFirstFrameReady] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loadingRef = useRef(false);
 
@@ -38,14 +39,41 @@ export function useMpv() {
     };
   }, []);
 
+  // Listen for first-frame event so the frontend knows when the video is actually visible.
+  useEffect(() => {
+    const unlistenPromise = listen("mpv://first-frame", () => {
+      setFirstFrameReady(true);
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
+  // On mount, check if mpv is already playing (e.g. user navigated away and back).
+  // If so, restore firstFrameReady immediately so the background turns transparent.
+  // Skip if a load is already in progress (loadingRef set before this IPC resolves)
+  // to avoid a transparent flash that load() would immediately cancel.
+  useEffect(() => {
+    mpvGetState().then((s) => {
+      if (!loadingRef.current && (s.isPlaying || s.isPaused)) {
+        setFirstFrameReady(true);
+      }
+    }).catch(() => {});
+  }, []);
+
   const load = useCallback(async (url: string) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setError(null);
     setFallbackActive(false);
+    setFirstFrameReady(false);
+    // Reset playing state immediately so the background goes opaque while loading.
+    setState((s) => ({ ...s, isPlaying: false, isPaused: false }));
     try {
       await mpvLoad(url);
-      setState((s) => ({ ...s, currentUrl: url, isPlaying: true, isPaused: false }));
+      // Don't set isPlaying optimistically — let the next poll confirm it from Rust
+      // so transparency only kicks in once MPV is actually rendering frames.
+      setState((s) => ({ ...s, currentUrl: url }));
     } catch (e) {
       const msg = String(e);
       setError(msg);
@@ -132,5 +160,5 @@ export function useMpv() {
     };
   }, [refresh]);
 
-  return { state, error, fallbackActive, load, play, pause, stop, seek, setVolume, refresh };
+  return { state, error, fallbackActive, firstFrameReady, load, play, pause, stop, seek, setVolume, refresh };
 }
