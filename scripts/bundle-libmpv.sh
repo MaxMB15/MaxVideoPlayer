@@ -18,7 +18,7 @@ fi
 LIBS_DIR="$WORKSPACE_ROOT/libs"
 LIBS_MACOS="$LIBS_DIR/macos"
 TARGET_RELEASE="$WORKSPACE_ROOT/target/release"
-APP_NAME="max_video_player"
+APP_NAME="max-video-player"
 
 # Ensure libmpv exists (from build-libmpv.sh)
 if [[ ! -f "$LIBS_MACOS/libmpv.dylib" && ! -f "$LIBS_MACOS/libmpv.2.dylib" ]]; then

@@ -99,8 +99,8 @@ jobs:
         # resolve and install the correct platform-specific optional deps for Linux.
         run: rm -f package-lock.json && npm install
 
-      - name: Rust type-check (all crates)
-        run: cargo check --workspace
+      - name: Rust type-check (core only — avoids Tauri GTK deps on Linux)
+        run: cargo check -p mvp-core
 
       - name: Run Rust tests
         run: cargo test -p mvp-core -- --include-ignored
