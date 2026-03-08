@@ -43,6 +43,13 @@ fi
 rm -rf "$LIBS_BUNDLE"
 mkdir -p "$LIBS_BUNDLE"
 
-dylibbundler -od -b -x "$BINARY" -d "$LIBS_BUNDLE" -p "@executable_path/../Frameworks"
+# Resolve Homebrew prefix for transitive dep search (works on Apple Silicon + Intel)
+BREW_LIB="$(brew --prefix 2>/dev/null || echo /opt/homebrew)/lib"
+
+# -s tells dylibbundler where to find libraries it can't resolve via @rpath.
+# Without this it drops into an interactive prompt (and hangs in CI).
+dylibbundler -od -b -x "$BINARY" -d "$LIBS_BUNDLE" -p "@executable_path/../Frameworks" \
+  -s "$LIBS_MACOS" \
+  -s "$BREW_LIB"
 
 echo "Bundled libmpv and dependencies to $LIBS_BUNDLE"
