@@ -1,6 +1,6 @@
 use crate::models::channel::Channel;
 use rayon::prelude::*;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::Path;
 use thiserror::Error;
 
@@ -232,6 +232,7 @@ fn extract_attr(s: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufReader;
 
     #[test]
     fn test_parse_basic_m3u() {
