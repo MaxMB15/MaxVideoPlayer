@@ -12,6 +12,7 @@ apps/desktop/src-tauri/target/
 
 # IDE
 .vscode/
+.claude/
 .idea/
 *.swp
 *.swo

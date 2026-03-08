@@ -1,98 +1,100 @@
 # MaxVideoPlayer
 
-Cross-platform IPTV video player with **Rust** core logic. Per-platform apps share `mvp-core` (M3U, Xtream, EPG, cache) and use platform-native video players for efficiency.
+A cross-platform IPTV player built with **Tauri v2**, **React**, and **libmpv**. The Rust core (`mvp-core`) handles M3U/Xtream/EPG parsing and SQLite caching across all targets. A custom `tauri-plugin-mpv` embeds libmpv directly into the native window using `NSOpenGLView` on macOS, giving hardware-accelerated playback for virtually any IPTV protocol (HLS, RTMP, RTSP, TS, etc.).
+
+## Platform Support
+
+| Platform | Status | Video |
+|----------|--------|-------|
+| macOS | ✅ Active | libmpv embedded (NSOpenGLView + OpenGL Core 3.2) |
+| Windows | Planned | libmpv |
+| Linux | Planned | libmpv |
+| iOS / iPadOS | Planned | AVPlayer + mvp-core via UniFFI |
+| Android / Fire Stick | Planned | ExoPlayer + mvp-core via JNI |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  crates/mvp-core (shared Rust)                                           │
-│  • M3U parsing • Xtream Codes API • EPG • SQLite cache                   │
-└─────────────────────────────────────────────────────────────────────────┘
-         │                      │                      │
-         ▼                      ▼                      ▼
-┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│  apps/desktop   │   │  apps/ios       │   │  apps/android   │
-│  Tauri + React  │   │  Swift +        │   │  Kotlin +       │
-│  + libmpv       │   │  AVPlayer       │   │  ExoPlayer      │
-│  (macOS/Win/Linux)│   │  (planned)     │   │  (planned)      │
-└─────────────────┘   └─────────────────┘   └─────────────────┘
-```
-
-## Project Structure
-
-```
 MaxVideoPlayer/
 ├── crates/
-│   ├── core/                  # mvp-core — shared Rust (IPTV, cache, EPG)
-│   └── tauri-plugin-mpv/      # libmpv plugin for desktop app
+│   ├── core/                  # mvp-core — M3U, Xtream Codes, EPG, SQLite cache
+│   └── tauri-plugin-mpv/      # Custom Tauri plugin wrapping libmpv2
+│       ├── src/engine.rs      # MpvEngine — libmpv lifecycle
+│       ├── src/renderer.rs    # PlatformRenderer trait
+│       ├── src/macos.rs       # NSOpenGLView + OpenGL Core 3.2 (macOS)
+│       ├── src/mpv.rs         # MpvState — Tauri managed state
+│       └── src/commands.rs    # Tauri command handlers
 ├── apps/
-│   ├── desktop/               # Tauri + React + libmpv
-│   │   ├── src-tauri/
-│   │   └── src/               # React frontend
-│   ├── ios/                   # Swift + AVPlayer (planned)
-│   └── android/               # Kotlin + ExoPlayer (planned)
-├── libs/                      # libmpv per platform (desktop: macos/linux/windows, ios: ios/, android: android/)
-├── scripts/
-│   ├── build-libmpv.sh        # Copy libmpv for dev/build
-│   └── bundle-libmpv.sh       # Bundle libmpv into .app (macOS release)
-└── package.json               # Workspace scripts
+│   └── desktop/
+│       ├── src-tauri/         # Tauri app entry point
+│       └── src/               # React frontend (TypeScript)
+│           ├── components/    # UI components by domain
+│           ├── hooks/         # useMpv, useChannels, usePlatform
+│           └── lib/tauri.ts   # All invoke() calls in one place
+├── libs/                      # libmpv binaries (gitignored, built by script)
+└── scripts/
+    ├── build-libmpv.sh        # Build libmpv from source
+    └── bundle-libmpv.sh       # Bundle dylibs into .app at release
 ```
 
-## Supported Platforms
+## macOS Setup
 
-| Platform | Status | Stack |
-|----------|--------|-------|
-| macOS | ✅ Primary | Tauri, React, libmpv |
-| Windows | Planned | Tauri, React, libmpv |
-| Linux | Planned | Tauri, React, libmpv |
-| iOS | Planned | Swift, AVPlayer, mvp-core (UniFFI) |
-| Android / Fire Stick | Planned | Kotlin, ExoPlayer, mvp-core (JNI) |
+Homebrew's `mpv` formula is Vulkan-only. The embedded renderer requires OpenGL, so libmpv must be built from source:
 
-## Prerequisites
+```bash
+# Install build dependencies
+brew install meson ninja pkg-config ffmpeg libass dylibbundler
 
-- [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) >= 20
-- **libmpv** (macOS dev): `brew install mpv`
-- **dylibbundler** (macOS release build): `brew install dylibbundler`
+# Build libmpv from source (~3 min first run)
+./scripts/build-libmpv.sh macos
+```
+
+This clones the mpv source into `libs/mpv-src/` and outputs `libs/macos/libmpv.dylib`. Subsequent runs skip the clone.
 
 ## Development
 
 ```bash
 npm install
-npm run dev:desktop      # Desktop app (Tauri + React)
-npm run dev:desktop:web  # Web only (Vite, no native window)
-npm run test             # All tests (core + desktop)
+
+# Run the full Tauri app (hot reload)
+export DYLD_LIBRARY_PATH="$(pwd)/libs/macos:$DYLD_LIBRARY_PATH"
+cd apps/desktop && npx tauri dev
 ```
 
 ## Testing
 
 ```bash
-npm run test             # All tests
-npm run test:core        # mvp-core (Rust) only
-npm run test:desktop     # Desktop frontend (Vitest) only
+cargo test -p mvp-core        # Rust core tests
+cd apps/desktop && npm test   # Frontend tests (Vitest)
 ```
 
-## Desktop Build
-
-**Development** (requires `brew install mpv`):
+## Production Build
 
 ```bash
-./scripts/build-libmpv.sh macos   # Copy libmpv to libs/macos/
-npm run build:desktop
 cd apps/desktop && cargo tauri build
 ```
 
-**Release** (macOS): libmpv and dependencies are bundled into the .app automatically. Ensure `brew install mpv dylibbundler` before building.
+`bundle-libmpv.sh` runs automatically as `beforeBundleCommand` and uses `dylibbundler` to embed libmpv and its dependencies into the `.app`.
+
+## Features
+
+- **M3U / M3U+** playlist support (URL and local file)
+- **Xtream Codes** provider support
+- **EPG / XMLTV** programme guide
+- **Favorites** with persistent SQLite storage
+- **Hardware-accelerated** playback via VideoToolbox on macOS
+- Sidebar navigation with Channels, Player, Guide, Playlists, and Settings views
+- Channel list with virtual scrolling (`@tanstack/react-virtual`) for large playlists
+- Graceful fallback to a native mpv window if the embedded renderer fails
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Core | Rust (mvp-core) |
-| Desktop UI | Tauri v2, React, Tailwind |
-| Desktop Video | libmpv |
-| iOS (planned) | Swift, AVPlayer |
-| Android (planned) | Kotlin, ExoPlayer |
-| Database | SQLite (rusqlite) |
-| EPG | quick-xml |
+| Desktop shell | Tauri v2 |
+| Frontend | React 18, TypeScript, Tailwind CSS v3 |
+| UI components | shadcn-style (Radix UI primitives) |
+| Video engine | libmpv2 (custom Tauri plugin) |
+| Rust core | mvp-core (M3U, Xtream, EPG, SQLite) |
+| Database | SQLite via rusqlite (bundled) |
+| EPG parsing | quick-xml |

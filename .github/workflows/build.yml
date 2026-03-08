@@ -33,9 +33,9 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
-      - name: Install system deps (mpv, dylibbundler)
+      - name: Install system deps
         run: |
-          brew install mpv dylibbundler
+          brew install meson ninja pkg-config ffmpeg libass dylibbundler
 
       - name: Prepare libmpv for bundle
         run: ./scripts/build-libmpv.sh macos
@@ -170,7 +170,7 @@ jobs:
           cache: npm
 
       - name: Install deps
-        run: npm ci
+        run: npm install
 
       - name: Run Rust tests
         run: cargo test -p mvp-core
