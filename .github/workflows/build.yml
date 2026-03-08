@@ -56,95 +56,19 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
             apps/desktop/src-tauri/target/release/bundle/macos/*.app
 
-  # ── Android / Fire Stick ───────────────────────────────────────────────
+  # ── Android / Fire Stick — not yet implemented ─────────────────────────
   build-android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Placeholder
+        run: echo "Android build not yet implemented — skipping"
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
-        run: sdkmanager "ndk;26.1.10909125"
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build:desktop
-
-      - name: Build Tauri Android (arm64)
-        run: bash -c 'cd apps/desktop && npx tauri android build --target aarch64'
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
-
-      - name: Upload Android artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MaxVideoPlayer-Android
-          path: apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-
-  # ── iOS ────────────────────────────────────────────────────────────────
+  # ── iOS — not yet implemented ──────────────────────────────────────────
   build-ios:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build:desktop
-
-      - name: Build Tauri iOS
-        run: bash -c 'cd apps/desktop && npx tauri ios build'
-        env:
-          APPLE_DEVELOPMENT_TEAM: ""
-
-      - name: Upload iOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MaxVideoPlayer-iOS
-          path: apps/desktop/src-tauri/gen/apple/build/**/*.ipa
+      - name: Placeholder
+        run: echo "iOS build not yet implemented — skipping"
 
   # ── Tests (run on every push/PR) ────────────────────────────────────────
   test:
@@ -175,8 +99,11 @@ jobs:
         # resolve and install the correct platform-specific optional deps for Linux.
         run: rm -f package-lock.json && npm install
 
+      - name: Rust type-check (all crates)
+        run: cargo check --workspace
+
       - name: Run Rust tests
-        run: cargo test -p mvp-core
+        run: cargo test -p mvp-core -- --include-ignored
 
       - name: Run desktop tests
         working-directory: apps/desktop

@@ -209,4 +209,103 @@ mod tests {
             "2026-03-04T12:00:00"
         );
     }
+
+    // --- Edge cases ---
+
+    #[test]
+    fn test_empty_tv_block() {
+        let xml = r#"<?xml version="1.0"?><tv></tv>"#;
+        let data = parse_epg(xml).unwrap();
+        assert!(data.channels.is_empty());
+        assert!(data.programs.is_empty());
+    }
+
+    #[test]
+    fn test_programme_without_desc_or_category() {
+        // desc and category elements are optional — missing ones should be empty/None
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <programme start="20260101120000 +0000" stop="20260101130000 +0000" channel="ch1">
+    <title>Untitled Show</title>
+  </programme>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        assert_eq!(data.programs.len(), 1);
+        assert_eq!(data.programs[0].title, "Untitled Show");
+        assert_eq!(data.programs[0].description, "", "missing desc should be empty");
+        assert!(data.programs[0].category.is_none(), "missing category should be None");
+    }
+
+    #[test]
+    fn test_multiple_programmes_same_channel() {
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <channel id="ch1"><display-name>Channel 1</display-name></channel>
+  <programme start="20260101120000 +0000" stop="20260101130000 +0000" channel="ch1">
+    <title>Morning Show</title>
+  </programme>
+  <programme start="20260101130000 +0000" stop="20260101140000 +0000" channel="ch1">
+    <title>Midday News</title>
+  </programme>
+  <programme start="20260101140000 +0000" stop="20260101150000 +0000" channel="ch1">
+    <title>Afternoon Drama</title>
+  </programme>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        assert_eq!(data.channels.len(), 1);
+        assert_eq!(data.programs.len(), 3);
+        assert!(data.programs.iter().all(|p| p.channel_id == "ch1"));
+        let titles: Vec<&str> = data.programs.iter().map(|p| p.title.as_str()).collect();
+        assert!(titles.contains(&"Morning Show"));
+        assert!(titles.contains(&"Midday News"));
+        assert!(titles.contains(&"Afternoon Drama"));
+    }
+
+    #[test]
+    fn test_channel_without_icon_has_none() {
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <channel id="ch1">
+    <display-name>No Icon Channel</display-name>
+  </channel>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        assert_eq!(data.channels.len(), 1);
+        assert!(data.channels[0].icon_url.is_none());
+    }
+
+    #[test]
+    fn test_normalize_time_no_timezone() {
+        // XMLTV timestamps without a timezone offset should still parse
+        assert_eq!(normalize_epg_time("20260304120000"), "2026-03-04T12:00:00");
+    }
+
+    #[test]
+    fn test_normalize_time_short_returns_raw() {
+        // Timestamps shorter than 14 chars can't be parsed — return the raw string
+        let raw = "202603";
+        assert_eq!(normalize_epg_time(raw), raw);
+    }
+
+    #[test]
+    fn test_normalize_time_midnight() {
+        assert_eq!(normalize_epg_time("20260101000000 +0000"), "2026-01-01T00:00:00");
+    }
+
+    #[test]
+    fn test_multiple_channels_parsed() {
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <channel id="ch1"><display-name>BBC One</display-name><icon src="http://bbc.png"/></channel>
+  <channel id="ch2"><display-name>CNN</display-name></channel>
+  <channel id="ch3"><display-name>ESPN</display-name><icon src="http://espn.png"/></channel>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        assert_eq!(data.channels.len(), 3);
+        let ch_bbc = data.channels.iter().find(|c| c.id == "ch1").unwrap();
+        assert_eq!(ch_bbc.display_name, "BBC One");
+        assert_eq!(ch_bbc.icon_url.as_deref(), Some("http://bbc.png"));
+        let ch_cnn = data.channels.iter().find(|c| c.id == "ch2").unwrap();
+        assert!(ch_cnn.icon_url.is_none());
+    }
 }

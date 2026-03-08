@@ -9,7 +9,7 @@
     "beforeBuildCommand": "npm run build",
     "beforeBundleCommand": {
       "script": "bash scripts/bundle-libmpv.sh",
-      "cwd": "../.."
+      "cwd": "../../.."
     },
     "frontendDist": "../dist"
   },
@@ -46,7 +46,7 @@
     "macOS": {
       "frameworks": [],
       "files": {
-        "Frameworks": "../../libs/macos-bundle"
+        "Frameworks": "../../../libs/macos-bundle"
       },
       "minimumSystemVersion": "10.15"
     }

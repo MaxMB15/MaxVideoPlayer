@@ -288,4 +288,108 @@ http://stream.example.com/ch2
         let channels = parse_m3u(content).unwrap();
         assert!(channels.is_empty());
     }
+
+    // --- Edge cases ---
+
+    #[test]
+    fn test_extinf_without_comma_is_skipped() {
+        // EXTINF with no comma → parse_extinf_block returns None → channel silently dropped
+        let content = "#EXTM3U\n#EXTINF:-1 group-title=\"Test\"\nhttp://url.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_empty_tvg_attrs_return_none() {
+        // extract_attr returns None when the attribute value is an empty string
+        let content = "#EXTM3U\n#EXTINF:-1 tvg-id=\"\" tvg-name=\"\" tvg-logo=\"\" group-title=\"News\",Channel\nhttp://url.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert!(channels[0].tvg_id.is_none(), "empty tvg-id should be None");
+        assert!(channels[0].tvg_name.is_none(), "empty tvg-name should be None");
+        assert!(channels[0].logo_url.is_none(), "empty tvg-logo should be None");
+    }
+
+    #[test]
+    fn test_channel_name_whitespace_trimmed() {
+        let content = "#EXTM3U\n#EXTINF:-1 group-title=\"Test\",  Padded Name  \nhttp://url.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels[0].name, "Padded Name");
+    }
+
+    #[test]
+    fn test_no_group_title_defaults_to_empty_string() {
+        let content = "#EXTM3U\n#EXTINF:-1,No Group Channel\nhttp://url.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].group_title, "");
+    }
+
+    #[test]
+    fn test_comment_line_after_extinf_skips_channel() {
+        // In the line-pair parser, EXTINF must be immediately followed by a URL.
+        // A comment line between EXTINF and URL breaks the pair — no channel produced.
+        let content =
+            "#EXTM3U\n#EXTINF:-1 group-title=\"Test\",Channel\n#EXTVLCOPT:option\nhttp://url.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_reader_tolerates_comment_between_extinf_and_url() {
+        // The streaming reader holds current_extinf across comment lines,
+        // so a comment between EXTINF and URL still produces a channel.
+        let content =
+            "#EXTM3U\n#EXTINF:-1 group-title=\"Test\",Channel\n#EXTVLCOPT:option\nhttp://url.com\n";
+        let reader = BufReader::new(content.as_bytes());
+        let channels = parse_m3u_reader(reader).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].name, "Channel");
+    }
+
+    #[test]
+    fn test_crlf_line_endings() {
+        let content = "#EXTM3U\r\n#EXTINF:-1 group-title=\"Test\",CRLF Channel\r\nhttp://crlf.com\r\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].name, "CRLF Channel");
+    }
+
+    #[test]
+    fn test_multiple_channels_have_unique_ids() {
+        let content = "#EXTM3U\n\
+            #EXTINF:-1 group-title=\"News\",BBC\nhttp://bbc.com\n\
+            #EXTINF:-1 group-title=\"Sports\",ESPN\nhttp://espn.com\n\
+            #EXTINF:-1 group-title=\"Movies\",HBO\nhttp://hbo.com\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 3);
+        let ids: std::collections::HashSet<&str> =
+            channels.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), 3, "each channel must have a unique id");
+    }
+
+    #[test]
+    fn test_header_only_whitespace_variants() {
+        // Just the header with trailing whitespace / blank lines
+        let content = "#EXTM3U   \n\n\n";
+        let channels = parse_m3u(content).unwrap();
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_logo_url_parsed() {
+        let content = "#EXTM3U\n#EXTINF:-1 tvg-logo=\"http://logo.example.com/ch.png\" group-title=\"G\",Ch\nhttp://stream\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(
+            channels[0].logo_url.as_deref(),
+            Some("http://logo.example.com/ch.png")
+        );
+    }
+
+    #[test]
+    fn test_group_title_with_special_chars() {
+        let content = "#EXTM3U\n#EXTINF:-1 group-title=\"News & Sports / 24h\",Channel\nhttp://url\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels[0].group_title, "News & Sports / 24h");
+    }
 }

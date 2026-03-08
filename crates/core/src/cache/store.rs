@@ -274,45 +274,174 @@ mod tests {
         assert!(providers.is_empty());
     }
 
-    #[test]
-    fn test_channel_storage() {
-        let store = CacheStore::open_in_memory().unwrap();
-        let provider = Provider {
-            id: "p1".into(),
-            name: "Test".into(),
+    fn make_provider(id: &str, name: &str) -> Provider {
+        Provider {
+            id: id.into(),
+            name: name.into(),
             provider_type: ProviderType::M3u,
-            url: "http://test.m3u".into(),
+            url: format!("http://example.com/{id}.m3u"),
             username: None,
             password: None,
             last_updated: None,
-            channel_count: 2,
-        };
-        store.upsert_provider(&provider).unwrap();
+            channel_count: 0,
+        }
+    }
+
+    fn make_channel(id: &str, name: &str, group: &str) -> Channel {
+        Channel {
+            id: id.into(),
+            name: name.into(),
+            url: format!("http://stream.example.com/{id}"),
+            logo_url: None,
+            group_title: group.into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+        }
+    }
+
+    #[test]
+    fn test_channel_storage() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "Test")).unwrap();
 
         let channels = vec![
-            Channel {
-                id: "ch1".into(),
-                name: "News".into(),
-                url: "http://news".into(),
-                logo_url: None,
-                group_title: "News".into(),
-                tvg_id: None,
-                tvg_name: None,
-                is_favorite: false,
-            },
-            Channel {
-                id: "ch2".into(),
-                name: "Sports".into(),
-                url: "http://sports".into(),
-                logo_url: None,
-                group_title: "Sports".into(),
-                tvg_id: None,
-                tvg_name: None,
-                is_favorite: false,
-            },
+            make_channel("ch1", "News", "News"),
+            make_channel("ch2", "Sports", "Sports"),
         ];
         store.save_channels("p1", &channels).unwrap();
         let loaded = store.get_channels("p1").unwrap();
         assert_eq!(loaded.len(), 2);
+    }
+
+    // --- Edge cases ---
+
+    #[test]
+    fn test_upsert_provider_updates_existing() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "Original")).unwrap();
+
+        let updated = Provider {
+            name: "Updated".into(),
+            channel_count: 42,
+            ..make_provider("p1", "Updated")
+        };
+        store.upsert_provider(&updated).unwrap();
+
+        let providers = store.get_providers().unwrap();
+        assert_eq!(providers.len(), 1, "upsert must not duplicate");
+        assert_eq!(providers[0].name, "Updated");
+        assert_eq!(providers[0].channel_count, 42);
+    }
+
+    #[test]
+    fn test_save_channels_replaces_previous_batch() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P")).unwrap();
+
+        store.save_channels("p1", &[make_channel("ch1", "Old", "G")]).unwrap();
+        // Second save should wipe ch1 and only keep the new channels
+        store
+            .save_channels("p1", &[make_channel("ch2", "New A", "G"), make_channel("ch3", "New B", "G")])
+            .unwrap();
+
+        let loaded = store.get_channels("p1").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(!loaded.iter().any(|c| c.id == "ch1"), "old channel must be gone");
+        assert!(loaded.iter().any(|c| c.id == "ch2"));
+        assert!(loaded.iter().any(|c| c.id == "ch3"));
+    }
+
+    #[test]
+    fn test_remove_provider_cascades_channels() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P")).unwrap();
+        store
+            .save_channels("p1", &[make_channel("ch1", "Ch", "G"), make_channel("ch2", "Ch2", "G")])
+            .unwrap();
+
+        store.remove_provider("p1").unwrap();
+
+        assert!(store.get_providers().unwrap().is_empty());
+        assert!(store.get_all_channels().unwrap().is_empty(), "cascade delete must remove channels");
+    }
+
+    #[test]
+    fn test_toggle_favorite_roundtrip() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P")).unwrap();
+        store.save_channels("p1", &[make_channel("ch1", "Ch", "G")]).unwrap();
+
+        let was_fav = store.toggle_favorite("ch1").unwrap();
+        assert!(was_fav, "first toggle → favorite");
+
+        let back = store.toggle_favorite("ch1").unwrap();
+        assert!(!back, "second toggle → not favorite");
+
+        let ch = &store.get_channels("p1").unwrap()[0];
+        assert!(!ch.is_favorite, "persisted state must match");
+    }
+
+    #[test]
+    fn test_get_all_channels_across_providers() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "Provider 1")).unwrap();
+        store.upsert_provider(&make_provider("p2", "Provider 2")).unwrap();
+        store.save_channels("p1", &[make_channel("ch1", "A", "G"), make_channel("ch2", "B", "G")]).unwrap();
+        store.save_channels("p2", &[make_channel("ch3", "C", "G")]).unwrap();
+
+        let all = store.get_all_channels().unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_get_channels_only_returns_own_provider() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P1")).unwrap();
+        store.upsert_provider(&make_provider("p2", "P2")).unwrap();
+        store.save_channels("p1", &[make_channel("ch1", "P1 Ch", "G")]).unwrap();
+        store.save_channels("p2", &[make_channel("ch2", "P2 Ch", "G")]).unwrap();
+
+        let p1_channels = store.get_channels("p1").unwrap();
+        assert_eq!(p1_channels.len(), 1);
+        assert_eq!(p1_channels[0].id, "ch1");
+    }
+
+    #[test]
+    fn test_epg_save_and_retrieve() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let json = r#"{"title":"Morning News"}"#;
+        store.save_epg_data("ch1", json).unwrap();
+        let result = store.get_epg_data("ch1").unwrap();
+        assert_eq!(result.as_deref(), Some(json));
+    }
+
+    #[test]
+    fn test_epg_returns_none_for_unknown_channel() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let result = store.get_epg_data("nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_xtream_provider_roundtrip() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let provider = Provider {
+            id: "x1".into(),
+            name: "Xtream Test".into(),
+            provider_type: ProviderType::Xtream,
+            url: "http://xtream.example.com".into(),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+            last_updated: Some("2026-01-01".into()),
+            channel_count: 500,
+        };
+        store.upsert_provider(&provider).unwrap();
+        let loaded = store.get_providers().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(matches!(loaded[0].provider_type, ProviderType::Xtream));
+        assert_eq!(loaded[0].username.as_deref(), Some("user"));
+        assert_eq!(loaded[0].password.as_deref(), Some("pass"));
+        assert_eq!(loaded[0].channel_count, 500);
     }
 }
