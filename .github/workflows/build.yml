@@ -35,7 +35,7 @@ jobs:
 
       - name: Install system deps
         run: |
-          brew install meson ninja pkg-config ffmpeg libass dylibbundler
+          brew install meson ninja pkg-config ffmpeg libass libplacebo dylibbundler
 
       - name: Prepare libmpv for bundle
         run: ./scripts/build-libmpv.sh macos
@@ -170,7 +170,10 @@ jobs:
           cache: npm
 
       - name: Install deps
-        run: npm install
+        # package-lock.json was generated on macOS; @rollup/rollup-linux-x64-gnu is absent
+        # from the packages section (npm bug #4828). Deleting the lockfile forces npm to
+        # resolve and install the correct platform-specific optional deps for Linux.
+        run: rm -f package-lock.json && npm install
 
       - name: Run Rust tests
         run: cargo test -p mvp-core
