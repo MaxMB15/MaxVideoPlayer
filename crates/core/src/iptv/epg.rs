@@ -1,4 +1,3 @@
-use chrono::NaiveDateTime;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
@@ -19,8 +18,8 @@ pub struct EpgProgram {
     pub channel_id: String,
     pub title: String,
     pub description: String,
-    pub start_time: String,
-    pub end_time: String,
+    pub start_time: i64,   // Unix timestamp (seconds UTC) — was String
+    pub end_time: i64,     // Unix timestamp (seconds UTC) — was String
     pub category: Option<String>,
 }
 
@@ -56,8 +55,8 @@ pub fn parse_epg(xml: &str) -> Result<EpgData, EpgError> {
         channel_id: String::new(),
         title: String::new(),
         description: String::new(),
-        start_time: String::new(),
-        end_time: String::new(),
+        start_time: 0,
+        end_time: 0,
         category: None,
     };
     let mut current_tag = String::new();
@@ -82,8 +81,8 @@ pub fn parse_epg(xml: &str) -> Result<EpgData, EpgError> {
                             channel_id: ch,
                             title: String::new(),
                             description: String::new(),
-                            start_time: normalize_epg_time(&start),
-                            end_time: normalize_epg_time(&stop),
+                            start_time: parse_epg_time(&start),
+                            end_time: parse_epg_time(&stop),
                             category: None,
                         };
                     }
@@ -129,8 +128,8 @@ pub fn parse_epg(xml: &str) -> Result<EpgData, EpgError> {
                                 channel_id: String::new(),
                                 title: String::new(),
                                 description: String::new(),
-                                start_time: String::new(),
-                                end_time: String::new(),
+                                start_time: 0,
+                                end_time: 0,
                                 category: None,
                             },
                         ));
@@ -158,21 +157,58 @@ fn extract_xml_attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<Stri
     None
 }
 
-/// Normalize XMLTV timestamps like "20260304120000 +0000" into ISO-ish strings.
-fn normalize_epg_time(raw: &str) -> String {
-    let cleaned = raw.split_whitespace().next().unwrap_or(raw);
-    if cleaned.len() >= 14 {
-        if let Ok(dt) = NaiveDateTime::parse_from_str(&cleaned[..14], "%Y%m%d%H%M%S") {
-            return dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-        }
+/// Parse XMLTV timestamp like "20260304120000 +0000" to Unix timestamp (UTC seconds).
+fn parse_epg_time(raw: &str) -> i64 {
+    use chrono::NaiveDateTime;
+    let parts: Vec<&str> = raw.splitn(2, ' ').collect();
+    let dt_str = parts[0];
+    let tz_offset_str = parts.get(1).copied().unwrap_or("+0000");
+
+    if dt_str.len() < 14 {
+        return 0;
     }
-    raw.to_string()
+    let Ok(naive) = NaiveDateTime::parse_from_str(&dt_str[..14], "%Y%m%d%H%M%S") else {
+        return 0;
+    };
+
+    // Parse timezone offset like "+0100" → seconds offset
+    let tz_offset_secs: i64 = if tz_offset_str.len() == 5 {
+        let sign: i64 = if tz_offset_str.starts_with('-') { -1 } else { 1 };
+        let hh: i64 = tz_offset_str[1..3].parse().unwrap_or(0);
+        let mm: i64 = tz_offset_str[3..5].parse().unwrap_or(0);
+        sign * (hh * 3600 + mm * 60)
+    } else {
+        0
+    };
+
+    // naive is local time as given by offset; subtract offset to get UTC
+    naive.and_utc().timestamp() - tz_offset_secs
 }
 
 /// Fetch XMLTV EPG data from a URL and parse it.
 pub async fn fetch_and_parse_epg(url: &str) -> Result<EpgData, EpgError> {
     let body = reqwest::get(url).await?.text().await?;
     parse_epg(&body)
+}
+
+use crate::cache::store::StoredEpgProgram;
+
+/// Convert parsed EpgData into StoredEpgPrograms ready for DB insertion.
+pub fn epg_data_to_stored(data: &EpgData, provider_id: &str) -> Vec<StoredEpgProgram> {
+    let now = chrono::Utc::now().timestamp();
+    data.programs
+        .iter()
+        .map(|p| StoredEpgProgram {
+            channel_id: p.channel_id.clone(),
+            title: p.title.clone(),
+            description: if p.description.is_empty() { None } else { Some(p.description.clone()) },
+            start_time: p.start_time,
+            end_time: p.end_time,
+            category: p.category.clone(),
+            provider_id: provider_id.to_string(),
+            fetched_at: now,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -199,15 +235,58 @@ mod tests {
         assert_eq!(data.channels[0].display_name, "Channel 1");
         assert_eq!(data.programs.len(), 1);
         assert_eq!(data.programs[0].title, "News at Noon");
-        assert_eq!(data.programs[0].start_time, "2026-03-04T12:00:00");
+        // 2026-03-04T12:00:00 UTC = 1772625600
+        assert_eq!(data.programs[0].start_time, 1772625600);
     }
 
     #[test]
-    fn test_normalize_time() {
-        assert_eq!(
-            normalize_epg_time("20260304120000 +0000"),
-            "2026-03-04T12:00:00"
-        );
+    fn test_parse_epg_unix_timestamps() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="ch1"><display-name>Channel 1</display-name></channel>
+  <programme start="20260304120000 +0000" stop="20260304130000 +0000" channel="ch1">
+    <title>Noon News</title>
+  </programme>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        // 2026-03-04T12:00:00 UTC = 1772625600
+        assert_eq!(data.programs[0].start_time, 1772625600);
+        // 2026-03-04T13:00:00 UTC = 1772629200
+        assert_eq!(data.programs[0].end_time, 1772629200);
+    }
+
+    #[test]
+    fn test_parse_epg_unix_with_timezone_offset() {
+        // +0100 means local time is 1 hour ahead of UTC
+        // So 12:00 +0100 = 11:00 UTC
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <programme start="20260304120000 +0100" stop="20260304130000 +0100" channel="ch1">
+    <title>Show</title>
+  </programme>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        // 2026-03-04T11:00:00 UTC = 1772622000
+        assert_eq!(data.programs[0].start_time, 1772622000);
+    }
+
+    #[test]
+    fn test_epg_data_to_stored_conversion() {
+        let xml = r#"<?xml version="1.0"?>
+<tv>
+  <programme start="20260304120000 +0000" stop="20260304130000 +0000" channel="ch1">
+    <title>Test Show</title>
+    <desc>A test programme</desc>
+  </programme>
+</tv>"#;
+        let data = parse_epg(xml).unwrap();
+        let stored = epg_data_to_stored(&data, "provider1");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].channel_id, "ch1");
+        assert_eq!(stored[0].title, "Test Show");
+        assert_eq!(stored[0].description, Some("A test programme".to_string()));
+        assert_eq!(stored[0].provider_id, "provider1");
+        assert_eq!(stored[0].start_time, 1772625600);
     }
 
     // --- Edge cases ---
@@ -275,21 +354,22 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_time_no_timezone() {
-        // XMLTV timestamps without a timezone offset should still parse
-        assert_eq!(normalize_epg_time("20260304120000"), "2026-03-04T12:00:00");
+    fn test_parse_epg_time_no_timezone() {
+        // XMLTV timestamps without a timezone offset should parse as if UTC
+        // 2026-03-04T12:00:00 UTC = 1772625600
+        assert_eq!(parse_epg_time("20260304120000"), 1772625600);
     }
 
     #[test]
-    fn test_normalize_time_short_returns_raw() {
-        // Timestamps shorter than 14 chars can't be parsed — return the raw string
-        let raw = "202603";
-        assert_eq!(normalize_epg_time(raw), raw);
+    fn test_parse_epg_time_short_returns_zero() {
+        // Timestamps shorter than 14 chars can't be parsed — return 0
+        assert_eq!(parse_epg_time("202603"), 0);
     }
 
     #[test]
-    fn test_normalize_time_midnight() {
-        assert_eq!(normalize_epg_time("20260101000000 +0000"), "2026-01-01T00:00:00");
+    fn test_parse_epg_time_midnight() {
+        // 2026-01-01T00:00:00 UTC = 1767225600
+        assert_eq!(parse_epg_time("20260101000000 +0000"), 1767225600);
     }
 
     #[test]
