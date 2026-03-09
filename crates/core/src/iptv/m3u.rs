@@ -207,6 +207,76 @@ pub async fn fetch_and_parse_m3u(url: &str) -> Result<Vec<Channel>, M3uError> {
     result
 }
 
+/// Extract the EPG URL from the #EXTM3U header line.
+/// Looks for `x-tvg-url="..."` or `url-tvg="..."` attributes.
+pub fn extract_epg_url(content: &str) -> Option<String> {
+    let header_line = content
+        .lines()
+        .find(|l| l.trim_start_matches('\u{feff}').starts_with("#EXTM3U"))?;
+    extract_attr(header_line, "x-tvg-url")
+        .or_else(|| extract_attr(header_line, "url-tvg"))
+        .filter(|s| !s.is_empty())
+}
+
+/// A parsed M3U playlist containing channels and an optional EPG URL extracted from the header.
+#[derive(Debug)]
+pub struct M3uPlaylist {
+    pub channels: Vec<Channel>,
+    pub epg_url: Option<String>,
+}
+
+/// Fetch an M3U playlist from a URL, parse channels, and extract the EPG URL from the header.
+pub async fn fetch_and_parse_m3u_with_epg(url: &str) -> Result<M3uPlaylist, M3uError> {
+    use tokio::io::AsyncWriteExt;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()?;
+
+    let mut response = client.get(url).send().await?.error_for_status()?;
+
+    let tmp_path = std::env::temp_dir().join(format!("mvp_m3u_epg_{}.tmp", std::process::id()));
+
+    let mut file = tokio::fs::File::create(&tmp_path)
+        .await
+        .map_err(M3uError::Io)?;
+
+    while let Some(chunk) = response.chunk().await? {
+        file.write_all(&chunk).await.map_err(M3uError::Io)?;
+    }
+    file.flush().await.map_err(M3uError::Io)?;
+    drop(file);
+
+    // Read the header portion to extract the EPG URL without loading the whole file.
+    let epg_url = {
+        use std::io::{BufRead, BufReader};
+        let f = std::fs::File::open(&tmp_path).map_err(M3uError::Io)?;
+        let mut reader = BufReader::new(f);
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line).map_err(M3uError::Io)?;
+        let trimmed = strip_bom(first_line.trim_end_matches(['\r', '\n']));
+        if trimmed.starts_with("#EXTM3U") {
+            extract_attr(trimmed, "x-tvg-url")
+                .or_else(|| extract_attr(trimmed, "url-tvg"))
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        }
+    };
+
+    let path = tmp_path.clone();
+    let channels = tokio::task::spawn_blocking(move || parse_m3u_file(&path))
+        .await
+        .map_err(|e| M3uError::Parse {
+            line: 0,
+            message: format!("task join error: {e}"),
+        })??;
+
+    let _ = std::fs::remove_file(&tmp_path);
+
+    Ok(M3uPlaylist { channels, epg_url })
+}
+
 /// Strip UTF-8 BOM if present (common in Windows-created M3U files).
 fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{FEFF}').unwrap_or(s)
@@ -661,5 +731,29 @@ http://stream.example.com/ch2
     #[test]
     fn test_parse_series_name_no_match() {
         assert_eq!(parse_series_name("BBC News HD"), None);
+    }
+
+    #[test]
+    fn test_extract_epg_url_from_x_tvg_url() {
+        let content = "#EXTM3U x-tvg-url=\"http://example.com/epg.xml\"\n#EXTINF:-1,Channel\nhttp://url.com\n";
+        assert_eq!(extract_epg_url(content), Some("http://example.com/epg.xml".to_string()));
+    }
+
+    #[test]
+    fn test_extract_epg_url_from_url_tvg() {
+        let content = "#EXTM3U url-tvg=\"http://alt.com/guide.xml\"\n#EXTINF:-1,Channel\nhttp://url.com\n";
+        assert_eq!(extract_epg_url(content), Some("http://alt.com/guide.xml".to_string()));
+    }
+
+    #[test]
+    fn test_extract_epg_url_missing_returns_none() {
+        let content = "#EXTM3U\n#EXTINF:-1,Channel\nhttp://url.com\n";
+        assert_eq!(extract_epg_url(content), None);
+    }
+
+    #[test]
+    fn test_extract_epg_url_empty_attr_returns_none() {
+        let content = "#EXTM3U x-tvg-url=\"\"\n#EXTINF:-1,Channel\nhttp://url.com\n";
+        assert_eq!(extract_epg_url(content), None);
     }
 }

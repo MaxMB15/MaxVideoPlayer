@@ -1,5 +1,5 @@
 use mvp_core::cache::store::CacheStore;
-use mvp_core::iptv::m3u::{fetch_and_parse_m3u, parse_m3u_file};
+use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes};
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
@@ -23,12 +23,14 @@ pub async fn load_m3u_playlist(
     url: String,
 ) -> Result<Vec<Channel>, String> {
     tracing::info!("[IPTV] loading M3U playlist name={:?} url={}", name, url);
-    let mut channels = fetch_and_parse_m3u(&url)
+    let playlist = fetch_and_parse_m3u_with_epg(&url)
         .await
         .map_err(|e| {
             tracing::error!("[IPTV] M3U fetch/parse failed: {e}");
             format!("Failed to load playlist: {e}")
         })?;
+    let mut channels = playlist.channels;
+    let epg_url = playlist.epg_url;
     tracing::info!("[IPTV] parsed {} channels from M3U URL", channels.len());
 
     let provider_id = format!("m3u-{}", uuid_simple());
@@ -43,7 +45,7 @@ pub async fn load_m3u_playlist(
         password: None,
         last_updated: Some(now_rfc3339()),
         channel_count: channels.len(),
-        epg_url: None,
+        epg_url,
     };
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
@@ -201,27 +203,30 @@ pub async fn refresh_provider(
             .ok_or_else(|| format!("Provider not found: {id}"))?
     };
 
-    let mut channels = match provider.provider_type {
+    let (mut channels, refreshed_epg_url) = match provider.provider_type {
         ProviderType::M3u => {
             if provider.url.starts_with("file://") {
                 let path = provider.url.trim_start_matches("file://").to_string();
                 let pb = std::path::PathBuf::from(path);
-                tokio::task::spawn_blocking(move || parse_m3u_file(&pb))
+                let ch = tokio::task::spawn_blocking(move || parse_m3u_file(&pb))
                     .await
                     .map_err(|e| format!("task error: {e}"))?
-                    .map_err(|e| format!("Failed to parse file: {e}"))?
+                    .map_err(|e| format!("Failed to parse file: {e}"))?;
+                (ch, None)
             } else {
-                fetch_and_parse_m3u(&provider.url)
+                let playlist = fetch_and_parse_m3u_with_epg(&provider.url)
                     .await
-                    .map_err(|e| format!("Failed to fetch: {e}"))?
+                    .map_err(|e| format!("Failed to fetch: {e}"))?;
+                (playlist.channels, playlist.epg_url)
             }
         }
         ProviderType::Xtream => {
             let username = provider.username.clone().unwrap_or_default();
             let password = provider.password.clone().unwrap_or_default();
-            fetch_xtream_channels(&provider.url, &username, &password)
+            let ch = fetch_xtream_channels(&provider.url, &username, &password)
                 .await
-                .map_err(|e| format!("Failed to connect: {e}"))?
+                .map_err(|e| format!("Failed to connect: {e}"))?;
+            (ch, None)
         }
     };
 
@@ -230,10 +235,14 @@ pub async fn refresh_provider(
     let mut updated = provider;
     updated.last_updated = Some(now_rfc3339());
     updated.channel_count = channels.len();
+    if refreshed_epg_url.is_some() {
+        updated.epg_url = refreshed_epg_url.clone();
+    }
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
     cache.save_channels(&id, &channels).map_err(|e| e.to_string())?;
     cache.upsert_provider(&updated).map_err(|e| e.to_string())?;
+    cache.set_provider_epg_url(&id, refreshed_epg_url.as_deref()).map_err(|e| e.to_string())?;
     tracing::info!("[IPTV] refreshed provider={} with {} channels", id, channels.len());
 
     Ok(())
