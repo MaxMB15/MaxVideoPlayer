@@ -615,8 +615,11 @@ impl CacheStore {
     }
 
     /// Add elapsed seconds to `total_duration_seconds` for the given channel.
-    /// Noop if the channel is not found in history.
+    /// Noop if the channel is not found in history, or if `duration_seconds` is non-positive.
     pub fn record_play_end(&self, channel_id: &str, duration_seconds: i64) -> Result<(), CacheError> {
+        if duration_seconds <= 0 {
+            return Ok(());
+        }
         self.conn.execute(
             "UPDATE watch_history
              SET total_duration_seconds = total_duration_seconds + ?1
@@ -1210,5 +1213,26 @@ mod tests {
 
         let history = store.get_watch_history(10).unwrap();
         assert!(history.is_empty(), "history must be empty after clear");
+    }
+
+    #[test]
+    fn test_record_play_end_noop_for_missing_channel() {
+        let store = CacheStore::open_in_memory().unwrap();
+        // Should succeed silently even though channel does not exist
+        let result = store.record_play_end("nonexistent", 60);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_record_play_end_ignores_non_positive_duration() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "Channel 1", None, "live")
+            .unwrap();
+        store.record_play_end("ch1", 30).unwrap();
+        store.record_play_end("ch1", 0).unwrap();
+        store.record_play_end("ch1", -5).unwrap();
+        let history = store.get_watch_history(10).unwrap();
+        assert_eq!(history[0].total_duration_seconds, 30); // only 30 accumulated
     }
 }

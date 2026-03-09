@@ -550,8 +550,9 @@ pub async fn record_play_end(
 #[command]
 pub async fn get_watch_history(
     state: State<'_, AppState>,
-    limit: usize,
+    limit: i64,
 ) -> Result<Vec<WatchHistoryEntryDto>, String> {
+    let limit = limit.max(0) as usize;
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
     let entries = cache.get_watch_history(limit).map_err(|e| e.to_string())?;
     Ok(entries.into_iter().map(WatchHistoryEntryDto::from).collect())
