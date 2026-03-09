@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Tv2, Clapperboard, MonitorPlay, X, Play } from "lucide-react";
+import { Loader2, Tv2, Clapperboard, MonitorPlay, X, Play, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
@@ -23,6 +23,7 @@ function MovieSourceDrawer({
   onPlay: (ch: Channel) => void;
 }) {
   const [visible, setVisible] = useState(false);
+  const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true));
@@ -34,8 +35,12 @@ function MovieSourceDrawer({
     setTimeout(onClose, 300);
   };
 
-  const handlePick = (ch: Channel) => {
-    onPlay(ch);
+  const allSources = [movie.url, ...movie.sources];
+  const hasSources = allSources.length > 1;
+
+  const handlePlay = () => {
+    const url = allSources[selectedSourceIdx];
+    onPlay(selectedSourceIdx === 0 ? movie : { ...movie, url });
     handleClose();
   };
 
@@ -48,54 +53,88 @@ function MovieSourceDrawer({
         onClick={handleClose}
       />
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl flex flex-col transition-transform duration-300 ease-out max-h-[60vh] ${
+        className={`absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
           visible ? "translate-y-0" : "translate-y-full"
         }`}
       >
+        {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-9 h-1 rounded-full bg-border" />
         </div>
-        <div className="flex items-center justify-between px-5 py-3 shrink-0">
-          <div className="flex-1 min-w-0 mr-3">
-            <p className="text-sm font-semibold truncate">{movie.name}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Choose a source to play</p>
-          </div>
+
+        {/* Close button */}
+        <div className="flex justify-end px-5 pt-1 shrink-0">
           <button
             onClick={handleClose}
-            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            className="text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="border-t border-border mx-4 shrink-0" />
-        <div className="overflow-y-auto flex-1 py-2 px-3 pb-4">
-          <button
-            className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
-            onClick={() => handlePick(movie)}
-          >
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <Play className="h-3.5 w-3.5 text-primary ml-0.5" />
+
+        {/* Info card: poster left, details right */}
+        <div className="flex gap-4 px-5 pb-4 shrink-0">
+          <div className="w-20 h-28 rounded-xl bg-secondary overflow-hidden shrink-0 flex items-center justify-center">
+            {movie.logoUrl ? (
+              <img src={movie.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+            ) : (
+              <Clapperboard className="h-8 w-8 text-muted-foreground/30" />
+            )}
+          </div>
+          <div className="flex flex-col justify-center gap-1.5 flex-1 min-w-0">
+            <p className="text-base font-semibold leading-tight line-clamp-2">{movie.name}</p>
+            <p className="text-xs text-muted-foreground">— · —</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="flex items-center gap-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
+                <Star className="h-2.5 w-2.5" /> N/A
+              </span>
+              <span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
+                🍅 N/A Critics
+              </span>
+              <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-500 px-2 py-0.5 rounded-full">
+                🍿 N/A Audience
+              </span>
             </div>
-            <div>
-              <p className="text-sm font-medium">Source 1</p>
-              <p className="text-xs text-muted-foreground">Default</p>
-            </div>
-          </button>
-          {movie.sources.map((src, idx) => (
-            <button
-              key={idx}
-              className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
-              onClick={() => handlePick({ ...movie, url: src })}
-            >
-              <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-                <Play className="h-3.5 w-3.5 text-muted-foreground ml-0.5" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">Source {idx + 2}</p>
-              </div>
-            </button>
-          ))}
+            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+              No description available.
+            </p>
+          </div>
         </div>
+
+        <div className="border-t border-border mx-5 shrink-0" />
+
+        {/* Source selector + Play button */}
+        <div className="px-5 py-4 flex flex-col gap-3 shrink-0">
+          {hasSources && (
+            <div className="relative">
+              <select
+                value={selectedSourceIdx}
+                onChange={(e) => setSelectedSourceIdx(Number(e.target.value))}
+                className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-8"
+              >
+                {allSources.map((_, idx) => (
+                  <option key={idx} value={idx}>
+                    {idx === 0 ? "Source 1 (default)" : `Source ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+          )}
+          <button
+            onClick={handlePlay}
+            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold hover:bg-primary/90 active:bg-primary/80 transition-colors"
+          >
+            <Play className="h-4 w-4 ml-0.5" />
+            Play
+          </button>
+        </div>
+
+        <div className="shrink-0 pb-2" />
       </div>
     </div>
   );
