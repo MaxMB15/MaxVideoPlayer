@@ -43,6 +43,7 @@ pub async fn load_m3u_playlist(
         password: None,
         last_updated: Some(now_rfc3339()),
         channel_count: channels.len(),
+        epg_url: None,
     };
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
@@ -95,6 +96,7 @@ pub async fn load_m3u_file(
         password: None,
         last_updated: Some(now_rfc3339()),
         channel_count: channels.len(),
+        epg_url: None,
     };
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
@@ -140,6 +142,7 @@ pub async fn load_xtream_provider(
         password: Some(password),
         last_updated: Some(now_rfc3339()),
         channel_count: channels.len(),
+        epg_url: None,
     };
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;

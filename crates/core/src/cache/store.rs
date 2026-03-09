@@ -15,6 +15,18 @@ pub enum CacheError {
     Io(#[from] std::io::Error),
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredEpgProgram {
+    pub channel_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub category: Option<String>,
+    pub provider_id: String,
+    pub fetched_at: i64,
+}
+
 pub struct CacheStore {
     conn: Connection,
 }
@@ -92,6 +104,22 @@ impl CacheStore {
         let _ = self.conn.execute_batch(
             "ALTER TABLE channels ADD COLUMN episode INTEGER;"
         );
+        let _ = self.conn.execute_batch("ALTER TABLE providers ADD COLUMN epg_url TEXT;");
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS epg_programmes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id  TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                description TEXT,
+                start_time  INTEGER NOT NULL,
+                end_time    INTEGER NOT NULL,
+                category    TEXT,
+                provider_id TEXT NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_epg_channel_time
+                ON epg_programmes(channel_id, start_time);"
+        )?;
         Ok(())
     }
 
@@ -106,8 +134,8 @@ impl CacheStore {
         // row is updated in-place rather than deleted + re-inserted.  DELETE + INSERT
         // would trigger ON DELETE CASCADE and wipe all channels for the provider.
         self.conn.execute(
-            "INSERT INTO providers (id, name, provider_type, url, username, password, last_updated, channel_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO providers (id, name, provider_type, url, username, password, last_updated, channel_count, epg_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                name          = excluded.name,
                provider_type = excluded.provider_type,
@@ -115,7 +143,8 @@ impl CacheStore {
                username      = excluded.username,
                password      = excluded.password,
                last_updated  = excluded.last_updated,
-               channel_count = excluded.channel_count",
+               channel_count = excluded.channel_count,
+               epg_url       = excluded.epg_url",
             params![
                 provider.id,
                 provider.name,
@@ -124,7 +153,8 @@ impl CacheStore {
                 provider.username,
                 provider.password,
                 provider.last_updated,
-                provider.channel_count,
+                provider.channel_count as i64,
+                provider.epg_url,
             ],
         )?;
         Ok(())
@@ -147,7 +177,7 @@ impl CacheStore {
 
     pub fn get_providers(&self) -> Result<Vec<Provider>, CacheError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, provider_type, url, username, password, last_updated, channel_count FROM providers"
+            "SELECT id, name, provider_type, url, username, password, last_updated, channel_count, epg_url FROM providers"
         )?;
         let providers = stmt.query_map([], |row| {
             let ptype: String = row.get(2)?;
@@ -164,6 +194,7 @@ impl CacheStore {
                 password: row.get(5)?,
                 last_updated: row.get(6)?,
                 channel_count: row.get::<_, i64>(7)? as usize,
+                epg_url: row.get(8)?,
             })
         })?.collect::<SqlResult<Vec<_>>>()?;
         Ok(providers)
@@ -171,7 +202,7 @@ impl CacheStore {
 
     pub fn get_provider(&self, id: &str) -> Result<Option<Provider>, CacheError> {
         let result = self.conn.query_row(
-            "SELECT id, name, provider_type, url, username, password, last_updated, channel_count FROM providers WHERE id = ?1",
+            "SELECT id, name, provider_type, url, username, password, last_updated, channel_count, epg_url FROM providers WHERE id = ?1",
             params![id],
             |row| {
                 let ptype: String = row.get(2)?;
@@ -184,6 +215,7 @@ impl CacheStore {
                     password: row.get(5)?,
                     last_updated: row.get(6)?,
                     channel_count: row.get::<_, i64>(7)? as usize,
+                    epg_url: row.get(8)?,
                 })
             },
         );
@@ -337,7 +369,7 @@ impl CacheStore {
     /// Find the provider that owns a given channel (JOIN query).
     pub fn get_provider_for_channel(&self, channel_id: &str) -> Result<Option<Provider>, CacheError> {
         let result = self.conn.query_row(
-            "SELECT p.id, p.name, p.provider_type, p.url, p.username, p.password, p.last_updated, p.channel_count
+            "SELECT p.id, p.name, p.provider_type, p.url, p.username, p.password, p.last_updated, p.channel_count, p.epg_url
              FROM providers p JOIN channels c ON c.provider_id = p.id WHERE c.id = ?1",
             params![channel_id],
             |row| {
@@ -351,6 +383,7 @@ impl CacheStore {
                     password: row.get(5)?,
                     last_updated: row.get(6)?,
                     channel_count: row.get::<_, i64>(7)? as usize,
+                    epg_url: row.get(8)?,
                 })
             },
         );
@@ -398,6 +431,71 @@ impl CacheStore {
             Err(e) => Err(CacheError::Db(e)),
         }
     }
+
+    // --- EPG Programmes ---
+
+    pub fn save_epg_programmes(
+        &self,
+        provider_id: &str,
+        programmes: &[StoredEpgProgram],
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM epg_programmes WHERE provider_id = ?1",
+            params![provider_id],
+        )?;
+        for prog in programmes {
+            self.conn.execute(
+                "INSERT INTO epg_programmes
+                 (channel_id, title, description, start_time, end_time, category, provider_id, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    prog.channel_id, prog.title, prog.description,
+                    prog.start_time, prog.end_time, prog.category,
+                    prog.provider_id, prog.fetched_at,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get_epg_programmes(
+        &self,
+        channel_id: &str,
+        range_start: i64,
+        range_end: i64,
+    ) -> Result<Vec<StoredEpgProgram>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, title, description, start_time, end_time, category, provider_id, fetched_at
+             FROM epg_programmes
+             WHERE channel_id = ?1 AND start_time < ?3 AND end_time > ?2
+             ORDER BY start_time ASC",
+        )?;
+        let rows = stmt.query_map(params![channel_id, range_start, range_end], |row| {
+            Ok(StoredEpgProgram {
+                channel_id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                start_time: row.get(3)?,
+                end_time: row.get(4)?,
+                category: row.get(5)?,
+                provider_id: row.get(6)?,
+                fetched_at: row.get(7)?,
+            })
+        })?;
+        rows.collect::<SqlResult<Vec<_>>>().map_err(CacheError::Db)
+    }
+
+    pub fn set_provider_epg_url(
+        &self,
+        provider_id: &str,
+        epg_url: Option<&str>,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE providers SET epg_url = ?1 WHERE id = ?2",
+            params![epg_url, provider_id],
+        )?;
+        Ok(())
+    }
 }
 
 /// For series channels loaded from an older cache that has NULL series_title/season/episode,
@@ -434,6 +532,7 @@ mod tests {
             password: None,
             last_updated: None,
             channel_count: 0,
+            epg_url: None,
         };
         store.upsert_provider(&provider).unwrap();
         let providers = store.get_providers().unwrap();
@@ -455,6 +554,7 @@ mod tests {
             password: None,
             last_updated: None,
             channel_count: 0,
+            epg_url: None,
         }
     }
 
@@ -600,6 +700,74 @@ mod tests {
     }
 
     #[test]
+    fn test_epg_programmes_stored_and_retrieved() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let prog = StoredEpgProgram {
+            channel_id: "ch1".into(),
+            title: "Morning News".into(),
+            description: Some("Daily news".into()),
+            start_time: 1700000000,
+            end_time: 1700003600,
+            category: Some("News".into()),
+            provider_id: "p1".into(),
+            fetched_at: 1700000000,
+        };
+        store.save_epg_programmes("p1", &[prog.clone()]).unwrap();
+        let result = store.get_epg_programmes("ch1", 1699999000, 1700010000).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "Morning News");
+    }
+
+    #[test]
+    fn test_epg_programmes_cleared_on_refresh() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let prog = StoredEpgProgram {
+            channel_id: "ch1".into(),
+            title: "Old Show".into(),
+            description: None,
+            start_time: 1700000000,
+            end_time: 1700003600,
+            category: None,
+            provider_id: "p1".into(),
+            fetched_at: 1699000000,
+        };
+        store.save_epg_programmes("p1", &[prog]).unwrap();
+        let new_prog = StoredEpgProgram {
+            channel_id: "ch1".into(),
+            title: "New Show".into(),
+            description: None,
+            start_time: 1700000000,
+            end_time: 1700003600,
+            category: None,
+            provider_id: "p1".into(),
+            fetched_at: 1700000001,
+        };
+        store.save_epg_programmes("p1", &[new_prog]).unwrap();
+        let result = store.get_epg_programmes("ch1", 1699999000, 1700010000).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "New Show");
+    }
+
+    #[test]
+    fn test_provider_epg_url_saved_and_retrieved() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let provider = Provider {
+            id: "p1".into(),
+            name: "Test".into(),
+            provider_type: crate::models::playlist::ProviderType::M3u,
+            url: "http://example.com/playlist.m3u".into(),
+            username: None,
+            password: None,
+            last_updated: None,
+            channel_count: 0,
+            epg_url: Some("http://example.com/epg.xml".into()),
+        };
+        store.upsert_provider(&provider).unwrap();
+        let providers = store.get_providers().unwrap();
+        assert_eq!(providers[0].epg_url.as_deref(), Some("http://example.com/epg.xml"));
+    }
+
+    #[test]
     fn test_xtream_provider_roundtrip() {
         let store = CacheStore::open_in_memory().unwrap();
         let provider = Provider {
@@ -611,6 +779,7 @@ mod tests {
             password: Some("pass".into()),
             last_updated: Some("2026-01-01".into()),
             channel_count: 500,
+            epg_url: None,
         };
         store.upsert_provider(&provider).unwrap();
         let loaded = store.get_providers().unwrap();

@@ -14,6 +14,7 @@ pub struct Provider {
     pub password: Option<String>,
     pub last_updated: Option<String>,
     pub channel_count: usize,
+    pub epg_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
