@@ -23,8 +23,43 @@ function makeChannel(overrides: Partial<Channel> = {}): Channel {
     url: "http://stream.example.com/1",
     groupTitle: "General",
     isFavorite: false,
+    contentType: "live",
+    sources: [],
     ...overrides,
   };
+}
+
+// ── Deduplication helpers (mirrored in ChannelList) ──────────────────────
+
+function dedupeByTitle(channels: Channel[]): Channel[] {
+  const seen = new Map<string, Channel>();
+  for (const ch of channels) {
+    if (!seen.has(ch.name)) {
+      seen.set(ch.name, { ...ch, sources: [...ch.sources] });
+    } else {
+      const existing = seen.get(ch.name)!;
+      existing.sources.push(ch.url);
+      existing.sources.push(...ch.sources);
+      if (!existing.logoUrl && ch.logoUrl) existing.logoUrl = ch.logoUrl;
+    }
+  }
+  return Array.from(seen.values());
+}
+
+function dedupeEpisodes(episodes: Channel[]): Channel[] {
+  const seen = new Map<string, Channel>();
+  for (const ep of episodes) {
+    const key = `${ep.season ?? 0}x${ep.episode ?? ep.name}`;
+    if (!seen.has(key)) {
+      seen.set(key, { ...ep, sources: [...ep.sources] });
+    } else {
+      const existing = seen.get(key)!;
+      existing.sources.push(ep.url);
+      existing.sources.push(...ep.sources);
+      if (!existing.logoUrl && ep.logoUrl) existing.logoUrl = ep.logoUrl;
+    }
+  }
+  return Array.from(seen.values());
 }
 
 const DEFAULT_PLAYER_STATE: PlayerState = {
@@ -97,6 +132,88 @@ describe("Channel type", () => {
   it("isFavorite defaults to false", () => {
     const ch = makeChannel();
     expect(ch.isFavorite).toBe(false);
+  });
+});
+
+describe("dedupeByTitle", () => {
+  it("keeps single entry unchanged", () => {
+    const ch = makeChannel({ contentType: "movie", name: "The Matrix" });
+    const result = dedupeByTitle([ch]);
+    expect(result).toHaveLength(1);
+    expect(result[0].sources).toEqual([]);
+  });
+
+  it("merges two entries with same title into one with alternate source", () => {
+    const ch1 = makeChannel({ id: "m-1", name: "The Matrix", url: "http://src1/matrix", contentType: "movie" });
+    const ch2 = makeChannel({ id: "m-2", name: "The Matrix", url: "http://src2/matrix", contentType: "movie" });
+    const result = dedupeByTitle([ch1, ch2]);
+    expect(result).toHaveLength(1);
+    expect(result[0].url).toBe("http://src1/matrix");
+    expect(result[0].sources).toContain("http://src2/matrix");
+  });
+
+  it("keeps distinct titles as separate entries", () => {
+    const ch1 = makeChannel({ id: "m-1", name: "The Matrix", contentType: "movie" });
+    const ch2 = makeChannel({ id: "m-2", name: "Inception", contentType: "movie" });
+    expect(dedupeByTitle([ch1, ch2])).toHaveLength(2);
+  });
+
+  it("picks up logo from second entry when first has none", () => {
+    const ch1 = makeChannel({ id: "m-1", name: "The Matrix", logoUrl: undefined, contentType: "movie" });
+    const ch2 = makeChannel({ id: "m-2", name: "The Matrix", logoUrl: "http://logo.png", contentType: "movie" });
+    const result = dedupeByTitle([ch1, ch2]);
+    expect(result[0].logoUrl).toBe("http://logo.png");
+  });
+
+  it("merges sources from all entries", () => {
+    const ch1 = makeChannel({ id: "m-1", name: "Film", url: "http://url1", sources: ["http://url1b"], contentType: "movie" });
+    const ch2 = makeChannel({ id: "m-2", name: "Film", url: "http://url2", sources: ["http://url2b"], contentType: "movie" });
+    const result = dedupeByTitle([ch1, ch2]);
+    expect(result[0].sources).toEqual(["http://url1b", "http://url2", "http://url2b"]);
+  });
+
+  it("handles empty input", () => {
+    expect(dedupeByTitle([])).toEqual([]);
+  });
+
+  it("is O(n) — does not regress on large input", () => {
+    const channels = Array.from({ length: 10_000 }, (_, i) =>
+      makeChannel({ id: `m-${i}`, name: `Movie ${i % 500}`, url: `http://src/${i}`, contentType: "movie" })
+    );
+    const start = performance.now();
+    const result = dedupeByTitle(channels);
+    const elapsed = performance.now() - start;
+    expect(result).toHaveLength(500);
+    expect(elapsed).toBeLessThan(100); // well under 100ms for 10k items
+  });
+});
+
+describe("dedupeEpisodes", () => {
+  it("keeps single episode unchanged", () => {
+    const ep = makeChannel({ contentType: "series", season: 1, episode: 1 });
+    const result = dedupeEpisodes([ep]);
+    expect(result).toHaveLength(1);
+    expect(result[0].sources).toEqual([]);
+  });
+
+  it("merges duplicate S01E01 from two providers", () => {
+    const ep1 = makeChannel({ id: "e-1", contentType: "series", season: 1, episode: 1, url: "http://p1/s1e1" });
+    const ep2 = makeChannel({ id: "e-2", contentType: "series", season: 1, episode: 1, url: "http://p2/s1e1" });
+    const result = dedupeEpisodes([ep1, ep2]);
+    expect(result).toHaveLength(1);
+    expect(result[0].sources).toContain("http://p2/s1e1");
+  });
+
+  it("keeps different episodes separate", () => {
+    const ep1 = makeChannel({ id: "e-1", contentType: "series", season: 1, episode: 1 });
+    const ep2 = makeChannel({ id: "e-2", contentType: "series", season: 1, episode: 2 });
+    expect(dedupeEpisodes([ep1, ep2])).toHaveLength(2);
+  });
+
+  it("treats same episode number in different seasons as different", () => {
+    const ep1 = makeChannel({ id: "e-1", contentType: "series", season: 1, episode: 1 });
+    const ep2 = makeChannel({ id: "e-2", contentType: "series", season: 2, episode: 1 });
+    expect(dedupeEpisodes([ep1, ep2])).toHaveLength(2);
   });
 });
 
