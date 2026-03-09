@@ -254,14 +254,7 @@ pub async fn fetch_and_parse_m3u_with_epg(url: &str) -> Result<M3uPlaylist, M3uE
         let mut reader = BufReader::new(f);
         let mut first_line = String::new();
         reader.read_line(&mut first_line).map_err(M3uError::Io)?;
-        let trimmed = strip_bom(first_line.trim_end_matches(['\r', '\n']));
-        if trimmed.starts_with("#EXTM3U") {
-            extract_attr(trimmed, "x-tvg-url")
-                .or_else(|| extract_attr(trimmed, "url-tvg"))
-                .filter(|s| !s.is_empty())
-        } else {
-            None
-        }
+        extract_epg_url(&first_line)
     };
 
     let path = tmp_path.clone();
@@ -755,5 +748,11 @@ http://stream.example.com/ch2
     fn test_extract_epg_url_empty_attr_returns_none() {
         let content = "#EXTM3U x-tvg-url=\"\"\n#EXTINF:-1,Channel\nhttp://url.com\n";
         assert_eq!(extract_epg_url(content), None);
+    }
+
+    #[test]
+    fn test_extract_epg_url_with_bom_header() {
+        let content = "\u{FEFF}#EXTM3U x-tvg-url=\"http://bom.com/epg.xml\"\n#EXTINF:-1,Channel\nhttp://url.com\n";
+        assert_eq!(extract_epg_url(content), Some("http://bom.com/epg.xml".to_string()));
     }
 }

@@ -242,7 +242,6 @@ pub async fn refresh_provider(
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
     cache.save_channels(&id, &channels).map_err(|e| e.to_string())?;
     cache.upsert_provider(&updated).map_err(|e| e.to_string())?;
-    cache.set_provider_epg_url(&id, refreshed_epg_url.as_deref()).map_err(|e| e.to_string())?;
     tracing::info!("[IPTV] refreshed provider={} with {} channels", id, channels.len());
 
     Ok(())
