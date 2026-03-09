@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PlayerState, Channel, Provider, EpgProgram, OmdbData } from "./types";
+import type { PlayerState, Channel, Provider, EpgProgram, OmdbData, WatchHistoryEntry } from "./types";
 
 // --- MPV Player Commands ---
 
@@ -139,3 +139,28 @@ export async function fetchOmdbData(
 ): Promise<OmdbData | null> {
   return invoke("fetch_omdb_data", { channelId, title, contentType });
 }
+
+// --- Watch History Commands ---
+
+export const recordPlayStart = (
+  channelId: string,
+  channelName: string,
+  channelLogo: string | null,
+  contentType: string
+): Promise<void> =>
+  invoke<void>("record_play_start", { channelId, channelName, channelLogo, contentType });
+
+export const recordPlayEnd = (
+  channelId: string,
+  durationSeconds: number
+): Promise<void> =>
+  invoke<void>("record_play_end", { channelId, durationSeconds });
+
+export const getWatchHistory = (limit: number): Promise<WatchHistoryEntry[]> =>
+  invoke<WatchHistoryEntry[]>("get_watch_history", { limit });
+
+export const deleteHistoryEntry = (channelId: string): Promise<void> =>
+  invoke<void>("delete_history_entry", { channelId });
+
+export const clearWatchHistory = (): Promise<void> =>
+  invoke<void>("clear_watch_history");

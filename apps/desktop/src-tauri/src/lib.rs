@@ -37,6 +37,11 @@ pub fn run() {
             commands::get_omdb_api_key,
             commands::set_omdb_api_key,
             commands::fetch_omdb_data,
+            commands::record_play_start,
+            commands::record_play_end,
+            commands::get_watch_history,
+            commands::delete_history_entry,
+            commands::clear_watch_history,
         ])
         .setup(|app| {
             let app_dir = app

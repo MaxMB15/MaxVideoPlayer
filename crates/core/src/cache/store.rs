@@ -4,6 +4,7 @@ use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
 use rusqlite::{params, Connection, Result as SqlResult};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -14,6 +15,18 @@ pub enum CacheError {
     Serde(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchHistoryEntry {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub channel_logo: Option<String>,
+    pub content_type: String,
+    pub first_watched_at: i64,
+    pub last_watched_at: i64,
+    pub total_duration_seconds: i64,
+    pub play_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +140,21 @@ impl CacheStore {
                 data_json   TEXT NOT NULL,
                 fetched_at  INTEGER NOT NULL
             );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS watch_history (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id             TEXT NOT NULL UNIQUE,
+                channel_name           TEXT NOT NULL,
+                channel_logo           TEXT,
+                content_type           TEXT NOT NULL,
+                first_watched_at       INTEGER NOT NULL,
+                last_watched_at        INTEGER NOT NULL,
+                total_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                play_count             INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_history_last_watched
+                ON watch_history(last_watched_at DESC);"
         )?;
         Ok(())
     }
@@ -554,6 +582,87 @@ impl CacheStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(CacheError::Db(e)),
         }
+    }
+
+    // --- Watch History ---
+
+    /// Upsert a watch history entry. If the channel has been watched before, increments
+    /// `play_count` and updates `last_watched_at`. On first watch, inserts with `play_count=1`.
+    pub fn record_play_start(
+        &self,
+        channel_id: &str,
+        channel_name: &str,
+        channel_logo: Option<&str>,
+        content_type: &str,
+    ) -> Result<(), CacheError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO watch_history
+                (channel_id, channel_name, channel_logo, content_type, first_watched_at, last_watched_at, total_duration_seconds, play_count)
+             VALUES
+                (?1, ?2, ?3, ?4, ?5, ?5, 0, 1)
+             ON CONFLICT(channel_id) DO UPDATE SET
+                channel_name    = excluded.channel_name,
+                channel_logo    = excluded.channel_logo,
+                last_watched_at = excluded.last_watched_at,
+                play_count      = play_count + 1",
+            params![channel_id, channel_name, channel_logo, content_type, now],
+        )?;
+        Ok(())
+    }
+
+    /// Add elapsed seconds to `total_duration_seconds` for the given channel.
+    /// Noop if the channel is not found in history.
+    pub fn record_play_end(&self, channel_id: &str, duration_seconds: i64) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE watch_history
+             SET total_duration_seconds = total_duration_seconds + ?1
+             WHERE channel_id = ?2",
+            params![duration_seconds, channel_id],
+        )?;
+        Ok(())
+    }
+
+    /// Return watch history entries ordered by `last_watched_at DESC`, limited to `limit`.
+    pub fn get_watch_history(&self, limit: usize) -> Result<Vec<WatchHistoryEntry>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, channel_name, channel_logo, content_type,
+                    first_watched_at, last_watched_at, total_duration_seconds, play_count
+             FROM watch_history
+             ORDER BY last_watched_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(WatchHistoryEntry {
+                channel_id: row.get(0)?,
+                channel_name: row.get(1)?,
+                channel_logo: row.get(2)?,
+                content_type: row.get(3)?,
+                first_watched_at: row.get(4)?,
+                last_watched_at: row.get(5)?,
+                total_duration_seconds: row.get(6)?,
+                play_count: row.get(7)?,
+            })
+        })?;
+        rows.collect::<SqlResult<Vec<_>>>().map_err(CacheError::Db)
+    }
+
+    /// Delete a single watch history entry by channel ID.
+    pub fn delete_history_entry(&self, channel_id: &str) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM watch_history WHERE channel_id = ?1",
+            params![channel_id],
+        )?;
+        Ok(())
+    }
+
+    /// Delete all watch history entries.
+    pub fn clear_watch_history(&self) -> Result<(), CacheError> {
+        self.conn.execute("DELETE FROM watch_history", [])?;
+        Ok(())
     }
 }
 
@@ -1011,5 +1120,95 @@ mod tests {
         assert_eq!(result.title, "Minimal Movie");
         assert!(result.year.is_none());
         assert!(result.rotten_tomatoes.is_none());
+    }
+
+    // --- Watch History Tests ---
+
+    #[test]
+    fn test_record_play_start_creates_entry() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "BBC News", Some("http://logo.example.com/bbc.png"), "live")
+            .unwrap();
+
+        let history = store.get_watch_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].channel_id, "ch1");
+        assert_eq!(history[0].channel_name, "BBC News");
+        assert_eq!(history[0].play_count, 1);
+        assert_eq!(history[0].total_duration_seconds, 0);
+    }
+
+    #[test]
+    fn test_record_play_start_increments_play_count() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "BBC News", None, "live")
+            .unwrap();
+        let first_entry = store.get_watch_history(10).unwrap();
+        let first_watched_at = first_entry[0].first_watched_at;
+
+        // Second call should increment play_count but not change first_watched_at
+        store
+            .record_play_start("ch1", "BBC News", None, "live")
+            .unwrap();
+
+        let history = store.get_watch_history(10).unwrap();
+        assert_eq!(history.len(), 1, "must not create duplicate row");
+        assert_eq!(history[0].play_count, 2);
+        assert_eq!(
+            history[0].first_watched_at, first_watched_at,
+            "first_watched_at must not change on upsert"
+        );
+    }
+
+    #[test]
+    fn test_record_play_end_accumulates_duration() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "Movie Channel", None, "movie")
+            .unwrap();
+        store.record_play_end("ch1", 30).unwrap();
+        store.record_play_end("ch1", 45).unwrap();
+
+        let history = store.get_watch_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].total_duration_seconds, 75);
+    }
+
+    #[test]
+    fn test_delete_history_entry() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "Channel 1", None, "live")
+            .unwrap();
+        store
+            .record_play_start("ch2", "Channel 2", None, "live")
+            .unwrap();
+
+        store.delete_history_entry("ch1").unwrap();
+
+        let history = store.get_watch_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].channel_id, "ch2");
+    }
+
+    #[test]
+    fn test_clear_watch_history() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store
+            .record_play_start("ch1", "Channel 1", None, "live")
+            .unwrap();
+        store
+            .record_play_start("ch2", "Channel 2", None, "live")
+            .unwrap();
+        store
+            .record_play_start("ch3", "Channel 3", None, "movie")
+            .unwrap();
+
+        store.clear_watch_history().unwrap();
+
+        let history = store.get_watch_history(10).unwrap();
+        assert!(history.is_empty(), "history must be empty after clear");
     }
 }

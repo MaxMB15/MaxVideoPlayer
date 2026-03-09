@@ -70,5 +70,16 @@ export interface OmdbData {
   rottenTomatoes?: string;
 }
 
+export interface WatchHistoryEntry {
+  channelId: string;
+  channelName: string;
+  channelLogo?: string;
+  contentType: string;
+  firstWatchedAt: number;
+  lastWatchedAt: number;
+  totalDurationSeconds: number;
+  playCount: number;
+}
+
 export type Platform = "macos" | "ios" | "android" | "windows" | "linux";
 export type LayoutMode = "desktop" | "mobile" | "tv";

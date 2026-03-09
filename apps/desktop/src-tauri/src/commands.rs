@@ -1,4 +1,4 @@
-use mvp_core::cache::store::CacheStore;
+use mvp_core::cache::store::{CacheStore, WatchHistoryEntry};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
 use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes, get_xtream_epg_url};
@@ -489,6 +489,89 @@ pub async fn fetch_omdb_data<R: Runtime>(
     }
 
     Ok(Some(data))
+}
+
+// --- Watch History Commands ---
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchHistoryEntryDto {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub channel_logo: Option<String>,
+    pub content_type: String,
+    pub first_watched_at: i64,
+    pub last_watched_at: i64,
+    pub total_duration_seconds: i64,
+    pub play_count: i64,
+}
+
+impl From<WatchHistoryEntry> for WatchHistoryEntryDto {
+    fn from(e: WatchHistoryEntry) -> Self {
+        Self {
+            channel_id: e.channel_id,
+            channel_name: e.channel_name,
+            channel_logo: e.channel_logo,
+            content_type: e.content_type,
+            first_watched_at: e.first_watched_at,
+            last_watched_at: e.last_watched_at,
+            total_duration_seconds: e.total_duration_seconds,
+            play_count: e.play_count,
+        }
+    }
+}
+
+#[command]
+pub async fn record_play_start(
+    state: State<'_, AppState>,
+    channel_id: String,
+    channel_name: String,
+    channel_logo: Option<String>,
+    content_type: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .record_play_start(&channel_id, &channel_name, channel_logo.as_deref(), &content_type)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn record_play_end(
+    state: State<'_, AppState>,
+    channel_id: String,
+    duration_seconds: i64,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .record_play_end(&channel_id, duration_seconds)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn get_watch_history(
+    state: State<'_, AppState>,
+    limit: usize,
+) -> Result<Vec<WatchHistoryEntryDto>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let entries = cache.get_watch_history(limit).map_err(|e| e.to_string())?;
+    Ok(entries.into_iter().map(WatchHistoryEntryDto::from).collect())
+}
+
+#[command]
+pub async fn delete_history_entry(
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .delete_history_entry(&channel_id)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn clear_watch_history(state: State<'_, AppState>) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.clear_watch_history().map_err(|e| e.to_string())
 }
 
 fn uuid_simple() -> String {
