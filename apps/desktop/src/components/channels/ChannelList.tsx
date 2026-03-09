@@ -1,146 +1,21 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Tv2, Clapperboard, MonitorPlay, X, Play, Star } from "lucide-react";
+import { Loader2, Tv2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
 import { ChannelCard } from "./ChannelCard";
 import { SeriesDetailModal } from "./SeriesDetailModal";
+import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { useChannels } from "@/hooks/useChannels";
 import { usePlatform } from "@/hooks/usePlatform";
+import { getXtreamSeriesEpisodes } from "@/lib/tauri";
 import type { Channel, Category } from "@/lib/types";
 
+import { Clapperboard } from "lucide-react";
+
 type Tab = "live" | "movie" | "series";
-
-function MovieSourceDrawer({
-  movie,
-  onClose,
-  onPlay,
-}: {
-  movie: Channel;
-  onClose: () => void;
-  onPlay: (ch: Channel) => void;
-}) {
-  const [visible, setVisible] = useState(false);
-  const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setVisible(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
-  const handleClose = () => {
-    setVisible(false);
-    setTimeout(onClose, 300);
-  };
-
-  const allSources = [...new Set([movie.url, ...movie.sources])];
-  const hasSources = allSources.length > 1;
-
-  const handlePlay = () => {
-    const url = allSources[selectedSourceIdx];
-    onPlay(selectedSourceIdx === 0 ? movie : { ...movie, url });
-    handleClose();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className={`absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
-          visible ? "opacity-100" : "opacity-0"
-        }`}
-        onClick={handleClose}
-      />
-      <div
-        className={`absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl flex flex-col transition-transform duration-300 ease-out max-h-[85vh] overflow-hidden ${
-          visible ? "translate-y-0" : "translate-y-full"
-        }`}
-      >
-        {/* Handle */}
-        <div className="flex justify-center pt-3 pb-1 shrink-0">
-          <div className="w-9 h-1 rounded-full bg-border" />
-        </div>
-
-        {/* Close button */}
-        <div className="flex justify-end px-5 pt-1 shrink-0">
-          <button
-            onClick={handleClose}
-            aria-label="Close"
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Info card: poster left, details right */}
-        <div className="flex gap-4 px-5 pb-4 shrink-0">
-          <div className="w-20 h-28 rounded-xl bg-secondary overflow-hidden shrink-0 flex items-center justify-center">
-            {movie.logoUrl ? (
-              <img src={movie.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-            ) : (
-              <Clapperboard className="h-8 w-8 text-muted-foreground/30" />
-            )}
-          </div>
-          <div className="flex flex-col justify-center gap-1.5 flex-1 min-w-0">
-            <p className="text-base font-semibold leading-tight line-clamp-2">{movie.name}</p>
-            <p className="text-xs text-muted-foreground">— · —</p>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="flex items-center gap-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
-                <Star className="h-2.5 w-2.5" /> N/A
-              </span>
-              <span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
-                🍅 N/A Critics
-              </span>
-              <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-500 px-2 py-0.5 rounded-full">
-                🍿 N/A Audience
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-              No description available.
-            </p>
-          </div>
-        </div>
-
-        <div className="border-t border-border mx-5 shrink-0" />
-
-        {/* Source selector + Play button */}
-        <div className="px-5 py-4 flex flex-col gap-3 shrink-0">
-          {hasSources && (
-            <div className="relative">
-              <select
-                value={selectedSourceIdx}
-                onChange={(e) => setSelectedSourceIdx(Number(e.target.value))}
-                aria-label="Select source"
-                className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-8"
-              >
-                {allSources.map((_, idx) => (
-                  <option key={idx} value={idx}>
-                    {idx === 0 ? "Source 1 (default)" : `Source ${idx + 1}`}
-                  </option>
-                ))}
-              </select>
-              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </div>
-          )}
-          <button
-            onClick={handlePlay}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold hover:bg-primary/90 active:bg-primary/80 transition-colors"
-          >
-            <Play className="h-4 w-4 ml-0.5" />
-            Play
-          </button>
-        </div>
-
-        <div className="shrink-0 pb-2" />
-      </div>
-    </div>
-  );
-}
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "live",   label: "Live",    icon: Tv2 },
@@ -160,7 +35,8 @@ export function ChannelList() {
   const [activeTab, setActiveTab] = useState<Tab>("live");
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [selectedSeriesShow, setSelectedSeriesShow] = useState<string | null>(null);
+  const [seriesModalData, setSeriesModalData] = useState<{ showTitle: string; episodes: Channel[] } | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
 
   const byType = useMemo(() => {
@@ -236,16 +112,34 @@ export function ChannelList() {
   }, [activeChannels, selectedCategory, search, activeTab]);
 
   const handlePlay = useCallback(
-    (channel: Channel) => {
+    async (channel: Channel) => {
       if (activeTab === "series") {
-        setSelectedSeriesShow(channel.name);
+        const showName = channel.seriesTitle ?? showTitle(channel.name);
+        if (channel.url.startsWith("xtream://series/")) {
+          // Lazy-fetch episodes from Xtream API on demand
+          setSeriesLoading(true);
+          try {
+            const eps = await getXtreamSeriesEpisodes(channel.id);
+            setSeriesModalData({ showTitle: showName, episodes: eps });
+          } catch (e) {
+            console.error("[Xtream] failed to fetch series episodes:", e);
+          } finally {
+            setSeriesLoading(false);
+          }
+        } else {
+          // M3U: episodes already in local channel list
+          const eps = byType.series.filter(
+            (ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
+          );
+          setSeriesModalData({ showTitle: showName, episodes: eps });
+        }
       } else if (activeTab === "movie" && channel.sources.length > 0) {
         setSelectedMovie(channel);
       } else {
-        navigate("/player", { state: { url: channel.url, channelName: channel.name } });
+        navigate("/player", { state: { url: channel.url, channelName: channel.name, channel } });
       }
     },
-    [activeTab, navigate]
+    [activeTab, byType.series, navigate]
   );
 
   const isGrid = activeTab !== "live";
@@ -327,27 +221,42 @@ export function ChannelList() {
         </span>
       </div>
 
+      {/* Series loading indicator */}
+      {seriesLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="flex items-center gap-3 bg-card rounded-2xl px-6 py-4 shadow-2xl">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-sm font-medium">Loading episodes…</span>
+          </div>
+        </div>
+      )}
+
       {/* Series detail modal */}
-      {selectedSeriesShow && (
+      {seriesModalData && (
         <SeriesDetailModal
-          showTitle={selectedSeriesShow}
-          episodes={byType.series.filter(
-            (ep) => (ep.seriesTitle ?? showTitle(ep.name)) === selectedSeriesShow
-          )}
-          onClose={() => setSelectedSeriesShow(null)}
-          onPlay={(ch) =>
-            navigate("/player", { state: { url: ch.url, channelName: ch.name } })
-          }
+          showTitle={seriesModalData.showTitle}
+          episodes={seriesModalData.episodes}
+          onClose={() => setSeriesModalData(null)}
+          onPlay={(ch) => {
+            const sorted = [...seriesModalData.episodes].sort((a, b) => {
+              const sa = a.season ?? 0, sb = b.season ?? 0;
+              if (sa !== sb) return sa - sb;
+              return (a.episode ?? 0) - (b.episode ?? 0);
+            });
+            navigate("/player", {
+              state: { url: ch.url, channelName: ch.name, channel: ch, seriesEpisodes: sorted },
+            });
+          }}
         />
       )}
 
-      {/* Movie source drawer */}
+      {/* Movie info drawer */}
       {selectedMovie && (
-        <MovieSourceDrawer
+        <MovieInfoDrawer
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
           onPlay={(ch) =>
-            navigate("/player", { state: { url: ch.url, channelName: ch.name } })
+            navigate("/player", { state: { url: ch.url, channelName: ch.name, channel: ch } })
           }
         />
       )}

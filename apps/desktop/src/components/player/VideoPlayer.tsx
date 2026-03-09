@@ -1,52 +1,67 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
+import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
+import { LiveInfoDrawer } from "@/components/channels/LiveInfoDrawer";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
+import { useChannels } from "@/hooks/useChannels";
 import { mpvSetBounds } from "@/lib/tauri";
 import type { Channel } from "@/lib/types";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useFullscreen } from "@/lib/fullscreen-context";
+
+function showTitle(name: string): string {
+  return name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
+}
+
+function sortEpisodes(eps: Channel[]): Channel[] {
+  return [...eps].sort((a, b) => {
+    const sa = a.season ?? 0, sb = b.season ?? 0;
+    if (sa !== sb) return sa - sb;
+    return (a.episode ?? 0) - (b.episode ?? 0);
+  });
+}
 
 export function PlayerView() {
   const mpv = useMpv();
+  const { channels } = useChannels();
   const location = useLocation();
   const navigate = useNavigate();
   const [showControls, setShowControls] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const [showChannelOsd, setShowChannelOsd] = useState(false);
-  const [activeChannelName, setActiveChannelName] = useState<string | null>(
-    null
-  );
+  const [showInfoDrawer, setShowInfoDrawer] = useState(false);
+  const [activeChannelName, setActiveChannelName] = useState<string | null>(null);
+  const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
+  // Episode list for series navigation — set when navigating from SeriesDetailModal
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Channel[]>([]);
+  const { isFullscreen, setFullscreen } = useFullscreen();
 
   const navState = location.state as {
     url?: string;
     channelName?: string;
+    channel?: Channel;
+    seriesEpisodes?: Channel[];
   } | null;
 
-  // Make html/body transparent only once the first video frame has rendered so the
-  // NSOpenGLView shows through. While loading keep the background opaque/black.
   useEffect(() => {
-    const color = mpv.firstFrameReady ? "transparent" : "black";
-    document.documentElement.style.backgroundColor = color;
-    document.body.style.backgroundColor = color;
+    document.documentElement.style.backgroundColor = mpv.firstFrameReady ? "transparent" : "black";
+    document.body.style.backgroundColor = mpv.firstFrameReady ? "transparent" : "black";
     return () => {
       document.documentElement.style.backgroundColor = "";
       document.body.style.backgroundColor = "";
     };
   }, [mpv.firstFrameReady]);
 
-  // Report the player container's exact CSS-pixel bounds to the native renderer
-  // so the NSOpenGLView covers only the player area (excluding the sidebar).
-  // Re-run when currentUrl changes: each mpv_load creates a new NSOpenGLView at
-  // full-window bounds, so we must re-apply the correct bounds after every load.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
     const report = () => {
       const r = el.getBoundingClientRect();
       mpvSetBounds(r.x, r.y, r.width, r.height).catch(() => {});
     };
-
     report();
     const ro = new ResizeObserver(report);
     ro.observe(el);
@@ -57,6 +72,10 @@ export function PlayerView() {
     if (navState?.url) {
       mpv.load(navState.url).catch(() => {});
       setActiveChannelName(navState.channelName ?? null);
+      setActiveChannel(navState.channel ?? null);
+      if (navState.seriesEpisodes?.length) {
+        setSeriesEpisodes(navState.seriesEpisodes);
+      }
     }
   }, [navState?.url]);
 
@@ -64,20 +83,90 @@ export function PlayerView() {
     (channel: Channel) => {
       mpv.load(channel.url).catch(() => {});
       setActiveChannelName(channel.name);
+      setActiveChannel(channel);
+      setSeriesEpisodes([]);
     },
     [mpv.load]
   );
 
+  // --- Series episode navigation ---
+
+  // Derive episodes from passed list (Xtream) or local cache (M3U)
+  const localSeriesEpisodes = useMemo(() => {
+    if (!activeChannel || activeChannel.contentType !== "series") return [];
+    const title = activeChannel.seriesTitle ?? showTitle(activeChannel.name);
+    return channels.filter(
+      (ch) => ch.contentType === "series" && (ch.seriesTitle ?? showTitle(ch.name)) === title
+    );
+  }, [activeChannel, channels]);
+
+  const sortedEpisodes = useMemo(() => {
+    const source = seriesEpisodes.length > 0 ? seriesEpisodes : localSeriesEpisodes;
+    return sortEpisodes(source);
+  }, [seriesEpisodes, localSeriesEpisodes]);
+
+  const currentEpIdx = useMemo(
+    () => (activeChannel ? sortedEpisodes.findIndex((ep) => ep.url === activeChannel.url) : -1),
+    [activeChannel, sortedEpisodes]
+  );
+
+  const prevEpisode = currentEpIdx > 0 ? sortedEpisodes[currentEpIdx - 1] : null;
+  const nextEpisode =
+    currentEpIdx >= 0 && currentEpIdx < sortedEpisodes.length - 1
+      ? sortedEpisodes[currentEpIdx + 1]
+      : null;
+
+  const playEpisode = useCallback(
+    (ep: Channel) => {
+      mpv.load(ep.url).catch(() => {});
+      setActiveChannelName(ep.name);
+      setActiveChannel(ep);
+      setShowInfoDrawer(false);
+    },
+    [mpv.load]
+  );
+
+  // --- Autoplay next episode ---
+  // Use refs to avoid stale closures while keeping the effect dependency minimal
+  const nextEpisodeRef = useRef(nextEpisode);
+  nextEpisodeRef.current = nextEpisode;
+  const mpvStateRef = useRef(mpv.state);
+  mpvStateRef.current = mpv.state;
+  const activeChannelRef = useRef(activeChannel);
+  activeChannelRef.current = activeChannel;
+
+  const prevIsPlayingRef = useRef(false);
+  useEffect(() => {
+    const wasPlaying = prevIsPlayingRef.current;
+    prevIsPlayingRef.current = mpv.state.isPlaying;
+
+    if (!wasPlaying || mpv.state.isPlaying || mpv.state.isPaused) return;
+    if (activeChannelRef.current?.contentType !== "series") return;
+    const { duration, position } = mpvStateRef.current;
+    if (duration <= 0 || position < duration - 5) return;
+    const next = nextEpisodeRef.current;
+    if (next) playEpisode(next);
+  }, [mpv.state.isPlaying, mpv.state.isPaused, playEpisode]);
+
+  // --- Controls visibility ---
   useEffect(() => {
     if (!showControls) return;
     const timer = setTimeout(() => setShowControls(false), 4000);
     return () => clearTimeout(timer);
   }, [showControls]);
 
-  const handleMouseMove = useCallback(() => {
-    setShowControls(true);
-  }, []);
+  const handleMouseMove = useCallback(() => setShowControls(true), []);
 
+  // --- Fullscreen ---
+  const toggleFullscreen = useCallback(() => {
+    const next = !isFullscreen;
+    setFullscreen(next);
+    getCurrentWindow().setFullscreen(next).catch((e) => {
+      console.error("[PlayerView] setFullscreen failed:", e);
+    });
+  }, [isFullscreen, setFullscreen]);
+
+  // --- Keyboard ---
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       switch (e.key) {
@@ -101,7 +190,14 @@ export function PlayerView() {
           setShowChannelOsd((v) => !v);
           break;
         case "Escape":
-          if (showChannelOsd) {
+          if (isFullscreen) {
+            setFullscreen(false);
+            getCurrentWindow().setFullscreen(false).catch((e) => {
+              console.error("[PlayerView] setFullscreen(false) failed:", e);
+            });
+          } else if (showInfoDrawer) {
+            setShowInfoDrawer(false);
+          } else if (showChannelOsd) {
             setShowChannelOsd(false);
           } else {
             mpv.stop();
@@ -111,7 +207,7 @@ export function PlayerView() {
       }
       setShowControls(true);
     },
-    [mpv, showChannelOsd, navigate]
+    [mpv, isFullscreen, showInfoDrawer, showChannelOsd, navigate, setFullscreen]
   );
 
   const handleStop = useCallback(() => {
@@ -119,16 +215,24 @@ export function PlayerView() {
     navigate("/");
   }, [mpv, navigate]);
 
+  // --- Info drawer episode source ---
+  const episodesForDrawer = sortedEpisodes.length > 0 ? sortedEpisodes : localSeriesEpisodes;
+  const showTitleForDrawer =
+    activeChannel?.seriesTitle ?? showTitle(activeChannel?.name ?? "");
+
   return (
     <div
       ref={containerRef}
-      className="player-container relative h-full w-full bg-transparent focus:outline-none"
+      className={
+        isFullscreen
+          ? "player-container fixed inset-0 z-[9999] bg-transparent focus:outline-none"
+          : "player-container relative h-full w-full bg-transparent focus:outline-none"
+      }
       onMouseMove={handleMouseMove}
       onClick={() => setShowControls(true)}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* Fallback banner: shown when embedded renderer failed and video is in a separate window */}
       {mpv.fallbackActive && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-yellow-500/40 bg-yellow-950/80 px-4 py-2 text-yellow-200 text-sm shadow-lg backdrop-blur-sm max-w-xl">
           <span>⚠</span>
@@ -136,7 +240,6 @@ export function PlayerView() {
         </div>
       )}
 
-      {/* Embedded MPV renders below; transparent so native video shows through */}
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent">
         {mpv.error && (
           <div className="text-center p-6 max-w-md">
@@ -146,14 +249,9 @@ export function PlayerView() {
             </p>
           </div>
         )}
-        {!mpv.error &&
-          !mpv.state.currentUrl &&
-          !mpv.state.isPlaying &&
-          !mpv.state.isPaused && (
-            <p className="text-muted-foreground text-lg">
-              Select a channel to start watching
-            </p>
-          )}
+        {!mpv.error && !mpv.state.currentUrl && !mpv.state.isPlaying && !mpv.state.isPaused && (
+          <p className="text-muted-foreground text-lg">Select a channel to start watching</p>
+        )}
       </div>
 
       {activeChannelName && showControls && (
@@ -161,6 +259,9 @@ export function PlayerView() {
           <p className="text-white text-sm font-medium">{activeChannelName}</p>
         </div>
       )}
+
+      {/* Autoplay banner — shown for 3s before next episode starts */}
+      {/* (simple version: no countdown, instant autoplay) */}
 
       {!mpv.fallbackActive && (
         <Controls
@@ -173,11 +274,16 @@ export function PlayerView() {
             duration: mpv.state.duration,
           }}
           visible={showControls}
+          isFullscreen={isFullscreen}
           onPlay={mpv.play}
           onPause={mpv.pause}
           onStop={handleStop}
           onSeek={mpv.seek}
           onVolumeChange={mpv.setVolume}
+          onFullscreen={toggleFullscreen}
+          onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
+          onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
+          onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
         />
       )}
 
@@ -186,6 +292,33 @@ export function PlayerView() {
           onClose={() => setShowChannelOsd(false)}
           onSelectChannel={handleSelectChannel}
         />
+      )}
+
+      {/* Info drawers */}
+      {showInfoDrawer && activeChannel && activeChannel.contentType === "series" && (
+        <SeriesDetailModal
+          showTitle={showTitleForDrawer}
+          episodes={episodesForDrawer}
+          onClose={() => setShowInfoDrawer(false)}
+          onPlay={(ch) => playEpisode(ch)}
+        />
+      )}
+
+      {showInfoDrawer && activeChannel && activeChannel.contentType === "movie" && (
+        <MovieInfoDrawer
+          movie={activeChannel}
+          onClose={() => setShowInfoDrawer(false)}
+          onPlay={(ch) => {
+            setShowInfoDrawer(false);
+            mpv.load(ch.url).catch(() => {});
+            setActiveChannelName(ch.name);
+            setActiveChannel(ch);
+          }}
+        />
+      )}
+
+      {showInfoDrawer && activeChannel && activeChannel.contentType === "live" && (
+        <LiveInfoDrawer channel={activeChannel} onClose={() => setShowInfoDrawer(false)} />
       )}
     </div>
   );

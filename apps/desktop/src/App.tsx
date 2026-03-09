@@ -6,12 +6,14 @@ import { PlaylistManager } from "./components/playlist/PlaylistManager";
 import { ProgramGuide } from "./components/epg/ProgramGuide";
 import { Settings } from "./components/settings/Settings";
 import { ChannelsContext, useChannelsProvider } from "./hooks/useChannels";
+import { FullscreenProvider } from "./lib/fullscreen-context";
 
 export default function App() {
   const channelsValue = useChannelsProvider();
 
   return (
     <ChannelsContext.Provider value={channelsValue}>
+      <FullscreenProvider>
       <Routes>
         <Route element={<AppLayout />}>
           <Route path="/" element={<ChannelList />} />
@@ -21,6 +23,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
+      </FullscreenProvider>
     </ChannelsContext.Provider>
   );
 }

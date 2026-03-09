@@ -9,9 +9,20 @@ interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 
   onValueChange?: (value: number) => void;
 }
 
+// Half the thumb width in px (thumb is w-4 = 16px). The browser offsets the thumb
+// so its centre sits exactly at the theoretical percentage position, but it can't
+// move past the track edges — at 0 % the centre is 8 px in, at 100 % it is 8 px
+// from the right. We apply the same correction to the gradient stop so the filled
+// portion always ends exactly at the thumb centre.
+const THUMB_HALF = 8;
+
 const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
   ({ className, value, min = 0, max = 100, step = 1, onValueChange, ...props }, ref) => {
-    const percent = ((value - min) / (max - min)) * 100;
+    const range = max - min;
+    const percent = range > 0 ? ((value - min) / range) * 100 : 0;
+    // offset shrinks from +THUMB_HALF at 0 % to −THUMB_HALF at 100 %
+    const offset = THUMB_HALF - (percent / 100) * (THUMB_HALF * 2);
+    const stop = `calc(${percent}% + ${offset}px)`;
     return (
       <input
         ref={ref}
@@ -27,7 +38,7 @@ const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
           className
         )}
         style={{
-          background: `linear-gradient(to right, hsl(var(--primary)) ${percent}%, hsl(var(--secondary)) ${percent}%)`,
+          background: `linear-gradient(to right, hsl(var(--primary)) ${stop}, hsl(var(--secondary)) ${stop})`,
         }}
         {...props}
       />

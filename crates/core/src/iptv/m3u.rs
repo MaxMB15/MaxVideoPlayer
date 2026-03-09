@@ -33,6 +33,19 @@ pub fn parse_m3u(content: &str) -> Result<Vec<Channel>, M3uError> {
         .filter_map(|(idx, (extinf, url))| parse_extinf_block(idx, extinf, url))
         .collect();
 
+    // Deduplicate: same content is often listed under multiple group-title categories
+    // (e.g., "Movies Albania" + "Server 4"). Keep first occurrence of each (name, url) pair.
+    let mut seen = std::collections::HashSet::<(String, String)>::new();
+    let channels: Vec<Channel> = channels
+        .into_iter()
+        .filter(|ch| seen.insert((ch.name.clone(), ch.url.clone())))
+        .collect();
+
+    // Group movies with the same title under a single entry; extra URLs go into sources.
+    let channels = group_movie_sources(channels);
+    // Group series episodes with the same (series_title, season, episode) similarly.
+    let channels = group_series_episodes(channels);
+
     Ok(channels)
 }
 
@@ -83,6 +96,19 @@ fn parse_m3u_bytes(bytes: &[u8]) -> Result<Vec<Channel>, M3uError> {
         .filter_map(|(idx, (extinf, url))| parse_extinf_block(idx, extinf, url))
         .collect();
 
+    // Deduplicate: same content is often listed under multiple group-title categories
+    // (e.g., "Movies Albania" + "Server 4"). Keep first occurrence of each (name, url) pair.
+    let mut seen = std::collections::HashSet::<(String, String)>::new();
+    let channels: Vec<Channel> = channels
+        .into_iter()
+        .filter(|ch| seen.insert((ch.name.clone(), ch.url.clone())))
+        .collect();
+
+    // Group movies with the same title under a single entry; extra URLs go into sources.
+    let channels = group_movie_sources(channels);
+    // Group series episodes with the same (series_title, season, episode) similarly.
+    let channels = group_series_episodes(channels);
+
     Ok(channels)
 }
 
@@ -127,6 +153,19 @@ pub fn parse_m3u_reader<R: BufRead>(reader: R) -> Result<Vec<Channel>, M3uError>
         .enumerate()
         .filter_map(|(idx, (extinf, url))| parse_extinf_block(idx, extinf, url))
         .collect();
+
+    // Deduplicate: same content is often listed under multiple group-title categories
+    // (e.g., "Movies Albania" + "Server 4"). Keep first occurrence of each (name, url) pair.
+    let mut seen = std::collections::HashSet::<(String, String)>::new();
+    let channels: Vec<Channel> = channels
+        .into_iter()
+        .filter(|ch| seen.insert((ch.name.clone(), ch.url.clone())))
+        .collect();
+
+    // Group movies with the same title under a single entry; extra URLs go into sources.
+    let channels = group_movie_sources(channels);
+    // Group series episodes with the same (series_title, season, episode) similarly.
+    let channels = group_series_episodes(channels);
 
     Ok(channels)
 }
@@ -205,6 +244,17 @@ fn parse_extinf_block(index: usize, extinf: &str, url: &str) -> Option<Channel> 
     let logo_url = extract_attr(attrs_part, "tvg-logo");
     let group_title = extract_attr(attrs_part, "group-title").unwrap_or_default();
 
+    let content_type = classify_url(url, tvg_name.as_deref().unwrap_or(&name));
+
+    let (series_title, season, episode) = if content_type == "series" {
+        match parse_series_name(&name) {
+            Some((title, s, e)) => (Some(title), Some(s), Some(e)),
+            None => (None, None, None),
+        }
+    } else {
+        (None, None, None)
+    };
+
     Some(Channel {
         id: format!("ch-{index}"),
         name,
@@ -214,7 +264,53 @@ fn parse_extinf_block(index: usize, extinf: &str, url: &str) -> Option<Channel> 
         tvg_id,
         tvg_name,
         is_favorite: false,
+        content_type,
+        sources: Vec::new(),
+        series_title,
+        season,
+        episode,
     })
+}
+
+/// Classify a channel by URL path and tvg-name. URL path segments (/series/, /movie/) are
+/// definitive; tvg-name SxxExx pattern is checked before .ts extension because many IPTV
+/// providers serve series episodes as .ts streams.
+fn classify_url(url: &str, tvg_name: &str) -> String {
+    if url.contains("/series/") {
+        return "series".to_string();
+    }
+    if url.contains("/movie/") {
+        return "movie".to_string();
+    }
+    // Check tvg-name before .ts extension: series episodes are commonly served as .ts streams
+    if has_episode_code(tvg_name) {
+        return "series".to_string();
+    }
+    let path = url.split('?').next().unwrap_or(url);
+    if path.ends_with(".ts") {
+        return "live".to_string();
+    }
+    "live".to_string()
+}
+
+/// Returns true if `name` contains a season/episode code like S01E01.
+fn has_episode_code(name: &str) -> bool {
+    let b = name.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'S' || b[i] == b's' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() { j += 1; }
+            if j > i + 1 && j < b.len() && (b[j] == b'E' || b[j] == b'e') {
+                let k = j + 1;
+                let mut l = k;
+                while l < b.len() && b[l].is_ascii_digit() { l += 1; }
+                if l > k { return true; }
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn extract_attr(s: &str, key: &str) -> Option<String> {
@@ -227,6 +323,99 @@ fn extract_attr(s: &str, key: &str) -> Option<String> {
     } else {
         Some(val)
     }
+}
+
+/// Parse a series episode name into (show_title, season, episode).
+/// Recognises patterns like "Breaking Bad S03E07 Say My Name".
+/// Returns None if no SxxExx code is found.
+pub fn parse_series_name(name: &str) -> Option<(String, u32, u32)> {
+    let b = name.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'S' || b[i] == b's' {
+            let s_pos = i;
+            let mut j = i + 1;
+            let mut season: u32 = 0;
+            let mut digit_count = 0usize;
+            while j < b.len() && b[j].is_ascii_digit() {
+                season = season * 10 + (b[j] - b'0') as u32;
+                digit_count += 1;
+                j += 1;
+            }
+            if digit_count >= 1 && digit_count <= 3 && j < b.len() && (b[j] == b'E' || b[j] == b'e') {
+                let mut k = j + 1;
+                let mut episode: u32 = 0;
+                let mut ep_digits = 0usize;
+                while k < b.len() && b[k].is_ascii_digit() {
+                    episode = episode * 10 + (b[k] - b'0') as u32;
+                    ep_digits += 1;
+                    k += 1;
+                }
+                if ep_digits >= 1 {
+                    let title = name[..s_pos].trim().to_string();
+                    if !title.is_empty() {
+                        return Some((title, season, episode));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Group series with the same (series_title, season, episode) under a single Channel entry.
+/// Duplicate episode URLs are merged into `sources`. Episodes without parsed metadata pass through.
+fn group_series_episodes(channels: Vec<Channel>) -> Vec<Channel> {
+    let mut result: Vec<Channel> = Vec::new();
+    let mut ep_to_idx: std::collections::HashMap<(String, u32, u32), usize> =
+        std::collections::HashMap::new();
+
+    for ch in channels {
+        if ch.content_type != "series" {
+            result.push(ch);
+            continue;
+        }
+        match (&ch.series_title, ch.season, ch.episode) {
+            (Some(title), Some(season), Some(episode)) => {
+                let key = (title.to_lowercase(), season, episode);
+                if let Some(&idx) = ep_to_idx.get(&key) {
+                    result[idx].sources.push(ch.url);
+                } else {
+                    let idx = result.len();
+                    ep_to_idx.insert(key, idx);
+                    result.push(ch);
+                }
+            }
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
+/// Group movies with the same title (case-insensitive) under a single Channel entry.
+/// The first occurrence keeps its URL as primary; subsequent occurrences with the same
+/// name have their URLs appended to `sources`. Non-movie channels pass through unchanged.
+fn group_movie_sources(channels: Vec<Channel>) -> Vec<Channel> {
+    let mut result: Vec<Channel> = Vec::new();
+    let mut movie_name_to_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for ch in channels {
+        if ch.content_type != "movie" {
+            result.push(ch);
+            continue;
+        }
+        let key = ch.name.to_lowercase();
+        if let Some(&idx) = movie_name_to_idx.get(&key) {
+            result[idx].sources.push(ch.url);
+        } else {
+            let idx = result.len();
+            movie_name_to_idx.insert(key, idx);
+            result.push(ch);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -391,5 +580,86 @@ http://stream.example.com/ch2
         let content = "#EXTM3U\n#EXTINF:-1 group-title=\"News & Sports / 24h\",Channel\nhttp://url\n";
         let channels = parse_m3u(content).unwrap();
         assert_eq!(channels[0].group_title, "News & Sports / 24h");
+    }
+
+    // --- classify_url / series classification ---
+
+    #[test]
+    fn test_series_via_url_path() {
+        assert_eq!(classify_url("http://host/series/token/ep.ts", "anything"), "series");
+    }
+
+    #[test]
+    fn test_movie_via_url_path() {
+        assert_eq!(classify_url("http://host/movie/token/film.mp4", "anything"), "movie");
+    }
+
+    #[test]
+    fn test_series_with_ts_url_classified_by_tvg_name() {
+        // Provider serves series as .ts streams — tvg-name must win over .ts extension
+        assert_eq!(
+            classify_url("http://host/stream/12345.ts", "Suits S07E01"),
+            "series"
+        );
+    }
+
+    #[test]
+    fn test_plain_ts_url_without_episode_code_is_live() {
+        assert_eq!(classify_url("http://host/ch1.ts", "BBC News HD"), "live");
+    }
+
+    #[test]
+    fn test_series_full_m3u_suits_format() {
+        // Simulate the real-world M3U format: tvg-name with SxxExx, .ts URL
+        let content = "#EXTM3U\n\
+            #EXTINF:-1 tvg-name=\"Suits S07E01\" group-title=\"Server 4\",Suits S07E01\n\
+            http://provider.example.com/stream/Suits_S07E01.ts\n\
+            #EXTINF:-1 tvg-name=\"Suits S07E02\" group-title=\"Server 4\",Suits S07E02\n\
+            http://provider.example.com/stream/Suits_S07E02.ts\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].content_type, "series");
+        assert_eq!(channels[0].series_title.as_deref(), Some("Suits"));
+        assert_eq!(channels[0].season, Some(7));
+        assert_eq!(channels[0].episode, Some(1));
+        assert_eq!(channels[1].content_type, "series");
+        assert_eq!(channels[1].series_title.as_deref(), Some("Suits"));
+        assert_eq!(channels[1].season, Some(7));
+        assert_eq!(channels[1].episode, Some(2));
+    }
+
+    #[test]
+    fn test_series_mp4_via_series_url_path() {
+        // Provider serves series as .mp4 via /series/ URL path
+        let content = "#EXTM3U\n\
+            #EXTINF:-1 tvg-name=\"Suits LA S01E10\" tvg-logo=\"http://provider.example.com/logo.jpg\" group-title=\"Server 2\",Suits LA S01E10\n\
+            http://provider.example.com:80/series/user/pass/3184091.mp4\n";
+        let channels = parse_m3u(content).unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].content_type, "series");
+        assert_eq!(channels[0].series_title.as_deref(), Some("Suits LA"));
+        assert_eq!(channels[0].season, Some(1));
+        assert_eq!(channels[0].episode, Some(10));
+    }
+
+    #[test]
+    fn test_parse_series_name_basic() {
+        assert_eq!(
+            parse_series_name("Suits LA S01E10"),
+            Some(("Suits LA".to_string(), 1, 10))
+        );
+    }
+
+    #[test]
+    fn test_parse_series_name_with_trailing_text() {
+        assert_eq!(
+            parse_series_name("Breaking Bad S03E07 Say My Name"),
+            Some(("Breaking Bad".to_string(), 3, 7))
+        );
+    }
+
+    #[test]
+    fn test_parse_series_name_no_match() {
+        assert_eq!(parse_series_name("BBC News HD"), None);
     }
 }

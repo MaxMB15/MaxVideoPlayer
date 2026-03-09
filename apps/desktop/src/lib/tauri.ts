@@ -84,3 +84,21 @@ export async function getAllChannels(): Promise<Channel[]> {
 export async function toggleFavorite(channelId: string): Promise<boolean> {
   return invoke("toggle_favorite", { channelId });
 }
+
+export async function refreshProvider(id: string): Promise<void> {
+  return invoke("refresh_provider", { id });
+}
+
+export async function updateProvider(
+  id: string,
+  name: string,
+  url: string,
+  username?: string,
+  password?: string
+): Promise<void> {
+  return invoke("update_provider", { id, name, url, username, password });
+}
+
+export async function getXtreamSeriesEpisodes(channelId: string): Promise<Channel[]> {
+  return invoke("get_xtream_series_episodes", { channelId });
+}

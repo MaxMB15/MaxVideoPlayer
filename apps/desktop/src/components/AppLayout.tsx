@@ -3,6 +3,7 @@ import { usePlatform } from "@/hooks/usePlatform";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
 import { mpvSetVisible } from "@/lib/tauri";
+import { useFullscreen } from "@/lib/fullscreen-context";
 import {
   Tv,
   List,
@@ -36,6 +37,7 @@ export function AppLayout() {
 function DesktopLayout() {
   const { pathname } = useLocation();
   const isPlayer = pathname === "/player";
+  const { isFullscreen } = useFullscreen();
 
   // Hide the native NSOpenGLView when not on the player route so it doesn't
   // bleed through transparent areas on other pages.
@@ -46,8 +48,8 @@ function DesktopLayout() {
   return (
     <div className="flex h-screen overflow-hidden">
       <aside className={cn(
-        "w-16 flex flex-col items-center py-4 gap-1 border-r border-border",
-        isPlayer ? "bg-card" : "bg-card/50"
+        "w-16 flex flex-col items-center py-3 gap-0.5 border-r border-border bg-card shrink-0",
+        isFullscreen && "hidden"
       )}>
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
@@ -55,20 +57,27 @@ function DesktopLayout() {
             to={to}
             className={({ isActive }) =>
               cn(
-                "flex flex-col items-center justify-center w-12 h-12 rounded-lg text-muted-foreground transition-colors",
+                "relative flex flex-col items-center justify-center w-full py-3 gap-1 text-muted-foreground transition-colors",
                 isActive
-                  ? "bg-primary/10 text-primary"
-                  : "hover:bg-accent hover:text-accent-foreground"
+                  ? "text-primary"
+                  : "hover:text-foreground"
               )
             }
             title={label}
           >
-            <Icon className="h-5 w-5" />
-            <span className="text-[10px] mt-0.5">{label}</span>
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-primary" />
+                )}
+                <Icon className="h-5 w-5" />
+                <span className="text-[9px] font-medium leading-none">{label}</span>
+              </>
+            )}
           </NavLink>
         ))}
       </aside>
-      <main className="flex-1 overflow-hidden relative">
+      <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
     </div>

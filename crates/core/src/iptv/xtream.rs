@@ -1,5 +1,6 @@
 use crate::models::channel::Channel;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -36,9 +37,23 @@ impl XtreamCredentials {
         )
     }
 
-    fn stream_url(&self, stream_id: u64, extension: &str) -> String {
+    fn live_stream_url(&self, stream_id: u64, extension: &str) -> String {
         format!(
             "{}/live/{}/{}/{stream_id}.{extension}",
+            self.server, self.username, self.password
+        )
+    }
+
+    fn vod_stream_url(&self, stream_id: u64, extension: &str) -> String {
+        format!(
+            "{}/movie/{}/{}/{stream_id}.{extension}",
+            self.server, self.username, self.password
+        )
+    }
+
+    fn series_stream_url(&self, episode_id: &str, extension: &str) -> String {
+        format!(
+            "{}/series/{}/{}/{episode_id}.{extension}",
             self.server, self.username, self.password
         )
     }
@@ -86,6 +101,45 @@ struct XtreamStream {
     container_extension: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct XtreamSeries {
+    series_id: Option<u64>,
+    name: Option<String>,
+    cover: Option<String>,
+    category_id: Option<String>,
+}
+
+// --- Series info (get_series_info endpoint) ---
+
+#[derive(Debug, Deserialize)]
+struct XtreamSeriesInfoResponse {
+    info: Option<XtreamSeriesInfoMeta>,
+    episodes: Option<HashMap<String, Vec<XtreamEpisode>>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XtreamSeriesInfoMeta {
+    name: Option<String>,
+    cover: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XtreamEpisode {
+    id: Option<serde_json::Value>,
+    episode_num: Option<serde_json::Value>,
+    title: Option<String>,
+    container_extension: Option<String>,
+}
+
+/// Coerce a JSON value that could be a string or number into u64.
+fn coerce_u64(v: &serde_json::Value) -> Option<u64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
 pub struct XtreamClient {
     credentials: XtreamCredentials,
     client: reqwest::Client,
@@ -117,87 +171,91 @@ impl XtreamClient {
         }
     }
 
-    pub async fn get_live_categories(&self) -> Result<Vec<(String, String)>, XtreamError> {
-        let url = self.credentials.api_url("get_live_categories");
+    async fn get_categories(&self, action: &str) -> Result<HashMap<String, String>, XtreamError> {
+        let url = self.credentials.api_url(action);
         let cats: Vec<XtreamCategory> = self.client.get(&url).send().await?.json().await?;
-        Ok(cats
-            .into_iter()
-            .map(|c| (c.category_id, c.category_name))
-            .collect())
+        Ok(cats.into_iter().map(|c| (c.category_id, c.category_name)).collect())
     }
 
-    pub async fn get_live_streams(&self) -> Result<Vec<Channel>, XtreamError> {
-        let url = self.credentials.api_url("get_live_streams");
-        let streams: Vec<XtreamStream> = self.client.get(&url).send().await?.json().await?;
-
-        let categories = self.get_live_categories().await?;
-        let cat_map: std::collections::HashMap<String, String> = categories.into_iter().collect();
-
-        let channels: Vec<Channel> = streams
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                let stream_id = s.stream_id?;
-                let name = s.name.unwrap_or_else(|| format!("Stream {stream_id}"));
-                let ext = s.container_extension.as_deref().unwrap_or("ts");
-                let group = s
-                    .category_id
-                    .as_ref()
-                    .and_then(|cid| cat_map.get(cid))
-                    .cloned()
-                    .unwrap_or_else(|| "Uncategorized".to_string());
-
-                Some(Channel {
-                    id: format!("xt-{i}"),
-                    name,
-                    url: self.credentials.stream_url(stream_id, ext),
-                    logo_url: s.stream_icon.filter(|u| !u.is_empty()),
-                    group_title: group,
-                    tvg_id: s.epg_channel_id,
-                    tvg_name: None,
-                    is_favorite: false,
-                })
-            })
-            .collect();
-
-        Ok(channels)
+    async fn fetch_streams_raw(&self, action: &str) -> Result<Vec<XtreamStream>, XtreamError> {
+        let url = self.credentials.api_url(action);
+        Ok(self.client.get(&url).send().await?.json().await?)
     }
 
-    pub async fn get_vod_streams(&self) -> Result<Vec<Channel>, XtreamError> {
-        let url = self.credentials.api_url("get_vod_streams");
-        let streams: Vec<XtreamStream> = self.client.get(&url).send().await?.json().await?;
+    async fn fetch_series_raw(&self) -> Result<Vec<XtreamSeries>, XtreamError> {
+        let url = self.credentials.api_url("get_series");
+        Ok(self.client.get(&url).send().await?.json().await?)
+    }
 
-        let channels: Vec<Channel> = streams
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                let stream_id = s.stream_id?;
-                let name = s.name.unwrap_or_else(|| format!("VOD {stream_id}"));
-                let ext = s.container_extension.as_deref().unwrap_or("mp4");
+    /// Fetch all episodes for a specific series from the Xtream `get_series_info` endpoint.
+    pub async fn fetch_series_episodes(
+        &self,
+        series_id: u64,
+        show_name: &str,
+        show_logo: Option<&str>,
+        group: &str,
+    ) -> Result<Vec<Channel>, XtreamError> {
+        let url = format!(
+            "{}/player_api.php?username={}&password={}&action=get_series_info&series_id={series_id}",
+            self.credentials.server, self.credentials.username, self.credentials.password
+        );
+        let resp: XtreamSeriesInfoResponse = self.client.get(&url).send().await?.json().await?;
 
-                Some(Channel {
-                    id: format!("vod-{i}"),
+        let display_name = resp.info.as_ref()
+            .and_then(|i| i.name.as_deref())
+            .filter(|n| !n.is_empty())
+            .unwrap_or(show_name);
+        let logo = resp.info.as_ref()
+            .and_then(|i| i.cover.as_deref())
+            .filter(|u| !u.is_empty())
+            .or(show_logo);
+        let episodes_map = resp.episodes.unwrap_or_default();
+
+        let mut channels: Vec<Channel> = Vec::new();
+        for (season_str, episodes) in &episodes_map {
+            let season: u32 = season_str.parse().unwrap_or(0);
+            for (i, ep) in episodes.iter().enumerate() {
+                let ep_id = match ep.id.as_ref().and_then(|v| coerce_u64(v)) {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let ext = ep.container_extension.as_deref().unwrap_or("mkv");
+                let ep_num = ep.episode_num.as_ref().and_then(|v| coerce_u64(v)).map(|n| n as u32);
+                let ep_title = ep.title.as_deref().filter(|t| !t.is_empty());
+
+                let name = match (ep_num, ep_title) {
+                    (Some(n), Some(t)) => format!("{display_name} S{season:02}E{n:02} {t}"),
+                    (Some(n), None)    => format!("{display_name} S{season:02}E{n:02}"),
+                    (None,    Some(t)) => format!("{display_name} S{season:02} {t}"),
+                    (None,    None)    => format!("{display_name} S{season:02} Ep{i}"),
+                };
+
+                channels.push(Channel {
+                    id: format!("xt-ep-{series_id}-s{season}-{i}"),
                     name,
-                    url: format!(
-                        "{}/movie/{}/{}/{stream_id}.{ext}",
-                        self.credentials.server,
-                        self.credentials.username,
-                        self.credentials.password
-                    ),
-                    logo_url: s.stream_icon.filter(|u| !u.is_empty()),
-                    group_title: "VOD".to_string(),
+                    url: self.credentials.series_stream_url(&ep_id.to_string(), ext),
+                    logo_url: logo.map(|s| s.to_string()),
+                    group_title: group.to_string(),
                     tvg_id: None,
                     tvg_name: None,
                     is_favorite: false,
-                })
-            })
-            .collect();
+                    content_type: "series".to_string(),
+                    sources: Vec::new(),
+                    series_title: Some(display_name.to_string()),
+                    season: Some(season),
+                    episode: ep_num,
+                });
+            }
+        }
 
+        channels.sort_by_key(|ch| (ch.season.unwrap_or(0), ch.episode.unwrap_or(0)));
         Ok(channels)
     }
 }
 
-/// Convenience function: authenticate and fetch all live streams.
+/// Authenticate then fetch all 6 Xtream endpoints simultaneously (3 stream lists + 3 category
+/// lists). Each fetch is independent; partial failures are tolerated so a server that supports
+/// only some endpoints still returns what it can.
 pub async fn fetch_xtream_channels(
     server: &str,
     username: &str,
@@ -206,5 +264,131 @@ pub async fn fetch_xtream_channels(
     let creds = XtreamCredentials::new(server, username, password);
     let client = XtreamClient::new(creds);
     client.authenticate().await?;
-    client.get_live_streams().await
+
+    let (
+        live_streams_r,
+        live_cats_r,
+        vod_streams_r,
+        vod_cats_r,
+        series_r,
+        series_cats_r,
+    ) = tokio::join!(
+        client.fetch_streams_raw("get_live_streams"),
+        client.get_categories("get_live_categories"),
+        client.fetch_streams_raw("get_vod_streams"),
+        client.get_categories("get_vod_categories"),
+        client.fetch_series_raw(),
+        client.get_categories("get_series_categories"),
+    );
+
+    let live_cats = live_cats_r.unwrap_or_default();
+    let vod_cats = vod_cats_r.unwrap_or_default();
+    let series_cats = series_cats_r.unwrap_or_default();
+
+    let mut all: Vec<Channel> = Vec::new();
+
+    if let Ok(streams) = live_streams_r {
+        let channels: Vec<Channel> = streams.into_iter().enumerate().filter_map(|(i, s)| {
+            let stream_id = s.stream_id?;
+            let name = s.name.unwrap_or_else(|| format!("Stream {stream_id}"));
+            let ext = s.container_extension.as_deref().unwrap_or("ts");
+            let group = s.category_id.as_ref()
+                .and_then(|cid| live_cats.get(cid))
+                .cloned()
+                .unwrap_or_else(|| "Uncategorized".to_string());
+            Some(Channel {
+                id: format!("xt-{i}"),
+                name,
+                url: client.credentials.live_stream_url(stream_id, ext),
+                logo_url: s.stream_icon.filter(|u| !u.is_empty()),
+                group_title: group,
+                tvg_id: s.epg_channel_id,
+                tvg_name: None,
+                is_favorite: false,
+                content_type: "live".to_string(),
+                sources: Vec::new(),
+                series_title: None,
+                season: None,
+                episode: None,
+            })
+        }).collect();
+        all.extend(channels);
+    }
+
+    if let Ok(streams) = vod_streams_r {
+        let channels: Vec<Channel> = streams.into_iter().enumerate().filter_map(|(i, s)| {
+            let stream_id = s.stream_id?;
+            let name = s.name.unwrap_or_else(|| format!("VOD {stream_id}"));
+            let ext = s.container_extension.as_deref().unwrap_or("mp4");
+            let group = s.category_id.as_ref()
+                .and_then(|cid| vod_cats.get(cid))
+                .cloned()
+                .unwrap_or_else(|| "Uncategorized".to_string());
+            Some(Channel {
+                id: format!("vod-{i}"),
+                name,
+                url: client.credentials.vod_stream_url(stream_id, ext),
+                logo_url: s.stream_icon.filter(|u| !u.is_empty()),
+                group_title: group,
+                tvg_id: None,
+                tvg_name: None,
+                is_favorite: false,
+                content_type: "movie".to_string(),
+                sources: Vec::new(),
+                series_title: None,
+                season: None,
+                episode: None,
+            })
+        }).collect();
+        all.extend(channels);
+    }
+
+    if let Ok(series_list) = series_r {
+        let channels: Vec<Channel> = series_list.into_iter().enumerate().filter_map(|(i, s)| {
+            let series_id = s.series_id?;
+            let name = s.name.unwrap_or_else(|| format!("Series {series_id}"));
+            let group = s.category_id.as_ref()
+                .and_then(|cid| series_cats.get(cid))
+                .cloned()
+                .unwrap_or_else(|| "Uncategorized".to_string());
+            Some(Channel {
+                id: format!("ser-{i}"),
+                name,
+                url: format!("xtream://series/{series_id}"),
+                logo_url: s.cover.filter(|u| !u.is_empty()),
+                group_title: group,
+                tvg_id: None,
+                tvg_name: None,
+                is_favorite: false,
+                content_type: "series".to_string(),
+                sources: Vec::new(),
+                series_title: None,
+                season: None,
+                episode: None,
+            })
+        }).collect();
+        all.extend(channels);
+    }
+
+    if all.is_empty() {
+        return Err(XtreamError::InvalidResponse("No streams returned from any endpoint".to_string()));
+    }
+
+    Ok(all)
+}
+
+/// Fetch all episodes for a specific Xtream series by its series_id.
+/// Called on demand when the user opens a series from the UI.
+pub async fn fetch_xtream_series_episodes(
+    server: &str,
+    username: &str,
+    password: &str,
+    series_id: u64,
+    show_name: &str,
+    show_logo: Option<&str>,
+    group: &str,
+) -> Result<Vec<Channel>, XtreamError> {
+    let creds = XtreamCredentials::new(server, username, password);
+    let client = XtreamClient::new(creds);
+    client.fetch_series_episodes(series_id, show_name, show_logo, group).await
 }

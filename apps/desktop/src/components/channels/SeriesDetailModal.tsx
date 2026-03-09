@@ -165,6 +165,7 @@ export function SeriesDetailModal({
         {step === "seasons" && (
           <>
             <div className="flex gap-4 px-5 pb-4 shrink-0">
+              {/* Poster */}
               <div className="w-20 h-28 rounded-xl bg-secondary overflow-hidden shrink-0 flex items-center justify-center">
                 {showLogoUrl ? (
                   <img src={showLogoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
@@ -172,7 +173,9 @@ export function SeriesDetailModal({
                   <MonitorPlay className="h-8 w-8 text-muted-foreground/30" />
                 )}
               </div>
-              <div className="flex flex-col justify-center gap-1.5 flex-1 min-w-0">
+
+              {/* Show info — ~65% of remaining space */}
+              <div className="flex flex-col justify-center gap-1.5 flex-[2] min-w-0">
                 <p className="text-base font-semibold leading-tight line-clamp-2">{showTitle}</p>
                 <p className="text-xs text-muted-foreground">Series · —</p>
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -180,15 +183,33 @@ export function SeriesDetailModal({
                     <Star className="h-2.5 w-2.5" /> N/A
                   </span>
                   <span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
-                    🍅 N/A Critics
+                    🍅 N/A
                   </span>
                   <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-500 px-2 py-0.5 rounded-full">
-                    🍿 N/A Audience
+                    🍿 N/A
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                   No description available.
                 </p>
+              </div>
+
+              {/* Season/episode stats — ~35% of remaining space */}
+              <div className="flex flex-col justify-center gap-2.5 flex-[1] min-w-0 shrink-0">
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-secondary px-3 py-2.5 text-center">
+                    <span className="text-base font-bold tabular-nums leading-none">{seasons.length}</span>
+                    <span className="text-[11px] text-muted-foreground mt-0.5">
+                      {seasons.length === 1 ? "Season" : "Seasons"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-secondary px-3 py-2.5 text-center">
+                    <span className="text-base font-bold tabular-nums leading-none">{deduped.length}</span>
+                    <span className="text-[11px] text-muted-foreground mt-0.5">
+                      {deduped.length === 1 ? "Episode" : "Episodes"}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
             <div className="border-t border-border mx-5 shrink-0" />

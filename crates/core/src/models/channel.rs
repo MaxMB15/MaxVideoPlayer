@@ -11,6 +11,21 @@ pub struct Channel {
     pub tvg_id: Option<String>,
     pub tvg_name: Option<String>,
     pub is_favorite: bool,
+    /// Classified content type: "live", "movie", or "series"
+    pub content_type: String,
+    /// Alternative stream URLs for the same content (different servers/quality).
+    /// Empty for channels that are unique. Used for movie/series deduplication.
+    #[serde(default)]
+    pub sources: Vec<String>,
+    /// Parsed show title for series content (e.g. "Breaking Bad" from "Breaking Bad S01E03").
+    #[serde(default)]
+    pub series_title: Option<String>,
+    /// Season number parsed from the episode name (e.g. 1 from S01E03).
+    #[serde(default)]
+    pub season: Option<u32>,
+    /// Episode number parsed from the episode name (e.g. 3 from S01E03).
+    #[serde(default)]
+    pub episode: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,17 +54,4 @@ impl Category {
         cats.sort_by(|a, b| a.name.cmp(&b.name));
         cats
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamInfo {
-    pub stream_type: StreamType,
-    pub container: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StreamType {
-    Live,
-    Vod,
-    Series,
 }

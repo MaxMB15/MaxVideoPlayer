@@ -1,3 +1,4 @@
+use crate::iptv::m3u::parse_series_name;
 use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -59,6 +60,8 @@ impl CacheStore {
                 tvg_id TEXT,
                 tvg_name TEXT,
                 is_favorite INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'live',
+                sources TEXT NOT NULL DEFAULT '[]',
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
             );
 
@@ -73,6 +76,22 @@ impl CacheStore {
             CREATE INDEX IF NOT EXISTS idx_channels_group ON channels(group_title);
             CREATE INDEX IF NOT EXISTS idx_channels_favorite ON channels(is_favorite);",
         )?;
+        // Migrate: add content_type if it doesn't exist yet (SQLite ignores duplicate columns error)
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE channels ADD COLUMN content_type TEXT NOT NULL DEFAULT 'live';"
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE channels ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';"
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE channels ADD COLUMN series_title TEXT;"
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE channels ADD COLUMN season INTEGER;"
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE channels ADD COLUMN episode INTEGER;"
+        );
         Ok(())
     }
 
@@ -83,9 +102,20 @@ impl CacheStore {
             ProviderType::M3u => "m3u",
             ProviderType::Xtream => "xtream",
         };
+        // Use INSERT ... ON CONFLICT DO UPDATE (not INSERT OR REPLACE) so the existing
+        // row is updated in-place rather than deleted + re-inserted.  DELETE + INSERT
+        // would trigger ON DELETE CASCADE and wipe all channels for the provider.
         self.conn.execute(
-            "INSERT OR REPLACE INTO providers (id, name, provider_type, url, username, password, last_updated, channel_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO providers (id, name, provider_type, url, username, password, last_updated, channel_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+               name          = excluded.name,
+               provider_type = excluded.provider_type,
+               url           = excluded.url,
+               username      = excluded.username,
+               password      = excluded.password,
+               last_updated  = excluded.last_updated,
+               channel_count = excluded.channel_count",
             params![
                 provider.id,
                 provider.name,
@@ -96,6 +126,21 @@ impl CacheStore {
                 provider.last_updated,
                 provider.channel_count,
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_provider_credentials(
+        &self,
+        id: &str,
+        name: &str,
+        url: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE providers SET name = ?1, url = ?2, username = ?3, password = ?4 WHERE id = ?5",
+            params![name, url, username, password, id],
         )?;
         Ok(())
     }
@@ -124,6 +169,31 @@ impl CacheStore {
         Ok(providers)
     }
 
+    pub fn get_provider(&self, id: &str) -> Result<Option<Provider>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT id, name, provider_type, url, username, password, last_updated, channel_count FROM providers WHERE id = ?1",
+            params![id],
+            |row| {
+                let ptype: String = row.get(2)?;
+                Ok(Provider {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    provider_type: if ptype == "xtream" { ProviderType::Xtream } else { ProviderType::M3u },
+                    url: row.get(3)?,
+                    username: row.get(4)?,
+                    password: row.get(5)?,
+                    last_updated: row.get(6)?,
+                    channel_count: row.get::<_, i64>(7)? as usize,
+                })
+            },
+        );
+        match result {
+            Ok(p) => Ok(Some(p)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
     pub fn remove_provider(&self, id: &str) -> Result<(), CacheError> {
         self.conn.execute("DELETE FROM channels WHERE provider_id = ?1", params![id])?;
         self.conn.execute("DELETE FROM providers WHERE id = ?1", params![id])?;
@@ -148,11 +218,13 @@ impl CacheStore {
         self.conn.execute("DELETE FROM channels WHERE provider_id = ?1", params![provider_id])?;
 
         let mut stmt = self.conn.prepare(
-            "INSERT INTO channels (id, provider_id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            "INSERT INTO channels (id, provider_id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
         )?;
 
         for ch in channels {
+            let sources_json = serde_json::to_string(&ch.sources)
+                .unwrap_or_else(|_| "[]".to_string());
             stmt.execute(params![
                 ch.id,
                 provider_id,
@@ -163,6 +235,11 @@ impl CacheStore {
                 ch.tvg_id,
                 ch.tvg_name,
                 ch.is_favorite as i32,
+                &ch.content_type,
+                sources_json,
+                ch.series_title,
+                ch.season.map(|s| s as i64),
+                ch.episode.map(|e| e as i64),
             ])?;
         }
         Ok(())
@@ -170,10 +247,12 @@ impl CacheStore {
 
     pub fn get_channels(&self, provider_id: &str) -> Result<Vec<Channel>, CacheError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite
+            "SELECT id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode
              FROM channels WHERE provider_id = ?1 ORDER BY name"
         )?;
-        let channels = stmt.query_map(params![provider_id], |row| {
+        let mut channels = stmt.query_map(params![provider_id], |row| {
+            let sources_json: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+            let sources: Vec<String> = serde_json::from_str(&sources_json).unwrap_or_default();
             Ok(Channel {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -183,17 +262,25 @@ impl CacheStore {
                 tvg_id: row.get(5)?,
                 tvg_name: row.get(6)?,
                 is_favorite: row.get::<_, i32>(7)? != 0,
+                content_type: row.get(8)?,
+                sources,
+                series_title: row.get(10)?,
+                season: row.get::<_, Option<i64>>(11)?.map(|s| s as u32),
+                episode: row.get::<_, Option<i64>>(12)?.map(|e| e as u32),
             })
         })?.collect::<SqlResult<Vec<_>>>()?;
+        enrich_stale_series(&mut channels);
         Ok(channels)
     }
 
     pub fn get_all_channels(&self) -> Result<Vec<Channel>, CacheError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite
+            "SELECT id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode
              FROM channels ORDER BY name"
         )?;
-        let channels = stmt.query_map([], |row| {
+        let mut channels = stmt.query_map([], |row| {
+            let sources_json: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+            let sources: Vec<String> = serde_json::from_str(&sources_json).unwrap_or_default();
             Ok(Channel {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -203,9 +290,75 @@ impl CacheStore {
                 tvg_id: row.get(5)?,
                 tvg_name: row.get(6)?,
                 is_favorite: row.get::<_, i32>(7)? != 0,
+                content_type: row.get(8)?,
+                sources,
+                series_title: row.get(10)?,
+                season: row.get::<_, Option<i64>>(11)?.map(|s| s as u32),
+                episode: row.get::<_, Option<i64>>(12)?.map(|e| e as u32),
             })
         })?.collect::<SqlResult<Vec<_>>>()?;
+        enrich_stale_series(&mut channels);
         Ok(channels)
+    }
+
+    /// Look up a single channel by its ID. Used to resolve Xtream series metadata.
+    pub fn get_channel_by_id(&self, channel_id: &str) -> Result<Option<Channel>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode
+             FROM channels WHERE id = ?1",
+            params![channel_id],
+            |row| {
+                let sources_json: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+                let sources: Vec<String> = serde_json::from_str(&sources_json).unwrap_or_default();
+                Ok(Channel {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    url: row.get(2)?,
+                    logo_url: row.get(3)?,
+                    group_title: row.get(4)?,
+                    tvg_id: row.get(5)?,
+                    tvg_name: row.get(6)?,
+                    is_favorite: row.get::<_, i32>(7)? != 0,
+                    content_type: row.get(8)?,
+                    sources,
+                    series_title: row.get(10)?,
+                    season: row.get::<_, Option<i64>>(11)?.map(|s| s as u32),
+                    episode: row.get::<_, Option<i64>>(12)?.map(|e| e as u32),
+                })
+            },
+        );
+        match result {
+            Ok(ch) => Ok(Some(ch)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    /// Find the provider that owns a given channel (JOIN query).
+    pub fn get_provider_for_channel(&self, channel_id: &str) -> Result<Option<Provider>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT p.id, p.name, p.provider_type, p.url, p.username, p.password, p.last_updated, p.channel_count
+             FROM providers p JOIN channels c ON c.provider_id = p.id WHERE c.id = ?1",
+            params![channel_id],
+            |row| {
+                let ptype: String = row.get(2)?;
+                Ok(Provider {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    provider_type: if ptype == "xtream" { ProviderType::Xtream } else { ProviderType::M3u },
+                    url: row.get(3)?,
+                    username: row.get(4)?,
+                    password: row.get(5)?,
+                    last_updated: row.get(6)?,
+                    channel_count: row.get::<_, i64>(7)? as usize,
+                })
+            },
+        );
+        match result {
+            Ok(p) => Ok(Some(p)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
     }
 
     pub fn toggle_favorite(&self, channel_id: &str) -> Result<bool, CacheError> {
@@ -243,6 +396,24 @@ impl CacheStore {
             Ok(json) => Ok(Some(json)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+}
+
+/// For series channels loaded from an older cache that has NULL series_title/season/episode,
+/// re-parse the channel name in memory so the frontend always gets enriched metadata.
+/// Does not modify the database — the next playlist refresh will persist the correct values.
+fn enrich_stale_series(channels: &mut Vec<Channel>) {
+    for ch in channels.iter_mut() {
+        if ch.content_type != "series" {
+            continue;
+        }
+        if ch.series_title.is_none() || ch.season.is_none() || ch.episode.is_none() {
+            if let Some((title, season, episode)) = parse_series_name(&ch.name) {
+                ch.series_title = Some(title);
+                ch.season = Some(season);
+                ch.episode = Some(episode);
+            }
         }
     }
 }
@@ -297,6 +468,11 @@ mod tests {
             tvg_id: None,
             tvg_name: None,
             is_favorite: false,
+            content_type: "live".into(),
+            sources: Vec::new(),
+            series_title: None,
+            season: None,
+            episode: None,
         }
     }
 
@@ -443,5 +619,65 @@ mod tests {
         assert_eq!(loaded[0].username.as_deref(), Some("user"));
         assert_eq!(loaded[0].password.as_deref(), Some("pass"));
         assert_eq!(loaded[0].channel_count, 500);
+    }
+
+    #[test]
+    fn test_stale_series_enriched_on_read() {
+        // Simulate a channel stored with content_type="series" but NULL series_title/season/episode
+        // (as would happen with data cached before those columns were added).
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P")).unwrap();
+
+        let stale = Channel {
+            id: "ch1".into(),
+            name: "Suits LA S01E10".into(),
+            url: "http://example.com/series/x/y/ep.mp4".into(),
+            logo_url: None,
+            group_title: "Server 2".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: None,   // stale — not yet parsed
+            season: None,
+            episode: None,
+        };
+        store.save_channels("p1", &[stale]).unwrap();
+
+        let channels = store.get_channels("p1").unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].series_title.as_deref(), Some("Suits LA"));
+        assert_eq!(channels[0].season, Some(1));
+        assert_eq!(channels[0].episode, Some(10));
+    }
+
+    #[test]
+    fn test_stale_series_enriched_in_get_all() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_provider(&make_provider("p1", "P")).unwrap();
+
+        let stale = Channel {
+            id: "ch2".into(),
+            name: "Breaking Bad S03E07".into(),
+            url: "http://example.com/series/bb/S03E07.ts".into(),
+            logo_url: None,
+            group_title: "Drama".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: None,
+            season: None,
+            episode: None,
+        };
+        store.save_channels("p1", &[stale]).unwrap();
+
+        let channels = store.get_all_channels().unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].series_title.as_deref(), Some("Breaking Bad"));
+        assert_eq!(channels[0].season, Some(3));
+        assert_eq!(channels[0].episode, Some(7));
     }
 }

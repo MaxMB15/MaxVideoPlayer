@@ -67,8 +67,8 @@ export function useMpv() {
     setError(null);
     setFallbackActive(false);
     setFirstFrameReady(false);
-    // Reset playing state immediately so the background goes opaque while loading.
-    setState((s) => ({ ...s, isPlaying: false, isPaused: false }));
+    // Reset playing state and position immediately so the bar doesn't show stale values.
+    setState((s) => ({ ...s, isPlaying: false, isPaused: false, position: 0, duration: 0 }));
     try {
       await mpvLoad(url);
       // Don't set isPlaying optimistically — let the next poll confirm it from Rust

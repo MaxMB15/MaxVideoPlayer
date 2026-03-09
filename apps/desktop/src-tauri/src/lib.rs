@@ -27,6 +27,9 @@ pub fn run() {
             commands::remove_provider,
             commands::get_all_channels,
             commands::toggle_favorite,
+            commands::refresh_provider,
+            commands::update_provider,
+            commands::get_xtream_series_episodes,
         ])
         .setup(|app| {
             let app_dir = app

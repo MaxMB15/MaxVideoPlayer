@@ -7,6 +7,11 @@ export interface Channel {
   tvgId?: string;
   tvgName?: string;
   isFavorite: boolean;
+  contentType: "live" | "movie" | "series";
+  sources: string[];
+  seriesTitle?: string;
+  season?: number;
+  episode?: number;
 }
 
 export interface Category {
