@@ -1,91 +1,82 @@
-import { Play, Star } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Play, Tv2 } from "lucide-react";
 import type { Channel } from "@/lib/types";
 
 interface ChannelCardProps {
   channel: Channel;
   onPlay: (channel: Channel) => void;
-  onToggleFavorite?: (channel: Channel) => void;
-  variant?: "grid" | "list";
+  variant?: "row" | "poster";
 }
 
-export function ChannelCard({
-  channel,
-  onPlay,
-  onToggleFavorite,
-  variant = "grid",
-}: ChannelCardProps) {
-  if (variant === "list") {
-    return (
+function RowCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channel) => void }) {
+  return (
+    <button
+      onClick={() => onPlay(channel)}
+      className="group flex items-center gap-3 w-full px-2 py-2 rounded-lg hover:bg-accent transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      <div className="h-8 w-8 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+        {channel.logoUrl ? (
+          <img src={channel.logoUrl} alt="" className="h-full w-full object-contain" loading="lazy" />
+        ) : (
+          <Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm leading-tight truncate">{channel.name}</p>
+        {channel.groupTitle && (
+          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{channel.groupTitle}</p>
+        )}
+      </div>
+      <span className="flex items-center gap-1 text-[10px] font-medium text-red-400 shrink-0">
+        <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
+        LIVE
+      </span>
+    </button>
+  );
+}
+
+function PosterCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channel) => void }) {
+  const hasSources = channel.sources.length > 0;
+
+  return (
+    <div className="group flex flex-col text-left relative">
       <button
         onClick={() => onPlay(channel)}
-        className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-accent/50 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-primary"
-        tabIndex={0}
+        className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg w-full"
       >
-        <div className="h-10 w-10 rounded-md bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+        <div className="relative w-full h-24 rounded-lg bg-secondary overflow-hidden mb-1.5">
           {channel.logoUrl ? (
             <img
               src={channel.logoUrl}
               alt=""
-              className="h-full w-full object-contain"
+              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
               loading="lazy"
             />
           ) : (
-            <Play className="h-4 w-4 text-muted-foreground" />
+            <div className="h-full w-full flex items-center justify-center">
+              <Play className="h-6 w-6 text-muted-foreground/30" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
+            <div className="h-9 w-9 rounded-full bg-primary flex items-center justify-center opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all duration-150">
+              <Play className="h-4 w-4 text-white ml-0.5" />
+            </div>
+          </div>
+          {hasSources && (
+            <div className="absolute top-1.5 right-1.5 bg-black/70 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-full">
+              {channel.sources.length + 1}
+            </div>
           )}
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{channel.name}</p>
-          <p className="text-xs text-muted-foreground truncate">
-            {channel.groupTitle}
-          </p>
-        </div>
-        {onToggleFavorite && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFavorite(channel);
-            }}
-            className="shrink-0 p-1 rounded hover:bg-accent"
-          >
-            <Star
-              className={cn(
-                "h-4 w-4",
-                channel.isFavorite
-                  ? "fill-yellow-400 text-yellow-400"
-                  : "text-muted-foreground"
-              )}
-            />
-          </button>
-        )}
+        <p className="text-xs leading-snug line-clamp-2 text-foreground/85 group-hover:text-foreground transition-colors px-0.5">
+          {channel.name}
+        </p>
       </button>
-    );
-  }
-
-  return (
-    <button
-      onClick={() => onPlay(channel)}
-      className="flex flex-col items-center p-4 rounded-xl bg-card border border-border hover:border-primary/50 hover:bg-accent/30 transition-all focus:outline-none focus:ring-2 focus:ring-primary group"
-      tabIndex={0}
-    >
-      <div className="h-16 w-16 rounded-lg bg-secondary flex items-center justify-center overflow-hidden mb-3">
-        {channel.logoUrl ? (
-          <img
-            src={channel.logoUrl}
-            alt=""
-            className="h-full w-full object-contain"
-            loading="lazy"
-          />
-        ) : (
-          <Play className="h-6 w-6 text-muted-foreground group-hover:text-primary transition-colors" />
-        )}
-      </div>
-      <p className="text-sm font-medium text-center truncate w-full">
-        {channel.name}
-      </p>
-      <p className="text-xs text-muted-foreground truncate w-full text-center">
-        {channel.groupTitle}
-      </p>
-    </button>
+    </div>
   );
+}
+
+export function ChannelCard({ channel, onPlay, variant = "row" }: ChannelCardProps) {
+  return variant === "poster"
+    ? <PosterCard channel={channel} onPlay={onPlay} />
+    : <RowCard channel={channel} onPlay={onPlay} />;
 }
