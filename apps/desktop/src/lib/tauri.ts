@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PlayerState, Channel, Provider } from "./types";
+import type { PlayerState, Channel, Provider, EpgProgram } from "./types";
 
 // --- MPV Player Commands ---
 
@@ -101,4 +101,23 @@ export async function updateProvider(
 
 export async function getXtreamSeriesEpisodes(channelId: string): Promise<Channel[]> {
   return invoke("get_xtream_series_episodes", { channelId });
+}
+
+export async function refreshEpg(providerId: string): Promise<void> {
+  return invoke("refresh_epg", { providerId });
+}
+
+export async function getEpgProgrammes(
+  channelId: string,
+  rangeStart: number,
+  rangeEnd: number
+): Promise<EpgProgram[]> {
+  return invoke("get_epg_programmes", { channelId, rangeStart, rangeEnd });
+}
+
+export async function setEpgUrl(
+  providerId: string,
+  epgUrl: string | null
+): Promise<void> {
+  return invoke("set_epg_url", { providerId, epgUrl });
 }

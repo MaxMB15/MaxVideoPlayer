@@ -30,6 +30,9 @@ pub fn run() {
             commands::refresh_provider,
             commands::update_provider,
             commands::get_xtream_series_episodes,
+            commands::refresh_epg,
+            commands::get_epg_programmes,
+            commands::set_epg_url,
         ])
         .setup(|app| {
             let app_dir = app

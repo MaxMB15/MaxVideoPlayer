@@ -377,6 +377,11 @@ pub async fn fetch_xtream_channels(
     Ok(all)
 }
 
+/// Returns the XMLTV EPG URL for an Xtream provider.
+pub fn get_xtream_epg_url(server: &str, username: &str, password: &str) -> String {
+    format!("{}/xmltv.php?username={}&password={}", server.trim_end_matches('/'), username, password)
+}
+
 /// Fetch all episodes for a specific Xtream series by its series_id.
 /// Called on demand when the user opens a series from the UI.
 pub async fn fetch_xtream_series_episodes(
@@ -391,4 +396,21 @@ pub async fn fetch_xtream_series_episodes(
     let creds = XtreamCredentials::new(server, username, password);
     let client = XtreamClient::new(creds);
     client.fetch_series_episodes(series_id, show_name, show_logo, group).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_xtream_epg_url() {
+        let url = get_xtream_epg_url("http://example.com:8080", "user", "pass");
+        assert_eq!(url, "http://example.com:8080/xmltv.php?username=user&password=pass");
+    }
+
+    #[test]
+    fn test_get_xtream_epg_url_trailing_slash() {
+        let url = get_xtream_epg_url("http://example.com:8080/", "user", "pass");
+        assert_eq!(url, "http://example.com:8080/xmltv.php?username=user&password=pass");
+    }
 }

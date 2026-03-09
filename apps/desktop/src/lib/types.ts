@@ -29,6 +29,7 @@ export interface Provider {
   password?: string;
   lastUpdated?: string;
   channelCount: number;
+  epgUrl?: string;
 }
 
 export interface Playlist {
@@ -49,9 +50,9 @@ export interface PlayerState {
 export interface EpgProgram {
   channelId: string;
   title: string;
-  description: string;
-  startTime: string;
-  endTime: string;
+  description?: string;
+  startTime: number;   // Unix timestamp seconds
+  endTime: number;
   category?: string;
 }
 

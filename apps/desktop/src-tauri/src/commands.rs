@@ -1,6 +1,6 @@
 use mvp_core::cache::store::CacheStore;
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
-use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes};
+use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes, get_xtream_epg_url};
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
 use std::sync::Mutex;
@@ -135,6 +135,7 @@ pub async fn load_xtream_provider(
     let provider_id = format!("xt-{}", uuid_simple());
     prefix_channel_ids(&provider_id, &mut channels);
 
+    let epg_url = Some(get_xtream_epg_url(&url, &username, &password));
     let provider = Provider {
         id: provider_id.clone(),
         name,
@@ -144,7 +145,7 @@ pub async fn load_xtream_provider(
         password: Some(password),
         last_updated: Some(now_rfc3339()),
         channel_count: channels.len(),
-        epg_url: None,
+        epg_url,
     };
 
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
@@ -226,7 +227,8 @@ pub async fn refresh_provider(
             let ch = fetch_xtream_channels(&provider.url, &username, &password)
                 .await
                 .map_err(|e| format!("Failed to connect: {e}"))?;
-            (ch, None)
+            let epg = Some(get_xtream_epg_url(&provider.url, &username, &password));
+            (ch, epg)
         }
     };
 
@@ -323,6 +325,89 @@ pub async fn get_xtream_series_episodes(
     );
 
     Ok(episodes)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpgProgramDto {
+    pub channel_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub category: Option<String>,
+}
+
+/// Fetch and store EPG programmes for a provider from its configured EPG URL.
+#[command]
+pub async fn refresh_epg(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<(), String> {
+    use mvp_core::iptv::epg::{fetch_and_parse_epg, epg_data_to_stored};
+
+    let epg_url = {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        let providers = cache.get_providers().map_err(|e| e.to_string())?;
+        providers
+            .into_iter()
+            .find(|p| p.id == provider_id)
+            .and_then(|p| p.epg_url)
+    };
+
+    let Some(url) = epg_url else {
+        return Err("No EPG URL configured for this provider".into());
+    };
+
+    tracing::info!("[EPG] fetching EPG from {}", url);
+    let epg_data = fetch_and_parse_epg(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch EPG: {e}"))?;
+
+    tracing::info!("[EPG] parsed {} programmes", epg_data.programs.len());
+    let stored = epg_data_to_stored(&epg_data, &provider_id);
+
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.save_epg_programmes(&provider_id, &stored)
+        .map_err(|e| e.to_string())
+}
+
+/// Get EPG programmes for a channel within a Unix timestamp time range.
+#[command]
+pub async fn get_epg_programmes(
+    state: State<'_, AppState>,
+    channel_id: String,
+    range_start: i64,
+    range_end: i64,
+) -> Result<Vec<EpgProgramDto>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let progs = cache
+        .get_epg_programmes(&channel_id, range_start, range_end)
+        .map_err(|e| e.to_string())?;
+    Ok(progs
+        .into_iter()
+        .map(|p| EpgProgramDto {
+            channel_id: p.channel_id,
+            title: p.title,
+            description: p.description,
+            start_time: p.start_time,
+            end_time: p.end_time,
+            category: p.category,
+        })
+        .collect())
+}
+
+/// Set EPG URL for a provider (manual override). Pass null/None to clear.
+#[command]
+pub async fn set_epg_url(
+    state: State<'_, AppState>,
+    provider_id: String,
+    epg_url: Option<String>,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .set_provider_epg_url(&provider_id, epg_url.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 fn uuid_simple() -> String {
