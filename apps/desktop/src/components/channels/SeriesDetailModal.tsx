@@ -15,19 +15,21 @@ function episodeTitle(name: string): string {
 }
 
 function dedupeEpisodes(episodes: Channel[]): Channel[] {
-  const seen = new Map<string, Channel>();
+  const seen = new Map<string, { ch: Channel; extraSources: string[] }>();
   for (const ep of episodes) {
     const key = `${ep.season ?? 0}x${ep.episode ?? ep.name}`;
     if (!seen.has(key)) {
-      seen.set(key, { ...ep, sources: [...ep.sources] });
+      seen.set(key, { ch: { ...ep }, extraSources: [...ep.sources] });
     } else {
-      const existing = seen.get(key)!;
-      existing.sources.push(ep.url);
-      existing.sources.push(...ep.sources);
-      if (!existing.logoUrl && ep.logoUrl) existing.logoUrl = ep.logoUrl;
+      const entry = seen.get(key)!;
+      entry.extraSources.push(ep.url, ...ep.sources);
+      if (!entry.ch.logoUrl && ep.logoUrl) entry.ch.logoUrl = ep.logoUrl;
     }
   }
-  return Array.from(seen.values());
+  return Array.from(seen.values()).map(({ ch, extraSources }) => ({
+    ...ch,
+    sources: extraSources,
+  }));
 }
 
 type Step = "seasons" | "episodes" | "sources";
@@ -94,8 +96,12 @@ export function SeriesDetailModal({
   };
 
   const handleBack = () => {
-    if (step === "sources") setStep("episodes");
-    else if (step === "episodes") setStep("seasons");
+    if (step === "sources") {
+      setSourceEp(null);
+      setStep("episodes");
+    } else if (step === "episodes") {
+      setStep("seasons");
+    }
   };
 
   const handleSourcePick = (channel: Channel) => {
