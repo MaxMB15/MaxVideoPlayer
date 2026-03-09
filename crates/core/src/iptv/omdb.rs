@@ -106,6 +106,8 @@ pub fn parse_omdb_response(json: serde_json::Value) -> Result<OmdbData, OmdbErro
 
 /// Fetch OMDB data for a title. `content_type` should be `"movie"` or `"series"`.
 pub async fn fetch_omdb(title: &str, content_type: &str, api_key: &str) -> Result<OmdbData, OmdbError> {
+    // Client constructed per-call; acceptable for low-frequency on-demand OMDB fetches.
+    // A shared client can be introduced if this path becomes high-frequency.
     let client = reqwest::Client::new();
     let response = client
         .get("https://www.omdbapi.com/")

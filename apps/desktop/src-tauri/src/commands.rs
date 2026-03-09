@@ -451,9 +451,13 @@ pub async fn fetch_omdb_data<R: Runtime>(
     // 1. Check for a valid cached entry.
     {
         let cache = state.cache.lock().map_err(|e| e.to_string())?;
-        if let Ok(Some(data)) = cache.get_omdb_cache(&channel_id, OMDB_CACHE_TTL) {
-            tracing::debug!("[OMDB] cache hit for channel_id={}", channel_id);
-            return Ok(Some(data));
+        match cache.get_omdb_cache(&channel_id, OMDB_CACHE_TTL) {
+            Ok(Some(data)) => {
+                tracing::debug!("[OMDB] cache hit for channel_id={}", channel_id);
+                return Ok(Some(data));
+            }
+            Ok(None) => {} // cache miss or stale — proceed to fetch
+            Err(e) => return Err(e.to_string()),
         }
     }
 
