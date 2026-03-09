@@ -1,7 +1,10 @@
+use chrono::NaiveDateTime;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::cache::store::StoredEpgProgram;
 
 #[derive(Debug, Error)]
 pub enum EpgError {
@@ -9,8 +12,6 @@ pub enum EpgError {
     Xml(#[from] quick_xml::Error),
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
-    #[error("invalid date format: {0}")]
-    DateParse(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,7 +160,6 @@ fn extract_xml_attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<Stri
 
 /// Parse XMLTV timestamp like "20260304120000 +0000" to Unix timestamp (UTC seconds).
 fn parse_epg_time(raw: &str) -> i64 {
-    use chrono::NaiveDateTime;
     let parts: Vec<&str> = raw.splitn(2, ' ').collect();
     let dt_str = parts[0];
     let tz_offset_str = parts.get(1).copied().unwrap_or("+0000");
@@ -190,8 +190,6 @@ pub async fn fetch_and_parse_epg(url: &str) -> Result<EpgData, EpgError> {
     let body = reqwest::get(url).await?.text().await?;
     parse_epg(&body)
 }
-
-use crate::cache::store::StoredEpgProgram;
 
 /// Convert parsed EpgData into StoredEpgPrograms ready for DB insertion.
 pub fn epg_data_to_stored(data: &EpgData, provider_id: &str) -> Vec<StoredEpgProgram> {
