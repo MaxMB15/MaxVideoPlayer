@@ -56,5 +56,19 @@ export interface EpgProgram {
   category?: string;
 }
 
+export interface OmdbData {
+  title: string;
+  year?: string;
+  rated?: string;
+  runtime?: string;
+  genre?: string;
+  director?: string;
+  actors?: string;
+  plot?: string;
+  posterUrl?: string;
+  imdbRating?: string;
+  rottenTomatoes?: string;
+}
+
 export type Platform = "macos" | "ios" | "android" | "windows" | "linux";
 export type LayoutMode = "desktop" | "mobile" | "tv";

@@ -1,10 +1,12 @@
 use mvp_core::cache::store::CacheStore;
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
+use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
 use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes, get_xtream_epg_url};
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
 use std::sync::Mutex;
-use tauri::{command, State};
+use tauri::{command, AppHandle, Runtime, State};
+use tauri_plugin_store::StoreExt;
 
 pub struct AppState {
     pub cache: Mutex<CacheStore>,
@@ -408,6 +410,81 @@ pub async fn set_epg_url(
     cache
         .set_provider_epg_url(&provider_id, epg_url.as_deref())
         .map_err(|e| e.to_string())
+}
+
+// --- OMDB Commands ---
+
+const OMDB_STORE_FILE: &str = "settings.json";
+const OMDB_API_KEY: &str = "omdb_api_key";
+/// 30-day TTL in seconds
+const OMDB_CACHE_TTL: i64 = 30 * 24 * 60 * 60;
+
+/// Read the OMDB API key from the persistent Tauri Store.
+#[command]
+pub async fn get_omdb_api_key<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let key = store
+        .get(OMDB_API_KEY)
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    Ok(key)
+}
+
+/// Persist the OMDB API key in the Tauri Store.
+#[command]
+pub async fn set_omdb_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(OMDB_API_KEY, serde_json::Value::String(key));
+    Ok(())
+}
+
+/// Fetch OMDB data for a channel. Checks the DB cache first; fetches from
+/// the OMDB API on cache miss or stale entry. Returns `None` if no API key
+/// is configured.
+#[command]
+pub async fn fetch_omdb_data<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    channel_id: String,
+    title: String,
+    content_type: String,
+) -> Result<Option<OmdbData>, String> {
+    // 1. Check for a valid cached entry.
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(data)) = cache.get_omdb_cache(&channel_id, OMDB_CACHE_TTL) {
+            tracing::debug!("[OMDB] cache hit for channel_id={}", channel_id);
+            return Ok(Some(data));
+        }
+    }
+
+    // 2. Retrieve API key — bail out silently if not set.
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let api_key = match store.get(OMDB_API_KEY).and_then(|v| v.as_str().map(|s| s.to_string())) {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            tracing::debug!("[OMDB] no API key configured, skipping fetch");
+            return Ok(None);
+        }
+    };
+
+    // 3. Fetch from OMDB.
+    tracing::info!("[OMDB] fetching data for title={:?} type={}", title, content_type);
+    let data = fetch_omdb(&title, &content_type, &api_key)
+        .await
+        .map_err(|e| {
+            tracing::warn!("[OMDB] fetch failed for title={:?}: {e}", title);
+            e.to_string()
+        })?;
+
+    // 4. Store in cache.
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = cache.save_omdb_cache(&channel_id, &data) {
+            tracing::warn!("[OMDB] failed to save cache for channel_id={}: {e}", channel_id);
+        }
+    }
+
+    Ok(Some(data))
 }
 
 fn uuid_simple() -> String {

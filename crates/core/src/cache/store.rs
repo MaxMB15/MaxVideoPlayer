@@ -1,4 +1,5 @@
 use crate::iptv::m3u::parse_series_name;
+use crate::iptv::omdb::OmdbData;
 use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -119,6 +120,13 @@ impl CacheStore {
             );
             CREATE INDEX IF NOT EXISTS idx_epg_channel_time
                 ON epg_programmes(channel_id, start_time);"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS omdb_cache (
+                channel_id  TEXT PRIMARY KEY,
+                data_json   TEXT NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );"
         )?;
         Ok(())
     }
@@ -508,6 +516,45 @@ impl CacheStore {
         )?;
         Ok(())
     }
+
+    // --- OMDB Cache ---
+
+    /// Store OMDB data for a channel. Overwrites any existing cached entry.
+    pub fn save_omdb_cache(&self, channel_id: &str, data: &OmdbData) -> Result<(), CacheError> {
+        let data_json = serde_json::to_string(data)?;
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO omdb_cache (channel_id, data_json, fetched_at) VALUES (?1, ?2, ?3)",
+            params![channel_id, data_json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve cached OMDB data for a channel. Returns `None` if not cached or if the
+    /// cached entry is older than `ttl_seconds`.
+    pub fn get_omdb_cache(&self, channel_id: &str, ttl_seconds: i64) -> Result<Option<OmdbData>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT data_json, fetched_at FROM omdb_cache WHERE channel_id = ?1",
+            params![channel_id],
+            |row| {
+                let data_json: String = row.get(0)?;
+                let fetched_at: i64 = row.get(1)?;
+                Ok((data_json, fetched_at))
+            },
+        );
+        match result {
+            Ok((data_json, fetched_at)) => {
+                let now = chrono::Utc::now().timestamp();
+                if now - fetched_at > ttl_seconds {
+                    return Ok(None); // stale
+                }
+                let data: OmdbData = serde_json::from_str(&data_json)?;
+                Ok(Some(data))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
 }
 
 /// For series channels loaded from an older cache that has NULL series_title/season/episode,
@@ -860,5 +907,109 @@ mod tests {
         assert_eq!(channels[0].series_title.as_deref(), Some("Breaking Bad"));
         assert_eq!(channels[0].season, Some(3));
         assert_eq!(channels[0].episode, Some(7));
+    }
+
+    fn make_omdb_data(title: &str) -> OmdbData {
+        OmdbData {
+            title: title.into(),
+            year: Some("2008".into()),
+            rated: Some("PG-13".into()),
+            runtime: Some("152 min".into()),
+            genre: Some("Action".into()),
+            director: Some("Christopher Nolan".into()),
+            actors: Some("Christian Bale".into()),
+            plot: Some("A movie plot.".into()),
+            poster_url: Some("https://example.com/poster.jpg".into()),
+            imdb_rating: Some("9.0".into()),
+            rotten_tomatoes: Some("94%".into()),
+        }
+    }
+
+    #[test]
+    fn test_save_and_retrieve_omdb_cache() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = make_omdb_data("The Dark Knight");
+
+        store.save_omdb_cache("ch1", &data).unwrap();
+
+        // TTL of 30 days in seconds; fresh data should be returned
+        let ttl = 30 * 24 * 60 * 60;
+        let result = store.get_omdb_cache("ch1", ttl).unwrap();
+        assert!(result.is_some());
+        let cached = result.unwrap();
+        assert_eq!(cached.title, "The Dark Knight");
+        assert_eq!(cached.imdb_rating.as_deref(), Some("9.0"));
+        assert_eq!(cached.rotten_tomatoes.as_deref(), Some("94%"));
+    }
+
+    #[test]
+    fn test_get_omdb_cache_returns_none_for_unknown_channel() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let result = store.get_omdb_cache("nonexistent", 30 * 24 * 60 * 60).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_omdb_cache_respects_ttl() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = make_omdb_data("Old Movie");
+
+        store.save_omdb_cache("ch1", &data).unwrap();
+
+        // Use TTL of -1 so the entry is always considered stale
+        let result = store.get_omdb_cache("ch1", -1).unwrap();
+        assert!(result.is_none(), "stale cache entry should return None");
+    }
+
+    #[test]
+    fn test_save_omdb_cache_overwrites_existing() {
+        let store = CacheStore::open_in_memory().unwrap();
+
+        let first = make_omdb_data("First Movie");
+        store.save_omdb_cache("ch1", &first).unwrap();
+
+        let second = OmdbData {
+            title: "Second Movie".into(),
+            year: None,
+            rated: None,
+            runtime: None,
+            genre: None,
+            director: None,
+            actors: None,
+            plot: None,
+            poster_url: None,
+            imdb_rating: None,
+            rotten_tomatoes: None,
+        };
+        store.save_omdb_cache("ch1", &second).unwrap();
+
+        let ttl = 30 * 24 * 60 * 60;
+        let result = store.get_omdb_cache("ch1", ttl).unwrap().unwrap();
+        assert_eq!(result.title, "Second Movie", "second save must overwrite first");
+    }
+
+    #[test]
+    fn test_omdb_cache_preserves_none_fields() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = OmdbData {
+            title: "Minimal Movie".into(),
+            year: None,
+            rated: None,
+            runtime: None,
+            genre: None,
+            director: None,
+            actors: None,
+            plot: None,
+            poster_url: None,
+            imdb_rating: None,
+            rotten_tomatoes: None,
+        };
+        store.save_omdb_cache("ch2", &data).unwrap();
+
+        let ttl = 30 * 24 * 60 * 60;
+        let result = store.get_omdb_cache("ch2", ttl).unwrap().unwrap();
+        assert_eq!(result.title, "Minimal Movie");
+        assert!(result.year.is_none());
+        assert!(result.rotten_tomatoes.is_none());
     }
 }

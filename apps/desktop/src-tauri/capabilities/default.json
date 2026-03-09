@@ -7,6 +7,7 @@
     "core:window:allow-set-fullscreen",
     "os:default",
     "dialog:default",
-    "mpv:default"
+    "mpv:default",
+    "store:default"
   ]
 }

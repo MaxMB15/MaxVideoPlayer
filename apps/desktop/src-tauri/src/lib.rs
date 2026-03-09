@@ -18,6 +18,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_mpv::init())
         .invoke_handler(tauri::generate_handler![
             commands::load_m3u_playlist,
@@ -33,6 +34,9 @@ pub fn run() {
             commands::refresh_epg,
             commands::get_epg_programmes,
             commands::set_epg_url,
+            commands::get_omdb_api_key,
+            commands::set_omdb_api_key,
+            commands::fetch_omdb_data,
         ])
         .setup(|app| {
             let app_dir = app

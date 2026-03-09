@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PlayerState, Channel, Provider, EpgProgram } from "./types";
+import type { PlayerState, Channel, Provider, EpgProgram, OmdbData } from "./types";
 
 // --- MPV Player Commands ---
 
@@ -120,4 +120,22 @@ export async function setEpgUrl(
   epgUrl: string | null
 ): Promise<void> {
   return invoke("set_epg_url", { providerId, epgUrl });
+}
+
+// --- OMDB Commands ---
+
+export async function getOmdbApiKey(): Promise<string | null> {
+  return invoke("get_omdb_api_key");
+}
+
+export async function setOmdbApiKey(key: string): Promise<void> {
+  return invoke("set_omdb_api_key", { key });
+}
+
+export async function fetchOmdbData(
+  channelId: string,
+  title: string,
+  contentType: "movie" | "series"
+): Promise<OmdbData | null> {
+  return invoke("fetch_omdb_data", { channelId, title, contentType });
 }
