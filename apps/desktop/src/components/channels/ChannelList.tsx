@@ -35,7 +35,7 @@ function MovieSourceDrawer({
     setTimeout(onClose, 300);
   };
 
-  const allSources = [movie.url, ...movie.sources];
+  const allSources = [...new Set([movie.url, ...movie.sources])];
   const hasSources = allSources.length > 1;
 
   const handlePlay = () => {
@@ -66,6 +66,7 @@ function MovieSourceDrawer({
         <div className="flex justify-end px-5 pt-1 shrink-0">
           <button
             onClick={handleClose}
+            aria-label="Close"
             className="text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="h-4 w-4" />
@@ -110,6 +111,7 @@ function MovieSourceDrawer({
               <select
                 value={selectedSourceIdx}
                 onChange={(e) => setSelectedSourceIdx(Number(e.target.value))}
+                aria-label="Select source"
                 className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer pr-8"
               >
                 {allSources.map((_, idx) => (
