@@ -53,7 +53,7 @@ function MovieSourceDrawer({
         onClick={handleClose}
       />
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+        className={`absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl flex flex-col transition-transform duration-300 ease-out max-h-[85vh] overflow-hidden ${
           visible ? "translate-y-0" : "translate-y-full"
         }`}
       >
