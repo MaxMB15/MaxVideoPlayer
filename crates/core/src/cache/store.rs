@@ -439,6 +439,18 @@ impl CacheStore {
         provider_id: &str,
         programmes: &[StoredEpgProgram],
     ) -> Result<(), CacheError> {
+        self.conn.execute_batch("BEGIN")?;
+        match self.save_epg_programmes_inner(provider_id, programmes) {
+            Ok(()) => { self.conn.execute_batch("COMMIT")?; Ok(()) }
+            Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); Err(e) }
+        }
+    }
+
+    fn save_epg_programmes_inner(
+        &self,
+        provider_id: &str,
+        programmes: &[StoredEpgProgram],
+    ) -> Result<(), CacheError> {
         self.conn.execute(
             "DELETE FROM epg_programmes WHERE provider_id = ?1",
             params![provider_id],
