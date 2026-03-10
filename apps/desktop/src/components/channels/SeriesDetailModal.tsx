@@ -57,7 +57,10 @@ export function SeriesDetailModal({
   }, []);
 
   useEffect(() => {
-    if (!firstEp) return;
+    if (!firstEp) {
+      setOmdbLoading(false);
+      return;
+    }
     setOmdbLoading(true);
     setOmdbData(null);
     fetchOmdbData(firstEp.id, showTitle, "series")
