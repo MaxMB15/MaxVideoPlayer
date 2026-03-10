@@ -7,7 +7,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
-import { mpvSetBounds } from "@/lib/tauri";
+import { mpvSetBounds, recordPlayStart, recordPlayEnd } from "@/lib/tauri";
 import type { Channel } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
@@ -76,11 +76,25 @@ export function PlayerView() {
       if (navState.seriesEpisodes?.length) {
         setSeriesEpisodes(navState.seriesEpisodes);
       }
+      // Record play start
+      if (navState.channel) {
+        const ch = navState.channel;
+        playStartTimeRef.current = Date.now();
+        recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
+      }
     }
   }, [navState?.url]);
 
   const handleSelectChannel = useCallback(
     (channel: Channel) => {
+      // Record end of current channel
+      if (activeChannelRef.current && playStartTimeRef.current !== null) {
+        const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+        recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
+      }
+      playStartTimeRef.current = Date.now();
+      recordPlayStart(channel.id, channel.name, channel.logoUrl ?? null, channel.contentType).catch(() => {});
+
       mpv.load(channel.url).catch(() => {});
       setActiveChannelName(channel.name);
       setActiveChannel(channel);
@@ -118,6 +132,14 @@ export function PlayerView() {
 
   const playEpisode = useCallback(
     (ep: Channel) => {
+      // Record end of current episode
+      if (activeChannelRef.current && playStartTimeRef.current !== null) {
+        const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+        recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
+      }
+      playStartTimeRef.current = Date.now();
+      recordPlayStart(ep.id, ep.name, ep.logoUrl ?? null, ep.contentType).catch(() => {});
+
       mpv.load(ep.url).catch(() => {});
       setActiveChannelName(ep.name);
       setActiveChannel(ep);
@@ -134,6 +156,19 @@ export function PlayerView() {
   mpvStateRef.current = mpv.state;
   const activeChannelRef = useRef(activeChannel);
   activeChannelRef.current = activeChannel;
+
+  const playStartTimeRef = useRef<number | null>(null);
+
+  // On unmount, record end of play
+  useEffect(() => {
+    return () => {
+      if (activeChannelRef.current && playStartTimeRef.current !== null) {
+        const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+        recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
+        playStartTimeRef.current = null;
+      }
+    };
+  }, []);
 
   const prevIsPlayingRef = useRef(false);
   useEffect(() => {
@@ -211,6 +246,11 @@ export function PlayerView() {
   );
 
   const handleStop = useCallback(() => {
+    if (activeChannelRef.current && playStartTimeRef.current !== null) {
+      const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+      recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
+      playStartTimeRef.current = null;
+    }
     mpv.stop();
     navigate("/");
   }, [mpv, navigate]);
