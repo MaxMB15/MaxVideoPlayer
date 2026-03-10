@@ -9,6 +9,7 @@ import {
   loadProviderSettings,
   saveProviderSettings,
 } from "@/hooks/useChannels";
+import { refreshEpg, setEpgUrl } from "@/lib/tauri";
 
 interface ProviderSettingsModalProps {
   provider: Provider;
@@ -30,6 +31,14 @@ const INTERVAL_OPTIONS = [
   { label: "Every day", hours: 24 },
   { label: "Every 2 days", hours: 48 },
   { label: "Every week", hours: 168 },
+];
+
+const EPG_INTERVAL_OPTIONS = [
+  { label: "Every 6 hours", hours: 6 },
+  { label: "Every 12 hours", hours: 12 },
+  { label: "Every day", hours: 24 },
+  { label: "Every 2 days", hours: 48 },
+  { label: "Every 3 days", hours: 72 },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -64,6 +73,15 @@ export function ProviderSettingsModal({
   );
   const [intervalHours, setIntervalHours] = useState(initial.refreshIntervalHours);
 
+  // EPG settings
+  const [epgUrl, setEpgUrlState] = useState(provider.epgUrl ?? "");
+  const [epgAutoRefresh, setEpgAutoRefresh] = useState(initial.epgAutoRefresh);
+  const [epgIntervalHours, setEpgIntervalHours] = useState(initial.epgRefreshIntervalHours);
+
+  // EPG refresh-now state
+  const [epgRefreshing, setEpgRefreshing] = useState(false);
+  const [epgRefreshError, setEpgRefreshError] = useState<string | null>(null);
+
   // Refresh-now state
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -81,6 +99,18 @@ export function ProviderSettingsModal({
       setRefreshError(String(e));
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleEpgRefreshNow = async () => {
+    setEpgRefreshing(true);
+    setEpgRefreshError(null);
+    try {
+      await refreshEpg(provider.id);
+    } catch (e) {
+      setEpgRefreshError(String(e));
+    } finally {
+      setEpgRefreshing(false);
     }
   };
 
@@ -104,8 +134,18 @@ export function ProviderSettingsModal({
           isXtream ? password : undefined
         );
       }
-      // Persist auto-refresh settings
-      saveProviderSettings(provider.id, { autoRefresh, refreshIntervalHours: intervalHours });
+      // Persist EPG URL if it changed
+      const currentEpgUrl = provider.epgUrl ?? "";
+      if (epgUrl !== currentEpgUrl) {
+        await setEpgUrl(provider.id, epgUrl || null);
+      }
+      // Persist auto-refresh settings (including EPG)
+      saveProviderSettings(provider.id, {
+        autoRefresh,
+        refreshIntervalHours: intervalHours,
+        epgAutoRefresh,
+        epgRefreshIntervalHours: epgIntervalHours,
+      });
       onClose();
     } catch (e) {
       setSaveError(String(e));
@@ -292,6 +332,99 @@ export function ProviderSettingsModal({
               {refreshError && (
                 <p className="text-xs text-destructive mt-1">{refreshError}</p>
               )}
+            </div>
+          )}
+
+          {/* EPG Schedule section */}
+          {!isFile && (
+            <div>
+              <SectionLabel>EPG Schedule</SectionLabel>
+              <div className="space-y-3">
+                {/* EPG URL */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">EPG URL</label>
+                  <Input
+                    value={epgUrl}
+                    onChange={(e) => setEpgUrlState(e.target.value)}
+                    placeholder="https://example.com/epg.xml"
+                    className="h-8 text-sm"
+                  />
+                </div>
+
+                {/* EPG Auto-refresh toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Auto-refresh EPG</p>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically refresh the EPG schedule on a schedule
+                    </p>
+                  </div>
+                  <div className="flex gap-0.5 p-0.5 bg-secondary rounded-lg ml-3 shrink-0">
+                    <button
+                      onClick={() => setEpgAutoRefresh(false)}
+                      className={cn(
+                        "px-3 py-1 rounded-md text-xs font-medium transition-colors",
+                        !epgAutoRefresh
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Off
+                    </button>
+                    <button
+                      onClick={() => setEpgAutoRefresh(true)}
+                      className={cn(
+                        "px-3 py-1 rounded-md text-xs font-medium transition-colors",
+                        epgAutoRefresh
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      On
+                    </button>
+                  </div>
+                </div>
+
+                {/* EPG Refresh interval */}
+                {epgAutoRefresh && (
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      EPG refresh interval
+                    </label>
+                    <select
+                      value={epgIntervalHours}
+                      onChange={(e) => setEpgIntervalHours(Number(e.target.value))}
+                      className="w-full bg-secondary text-sm rounded-lg px-3 py-2 border border-transparent focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                    >
+                      {EPG_INTERVAL_OPTIONS.map((opt) => (
+                        <option key={opt.hours} value={opt.hours}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* EPG Refresh now */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Fetch latest EPG data for this provider
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleEpgRefreshNow}
+                    disabled={epgRefreshing || saving}
+                    className="shrink-0 ml-3"
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", epgRefreshing && "animate-spin")} />
+                    {epgRefreshing ? "Refreshing…" : "Refresh EPG"}
+                  </Button>
+                </div>
+                {epgRefreshError && (
+                  <p className="text-xs text-destructive">{epgRefreshError}</p>
+                )}
+              </div>
             </div>
           )}
 

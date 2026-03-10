@@ -24,6 +24,8 @@ import {
 export interface ProviderSettings {
   autoRefresh: boolean;
   refreshIntervalHours: number;
+  epgAutoRefresh: boolean;
+  epgRefreshIntervalHours: number;
 }
 
 export function loadProviderSettings(id: string): ProviderSettings {
@@ -36,12 +38,18 @@ export function loadProviderSettings(id: string): ProviderSettings {
         return {
           autoRefresh: parsed.autoRefresh !== "disabled",
           refreshIntervalHours: parsed.refreshIntervalHours ?? 24,
+          epgAutoRefresh: parsed.epgAutoRefresh ?? true,
+          epgRefreshIntervalHours: parsed.epgRefreshIntervalHours ?? 24,
         };
       }
-      return parsed as ProviderSettings;
+      return {
+        epgAutoRefresh: true,
+        epgRefreshIntervalHours: 24,
+        ...parsed,
+      } as ProviderSettings;
     }
   } catch {}
-  return { autoRefresh: false, refreshIntervalHours: 24 };
+  return { autoRefresh: false, refreshIntervalHours: 24, epgAutoRefresh: true, epgRefreshIntervalHours: 24 };
 }
 
 export function saveProviderSettings(id: string, settings: ProviderSettings) {
