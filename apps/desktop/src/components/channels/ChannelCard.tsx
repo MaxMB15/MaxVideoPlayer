@@ -1,13 +1,22 @@
-import { Play, Tv2 } from "lucide-react";
+import { Play, Tv2, Heart } from "lucide-react";
 import type { Channel } from "@/lib/types";
 
 interface ChannelCardProps {
   channel: Channel;
   onPlay: (channel: Channel) => void;
   variant?: "row" | "poster";
+  onToggleFavorite?: (channel: Channel) => void;
 }
 
-function RowCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channel) => void }) {
+function RowCard({
+  channel,
+  onPlay,
+  onToggleFavorite,
+}: {
+  channel: Channel;
+  onPlay: (ch: Channel) => void;
+  onToggleFavorite?: (ch: Channel) => void;
+}) {
   return (
     <button
       onClick={() => onPlay(channel)}
@@ -30,11 +39,35 @@ function RowCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channel) 
         <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
         LIVE
       </span>
+      {onToggleFavorite && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(channel);
+          }}
+          className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
+        >
+          <Heart
+            className={`h-4 w-4 transition-colors ${
+              channel.isFavorite ? "fill-current text-red-500" : "text-muted-foreground"
+            }`}
+          />
+        </button>
+      )}
     </button>
   );
 }
 
-function PosterCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channel) => void }) {
+function PosterCard({
+  channel,
+  onPlay,
+  onToggleFavorite,
+}: {
+  channel: Channel;
+  onPlay: (ch: Channel) => void;
+  onToggleFavorite?: (ch: Channel) => void;
+}) {
   const hasSources = channel.sources.length > 0;
 
   return (
@@ -66,6 +99,22 @@ function PosterCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channe
               {channel.sources.length + 1}
             </div>
           )}
+          {onToggleFavorite && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite(channel);
+              }}
+              className="absolute top-1 right-1 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors"
+              aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            >
+              <Heart
+                className={`h-3.5 w-3.5 transition-colors ${
+                  channel.isFavorite ? "fill-current text-red-500" : "text-white"
+                }`}
+              />
+            </button>
+          )}
         </div>
         <p className="text-xs leading-snug line-clamp-2 text-foreground/85 group-hover:text-foreground transition-colors px-0.5">
           {channel.name}
@@ -75,8 +124,8 @@ function PosterCard({ channel, onPlay }: { channel: Channel; onPlay: (ch: Channe
   );
 }
 
-export function ChannelCard({ channel, onPlay, variant = "row" }: ChannelCardProps) {
+export function ChannelCard({ channel, onPlay, variant = "row", onToggleFavorite }: ChannelCardProps) {
   return variant === "poster"
-    ? <PosterCard channel={channel} onPlay={onPlay} />
-    : <RowCard channel={channel} onPlay={onPlay} />;
+    ? <PosterCard channel={channel} onPlay={onPlay} onToggleFavorite={onToggleFavorite} />
+    : <RowCard channel={channel} onPlay={onPlay} onToggleFavorite={onToggleFavorite} />;
 }

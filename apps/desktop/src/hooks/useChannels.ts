@@ -16,6 +16,7 @@ import {
   getAllChannels,
   refreshProvider as refreshProviderApi,
   updateProvider as updateProviderApi,
+  toggleFavorite as toggleFavoriteApi,
 } from "@/lib/tauri";
 
 // --- Provider settings (stored in localStorage) ---
@@ -63,6 +64,7 @@ interface ChannelsContextValue {
   refreshProvider: (id: string) => Promise<void>;
   updateProvider: (id: string, name: string, url: string, username?: string, password?: string) => Promise<void>;
   removeProvider: (id: string) => Promise<void>;
+  toggleFavorite: (channelId: string) => Promise<void>;
 }
 
 export const ChannelsContext = createContext<ChannelsContextValue | null>(null);
@@ -201,6 +203,18 @@ export function useChannelsProvider(): ChannelsContextValue {
     [refreshProviders, refreshChannels]
   );
 
+  const toggleFavorite = useCallback(
+    async (channelId: string) => {
+      try {
+        await toggleFavoriteApi(channelId);
+        await refreshChannels();
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChannels]
+  );
+
   // Initial load
   useEffect(() => {
     refreshProviders();
@@ -251,6 +265,7 @@ export function useChannelsProvider(): ChannelsContextValue {
     refreshProvider,
     updateProvider,
     removeProvider,
+    toggleFavorite,
   };
 }
 

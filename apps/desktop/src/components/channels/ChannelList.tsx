@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Tv2, MonitorPlay } from "lucide-react";
+import { Loader2, Tv2, MonitorPlay, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
@@ -15,12 +15,13 @@ import type { Channel, Category } from "@/lib/types";
 
 import { Clapperboard } from "lucide-react";
 
-type Tab = "live" | "movie" | "series";
+type Tab = "live" | "movie" | "series" | "favorites";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: "live",   label: "Live",    icon: Tv2 },
-  { id: "movie",  label: "Movies",  icon: Clapperboard },
-  { id: "series", label: "Series",  icon: MonitorPlay },
+  { id: "live",      label: "Live",      icon: Tv2 },
+  { id: "movie",     label: "Movies",    icon: Clapperboard },
+  { id: "series",    label: "Series",    icon: MonitorPlay },
+  { id: "favorites", label: "Favorites", icon: Heart },
 ];
 
 function showTitle(name: string): string {
@@ -28,21 +29,22 @@ function showTitle(name: string): string {
 }
 
 export function ChannelList() {
-  const { channels, loading } = useChannels();
+  const { channels, loading, toggleFavorite } = useChannels();
   const { layoutMode } = usePlatform();
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<Tab>("live");
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [seriesModalData, setSeriesModalData] = useState<{ showTitle: string; episodes: Channel[] } | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
 
   const byType = useMemo(() => {
-    const map: Record<Tab, Channel[]> = { live: [], movie: [], series: [] };
+    const map: Record<"live" | "movie" | "series", Channel[]> = { live: [], movie: [], series: [] };
     for (const ch of channels) {
-      const t = ch.contentType as Tab;
+      const t = ch.contentType as "live" | "movie" | "series";
       if (t in map) map[t].push(ch);
       else map.live.push(ch);
     }
@@ -76,15 +78,16 @@ export function ChannelList() {
   }, [byType.movie]);
 
   const activeChannels = useMemo(() => {
+    if (activeTab === "favorites") return channels.filter((ch) => ch.isFavorite);
     if (activeTab === "series") return seriesShows;
     if (activeTab === "movie") return movieTitles;
     return byType[activeTab];
-  }, [activeTab, seriesShows, movieTitles, byType]);
+  }, [activeTab, seriesShows, movieTitles, byType, channels]);
 
   const categories = useMemo<Category[]>(() => {
-    if (activeTab === "series") return [];
+    if (activeTab === "series" || activeTab === "favorites") return [];
     const counts: Record<string, number> = {};
-    for (const ch of byType[activeTab]) {
+    for (const ch of byType[activeTab as "live" | "movie"]) {
       const key = ch.groupTitle || "";
       counts[key] = (counts[key] ?? 0) + 1;
     }
@@ -97,23 +100,28 @@ export function ChannelList() {
     setActiveTab(tab);
     setSelectedCategory(null);
     setSearch("");
+    setShowFavoritesOnly(false);
   };
 
   const filtered = useMemo(() => {
     let result = activeChannels;
-    if (selectedCategory && activeTab !== "series") {
+    if (selectedCategory && activeTab !== "series" && activeTab !== "favorites") {
       result = result.filter((ch) => ch.groupTitle === selectedCategory);
     }
     if (search.trim()) {
       const lower = search.toLowerCase();
       result = result.filter((ch) => ch.name.toLowerCase().includes(lower));
     }
+    if (showFavoritesOnly && activeTab !== "favorites") {
+      result = result.filter((ch) => ch.isFavorite === true);
+    }
     return result;
-  }, [activeChannels, selectedCategory, search, activeTab]);
+  }, [activeChannels, selectedCategory, search, activeTab, showFavoritesOnly]);
 
   const handlePlay = useCallback(
     async (channel: Channel) => {
-      if (activeTab === "series") {
+      const currentTab = activeTab;
+      if (currentTab === "series") {
         const showName = channel.seriesTitle ?? showTitle(channel.name);
         if (channel.url.startsWith("xtream://series/")) {
           // Lazy-fetch episodes from Xtream API on demand
@@ -133,8 +141,33 @@ export function ChannelList() {
           );
           setSeriesModalData({ showTitle: showName, episodes: eps });
         }
-      } else if (activeTab === "movie" && channel.sources.length > 0) {
+      } else if (currentTab === "movie" && channel.sources.length > 0) {
         setSelectedMovie(channel);
+      } else if (currentTab === "favorites") {
+        // For favorites, dispatch based on content type
+        if (channel.contentType === "series") {
+          const showName = channel.seriesTitle ?? showTitle(channel.name);
+          if (channel.url.startsWith("xtream://series/")) {
+            setSeriesLoading(true);
+            try {
+              const eps = await getXtreamSeriesEpisodes(channel.id);
+              setSeriesModalData({ showTitle: showName, episodes: eps });
+            } catch (e) {
+              console.error("[Xtream] failed to fetch series episodes:", e);
+            } finally {
+              setSeriesLoading(false);
+            }
+          } else {
+            const eps = byType.series.filter(
+              (ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
+            );
+            setSeriesModalData({ showTitle: showName, episodes: eps });
+          }
+        } else if (channel.contentType === "movie" && channel.sources.length > 0) {
+          setSelectedMovie(channel);
+        } else {
+          navigate("/player", { state: { url: channel.url, channelName: channel.name, channel } });
+        }
       } else {
         navigate("/player", { state: { url: channel.url, channelName: channel.name, channel } });
       }
@@ -142,9 +175,16 @@ export function ChannelList() {
     [activeTab, byType.series, navigate]
   );
 
+  const handleToggleFavorite = useCallback(
+    (channel: Channel) => {
+      toggleFavorite(channel.id);
+    },
+    [toggleFavorite]
+  );
+
   const isGrid = activeTab !== "live";
   const columnsPerRow = isGrid ? (layoutMode === "tv" ? 6 : 6) : 1;
-  const rowCount = Math.ceil(filtered.length / columnsPerRow);
+  const rowCount = activeTab === "favorites" ? 0 : Math.ceil(filtered.length / columnsPerRow);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -172,7 +212,23 @@ export function ChannelList() {
     );
   }
 
-  const countLabel = activeTab === "live" ? "channels" : activeTab === "movie" ? "movies" : "shows";
+  const totalFavorites = channels.filter((ch) => ch.isFavorite).length;
+
+  const countLabel =
+    activeTab === "live" ? "channels" :
+    activeTab === "movie" ? "movies" :
+    activeTab === "series" ? "shows" :
+    "favorites";
+
+  // Favorites tab: group by content type with section headers
+  const favoritesByType = useMemo(() => {
+    const favs = filtered;
+    return {
+      live: favs.filter((ch) => ch.contentType === "live"),
+      movie: favs.filter((ch) => ch.contentType === "movie"),
+      series: favs.filter((ch) => ch.contentType === "series"),
+    };
+  }, [filtered]);
 
   return (
     <div className="flex flex-col h-full">
@@ -180,9 +236,10 @@ export function ChannelList() {
       <div className="flex items-center gap-0 border-b border-border px-3 shrink-0">
         {TABS.map(({ id, label, icon: Icon }) => {
           const count =
+            id === "favorites" ? totalFavorites :
             id === "series" ? seriesShows.length :
             id === "movie"  ? movieTitles.length :
-            byType[id].length;
+            byType[id as "live"].length;
           return (
             <button
               key={id}
@@ -204,11 +261,24 @@ export function ChannelList() {
           );
         })}
         <div className="flex-1" />
+        {/* Favorites-only filter toggle — not shown on the Favorites tab */}
+        {activeTab !== "favorites" && (
+          <button
+            onClick={() => setShowFavoritesOnly((v) => !v)}
+            className={`h-8 w-8 flex items-center justify-center rounded-md mr-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+              showFavoritesOnly ? "text-red-500 bg-red-500/10" : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            }`}
+            aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
+            aria-pressed={showFavoritesOnly}
+          >
+            <Heart className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`} />
+          </button>
+        )}
         <SearchBar value={search} onChange={setSearch} />
       </div>
 
-      {/* Category filter — only for live and movies, not series (too many groups) */}
-      {categories.length > 1 && activeTab !== "series" && (
+      {/* Category filter — only for live and movies, not series or favorites */}
+      {categories.length > 1 && activeTab !== "series" && activeTab !== "favorites" && (
         <div className="shrink-0 px-3 pt-2.5">
           <CategoryFilter categories={categories} selected={selectedCategory} onSelect={setSelectedCategory} />
         </div>
@@ -261,45 +331,131 @@ export function ChannelList() {
         />
       )}
 
-      {/* Virtual list */}
-      <div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const startIdx = virtualRow.index * columnsPerRow;
-            const rowChannels = filtered.slice(startIdx, startIdx + columnsPerRow);
-            return (
-              <div
-                key={virtualRow.key}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                {isGrid ? (
-                  <div
-                    className="grid gap-3 pt-1"
-                    style={{ gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))` }}
-                  >
-                    {rowChannels.map((ch) => (
-                      <ChannelCard key={ch.id} channel={ch} onPlay={handlePlay} variant="poster" />
-                    ))}
-                  </div>
-                ) : (
+      {/* Favorites tab — plain scrollable div with section headers */}
+      {activeTab === "favorites" ? (
+        <div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
+              <Heart className="h-10 w-10 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">
+                No favorites yet — tap ♡ on any channel
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4 pt-2">
+              {favoritesByType.live.length > 0 && (
+                <section>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-0.5">Live</h3>
                   <div className="flex flex-col">
-                    {rowChannels.map((ch) => (
-                      <ChannelCard key={ch.id} channel={ch} onPlay={handlePlay} variant="row" />
+                    {favoritesByType.live.map((ch) => (
+                      <ChannelCard
+                        key={ch.id}
+                        channel={ch}
+                        onPlay={handlePlay}
+                        variant="row"
+                        onToggleFavorite={handleToggleFavorite}
+                      />
                     ))}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                </section>
+              )}
+              {favoritesByType.movie.length > 0 && (
+                <section>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-0.5">Movies</h3>
+                  <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+                    {favoritesByType.movie.map((ch) => (
+                      <ChannelCard
+                        key={ch.id}
+                        channel={ch}
+                        onPlay={handlePlay}
+                        variant="poster"
+                        onToggleFavorite={handleToggleFavorite}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+              {favoritesByType.series.length > 0 && (
+                <section>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-0.5">Series</h3>
+                  <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+                    {favoritesByType.series.map((ch) => (
+                      <ChannelCard
+                        key={ch.id}
+                        channel={ch}
+                        onPlay={handlePlay}
+                        variant="poster"
+                        onToggleFavorite={handleToggleFavorite}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        /* Virtual list for non-favorites tabs */
+        <div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
+          {filtered.length === 0 && showFavoritesOnly ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
+              <Heart className="h-10 w-10 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">
+                No favorites yet — tap ♡ on any channel
+              </p>
+            </div>
+          ) : (
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const startIdx = virtualRow.index * columnsPerRow;
+                const rowChannels = filtered.slice(startIdx, startIdx + columnsPerRow);
+                return (
+                  <div
+                    key={virtualRow.key}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {isGrid ? (
+                      <div
+                        className="grid gap-3 pt-1"
+                        style={{ gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))` }}
+                      >
+                        {rowChannels.map((ch) => (
+                          <ChannelCard
+                            key={ch.id}
+                            channel={ch}
+                            onPlay={handlePlay}
+                            variant="poster"
+                            onToggleFavorite={handleToggleFavorite}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        {rowChannels.map((ch) => (
+                          <ChannelCard
+                            key={ch.id}
+                            channel={ch}
+                            onPlay={handlePlay}
+                            variant="row"
+                            onToggleFavorite={handleToggleFavorite}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
