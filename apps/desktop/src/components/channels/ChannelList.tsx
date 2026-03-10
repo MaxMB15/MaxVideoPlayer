@@ -261,11 +261,12 @@ export function ChannelList() {
           );
         })}
         <div className="flex-1" />
+        <SearchBar value={search} onChange={setSearch} />
         {/* Favorites-only filter toggle — not shown on the Favorites tab */}
         {activeTab !== "favorites" && (
           <button
             onClick={() => setShowFavoritesOnly((v) => !v)}
-            className={`h-8 w-8 flex items-center justify-center rounded-md mr-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+            className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
               showFavoritesOnly ? "text-red-500 bg-red-500/10" : "text-muted-foreground hover:text-foreground hover:bg-accent"
             }`}
             aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
@@ -274,7 +275,6 @@ export function ChannelList() {
             <Heart className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`} />
           </button>
         )}
-        <SearchBar value={search} onChange={setSearch} />
       </div>
 
       {/* Category filter — only for live and movies, not series or favorites */}
