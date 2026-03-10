@@ -1,27 +1,27 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Tv2, MonitorPlay, Heart } from "lucide-react";
+import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
 import { ChannelCard } from "./ChannelCard";
 import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
+import { HistoryTab } from "./HistoryTab";
 import { useChannels } from "@/hooks/useChannels";
 import { usePlatform } from "@/hooks/usePlatform";
 import { getXtreamSeriesEpisodes } from "@/lib/tauri";
-import type { Channel, Category } from "@/lib/types";
+import type { Channel, Category, WatchHistoryEntry } from "@/lib/types";
 
-import { Clapperboard } from "lucide-react";
-
-type Tab = "live" | "movie" | "series" | "favorites";
+type Tab = "live" | "movie" | "series" | "favorites" | "history";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "live",      label: "Live",      icon: Tv2 },
   { id: "movie",     label: "Movies",    icon: Clapperboard },
   { id: "series",    label: "Series",    icon: MonitorPlay },
   { id: "favorites", label: "Favorites", icon: Heart },
+  { id: "history",   label: "History",   icon: History },
 ];
 
 function showTitle(name: string): string {
@@ -81,11 +81,12 @@ export function ChannelList() {
     if (activeTab === "favorites") return channels.filter((ch) => ch.isFavorite);
     if (activeTab === "series") return seriesShows;
     if (activeTab === "movie") return movieTitles;
+    if (activeTab === "history") return [];
     return byType[activeTab];
   }, [activeTab, seriesShows, movieTitles, byType, channels]);
 
   const categories = useMemo<Category[]>(() => {
-    if (activeTab === "series" || activeTab === "favorites") return [];
+    if (activeTab === "series" || activeTab === "favorites" || activeTab === "history") return [];
     const counts: Record<string, number> = {};
     for (const ch of byType[activeTab as "live" | "movie"]) {
       const key = ch.groupTitle || "";
@@ -182,9 +183,33 @@ export function ChannelList() {
     [toggleFavorite]
   );
 
+  const handleHistoryPlay = useCallback(
+    (entry: WatchHistoryEntry) => {
+      if (entry.contentType === "series") {
+        const eps = byType.series.filter(
+          (ep) => (ep.seriesTitle ?? showTitle(ep.name)) === entry.channelName
+        );
+        if (eps.length > 0) {
+          setSeriesModalData({ showTitle: entry.channelName, episodes: eps });
+        }
+      } else if (entry.contentType === "movie") {
+        const movie = byType.movie.find((ch) => ch.name === entry.channelName);
+        if (movie) setSelectedMovie(movie);
+      } else {
+        const ch = byType.live.find((c) => c.id === entry.channelId);
+        const url = ch?.url ?? "";
+        navigate("/player", { state: { url, channelName: entry.channelName, channel: ch } });
+      }
+    },
+    [byType, navigate]
+  );
+
   const isGrid = activeTab !== "live";
   const columnsPerRow = isGrid ? (layoutMode === "tv" ? 6 : 6) : 1;
-  const rowCount = activeTab === "favorites" ? 0 : Math.ceil(filtered.length / columnsPerRow);
+  const rowCount =
+    activeTab === "favorites" || activeTab === "history"
+      ? 0
+      : Math.ceil(filtered.length / columnsPerRow);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -236,9 +261,10 @@ export function ChannelList() {
       <div className="flex items-center gap-0 border-b border-border px-3 shrink-0">
         {TABS.map(({ id, label, icon: Icon }) => {
           const count =
+            id === "history"   ? null :
             id === "favorites" ? totalFavorites :
-            id === "series" ? seriesShows.length :
-            id === "movie"  ? movieTitles.length :
+            id === "series"    ? seriesShows.length :
+            id === "movie"     ? movieTitles.length :
             byType[id as "live"].length;
           return (
             <button
@@ -252,18 +278,20 @@ export function ChannelList() {
             >
               <Icon className="h-3.5 w-3.5" />
               {label}
-              <span className={`text-[11px] px-1.5 py-0.5 rounded-full tabular-nums ${
-                activeTab === id ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-              }`}>
-                {count.toLocaleString()}
-              </span>
+              {count !== null && (
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full tabular-nums ${
+                  activeTab === id ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                }`}>
+                  {count.toLocaleString()}
+                </span>
+              )}
             </button>
           );
         })}
         <div className="flex-1" />
-        <SearchBar value={search} onChange={setSearch} />
-        {/* Favorites-only filter toggle — not shown on the Favorites tab */}
-        {activeTab !== "favorites" && (
+        {activeTab !== "history" && <SearchBar value={search} onChange={setSearch} />}
+        {/* Favorites-only filter toggle — not shown on the Favorites or History tab */}
+        {activeTab !== "favorites" && activeTab !== "history" && (
           <button
             onClick={() => setShowFavoritesOnly((v) => !v)}
             className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
@@ -277,19 +305,21 @@ export function ChannelList() {
         )}
       </div>
 
-      {/* Category filter — only for live and movies, not series or favorites */}
-      {categories.length > 1 && activeTab !== "series" && activeTab !== "favorites" && (
+      {/* Category filter — only for live and movies, not series, favorites, or history */}
+      {categories.length > 1 && activeTab !== "series" && activeTab !== "favorites" && activeTab !== "history" && (
         <div className="shrink-0 px-3 pt-2.5">
           <CategoryFilter categories={categories} selected={selectedCategory} onSelect={setSelectedCategory} />
         </div>
       )}
 
-      {/* Result count */}
-      <div className="shrink-0 px-3 pt-2 pb-1">
-        <span className="text-xs text-muted-foreground">
-          {filtered.length.toLocaleString()} {countLabel}
-        </span>
-      </div>
+      {/* Result count — not shown on History tab */}
+      {activeTab !== "history" && (
+        <div className="shrink-0 px-3 pt-2 pb-1">
+          <span className="text-xs text-muted-foreground">
+            {filtered.length.toLocaleString()} {countLabel}
+          </span>
+        </div>
+      )}
 
       {/* Series loading indicator */}
       {seriesLoading && (
@@ -331,8 +361,13 @@ export function ChannelList() {
         />
       )}
 
-      {/* Favorites tab — plain scrollable div with section headers */}
-      {activeTab === "favorites" ? (
+      {/* History tab */}
+      {activeTab === "history" ? (
+        <HistoryTab
+          onPlay={handleHistoryPlay}
+          onNavigate={(path, state) => navigate(path, { state })}
+        />
+      ) : activeTab === "favorites" ? (
         <div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
