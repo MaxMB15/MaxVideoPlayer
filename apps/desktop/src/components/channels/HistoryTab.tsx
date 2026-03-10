@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Trash2, Loader2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getWatchHistory, deleteHistoryEntry, clearWatchHistory } from "@/lib/tauri";
@@ -6,7 +6,6 @@ import type { WatchHistoryEntry } from "@/lib/types";
 
 interface HistoryTabProps {
   onPlay: (entry: WatchHistoryEntry) => void;
-  onNavigate: (path: string, state: unknown) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -49,16 +48,22 @@ function ContentTypeBadge({ type }: { type: string }) {
 export function HistoryTab({ onPlay }: HistoryTabProps) {
   const [entries, setEntries] = useState<WatchHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getWatchHistory(200);
-      setEntries(data);
+      if (mountedRef.current) setEntries(data);
     } catch (e) {
       console.error("[HistoryTab] failed to fetch history:", e);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, []);
 
@@ -71,7 +76,7 @@ export function HistoryTab({ onPlay }: HistoryTabProps) {
       e.stopPropagation();
       try {
         await deleteHistoryEntry(channelId);
-        await fetchHistory();
+        if (mountedRef.current) await fetchHistory();
       } catch (err) {
         console.error("[HistoryTab] failed to delete entry:", err);
       }

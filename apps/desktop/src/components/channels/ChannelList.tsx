@@ -197,8 +197,8 @@ export function ChannelList() {
         if (movie) setSelectedMovie(movie);
       } else {
         const ch = byType.live.find((c) => c.id === entry.channelId);
-        const url = ch?.url ?? "";
-        navigate("/player", { state: { url, channelName: entry.channelName, channel: ch } });
+        if (!ch) return; // channel no longer available
+        navigate("/player", { state: { url: ch.url, channelName: entry.channelName, channel: ch } });
       }
     },
     [byType, navigate]
@@ -365,7 +365,6 @@ export function ChannelList() {
       {activeTab === "history" ? (
         <HistoryTab
           onPlay={handleHistoryPlay}
-          onNavigate={(path, state) => navigate(path, { state })}
         />
       ) : activeTab === "favorites" ? (
         <div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
