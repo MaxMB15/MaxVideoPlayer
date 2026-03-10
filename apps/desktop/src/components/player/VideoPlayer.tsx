@@ -156,7 +156,6 @@ export function PlayerView() {
   mpvStateRef.current = mpv.state;
   const activeChannelRef = useRef(activeChannel);
   activeChannelRef.current = activeChannel;
-
   const playStartTimeRef = useRef<number | null>(null);
 
   // On unmount, record end of play
@@ -235,6 +234,8 @@ export function PlayerView() {
           } else if (showChannelOsd) {
             setShowChannelOsd(false);
           } else {
+            // Note: playStartTimeRef is NOT nulled here intentionally.
+            // The unmount cleanup records the elapsed time when the route changes.
             mpv.stop();
             navigate("/");
           }
@@ -349,6 +350,15 @@ export function PlayerView() {
           movie={activeChannel}
           onClose={() => setShowInfoDrawer(false)}
           onPlay={(ch) => {
+            // Record end of current playback
+            if (activeChannel && playStartTimeRef.current !== null) {
+              const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+              recordPlayEnd(activeChannel.id, elapsed).catch(() => {});
+            }
+            // Start tracking new playback
+            playStartTimeRef.current = Date.now();
+            recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
+
             setShowInfoDrawer(false);
             mpv.load(ch.url).catch(() => {});
             setActiveChannelName(ch.name);
