@@ -399,6 +399,31 @@ pub async fn get_epg_programmes(
         .collect())
 }
 
+/// Detect and return the EPG URL for a provider.
+/// For Xtream providers, derives the URL from server/username/password.
+/// For M3U/File providers, returns the stored epg_url (detected during load).
+#[command]
+pub async fn detect_epg_url(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<String>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let provider = cache.get_provider(&id).map_err(|e| e.to_string())?;
+    let Some(provider) = provider else { return Ok(None); };
+
+    match provider.provider_type {
+        ProviderType::Xtream => {
+            let server = provider.url.clone();
+            let username = provider.username.unwrap_or_default();
+            let password = provider.password.unwrap_or_default();
+            Ok(Some(get_xtream_epg_url(&server, &username, &password)))
+        }
+        ProviderType::M3u => {
+            Ok(provider.epg_url)
+        }
+    }
+}
+
 /// Set EPG URL for a provider (manual override). Pass null/None to clear.
 #[command]
 pub async fn set_epg_url(

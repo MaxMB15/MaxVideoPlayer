@@ -34,6 +34,7 @@ pub fn run() {
             commands::refresh_epg,
             commands::get_epg_programmes,
             commands::set_epg_url,
+            commands::detect_epg_url,
             commands::get_omdb_api_key,
             commands::set_omdb_api_key,
             commands::fetch_omdb_data,

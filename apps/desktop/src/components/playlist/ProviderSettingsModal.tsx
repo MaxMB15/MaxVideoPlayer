@@ -9,7 +9,7 @@ import {
   loadProviderSettings,
   saveProviderSettings,
 } from "@/hooks/useChannels";
-import { refreshEpg, setEpgUrl } from "@/lib/tauri";
+import { refreshEpg, setEpgUrl, detectEpgUrl } from "@/lib/tauri";
 
 interface ProviderSettingsModalProps {
   provider: Provider;
@@ -82,6 +82,10 @@ export function ProviderSettingsModal({
   const [epgRefreshing, setEpgRefreshing] = useState(false);
   const [epgRefreshError, setEpgRefreshError] = useState<string | null>(null);
 
+  // EPG auto-detect state
+  const [detecting, setDetecting] = useState(false);
+  const [detectMessage, setDetectMessage] = useState<string | null>(null);
+
   // Refresh-now state
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -99,6 +103,23 @@ export function ProviderSettingsModal({
       setRefreshError(String(e));
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleDetectEpgUrl = async () => {
+    setDetecting(true);
+    setDetectMessage(null);
+    try {
+      const detected = await detectEpgUrl(provider.id);
+      if (detected) {
+        setEpgUrlState(detected);
+      } else {
+        setDetectMessage("No EPG URL detected");
+      }
+    } catch (e) {
+      setDetectMessage(String(e));
+    } finally {
+      setDetecting(false);
     }
   };
 
@@ -343,12 +364,27 @@ export function ProviderSettingsModal({
                 {/* EPG URL */}
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">EPG URL</label>
-                  <Input
-                    value={epgUrl}
-                    onChange={(e) => setEpgUrlState(e.target.value)}
-                    placeholder="https://example.com/epg.xml"
-                    className="h-8 text-sm"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      value={epgUrl}
+                      onChange={(e) => setEpgUrlState(e.target.value)}
+                      placeholder="https://example.com/epg.xml"
+                      className="h-8 text-sm"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleDetectEpgUrl}
+                      disabled={detecting || saving}
+                      className="shrink-0"
+                    >
+                      <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", detecting && "animate-spin")} />
+                      {detecting ? "Detecting…" : "Auto-detect"}
+                    </Button>
+                  </div>
+                  {detectMessage && (
+                    <p className="text-xs text-muted-foreground mt-1">{detectMessage}</p>
+                  )}
                 </div>
 
                 {/* EPG Auto-refresh toggle */}

@@ -122,6 +122,9 @@ export async function setEpgUrl(
   return invoke("set_epg_url", { providerId, epgUrl });
 }
 
+export const detectEpgUrl = (providerId: string): Promise<string | null> =>
+  invoke<string | null>("detect_epg_url", { id: providerId });
+
 // --- OMDB Commands ---
 
 export async function getOmdbApiKey(): Promise<string | null> {
