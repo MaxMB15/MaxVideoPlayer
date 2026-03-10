@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
-import { X, Play, ChevronLeft, ChevronRight, Star, MonitorPlay } from "lucide-react";
-import type { Channel } from "@/lib/types";
+import { X, Play, ChevronLeft, ChevronRight, Star, MonitorPlay, Loader2 } from "lucide-react";
+import type { Channel, OmdbData } from "@/lib/types";
+import { fetchOmdbData } from "@/lib/tauri";
 
 interface SeriesDetailDrawerProps {
   showTitle: string;
@@ -44,13 +45,26 @@ export function SeriesDetailModal({
   const [step, setStep] = useState<Step>("seasons");
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [sourceEp, setSourceEp] = useState<Channel | null>(null);
+  const [omdbData, setOmdbData] = useState<OmdbData | null>(null);
+  const [omdbLoading, setOmdbLoading] = useState(true);
 
-  const showLogoUrl = episodes[0]?.logoUrl;
+  const firstEp = episodes[0];
+  const showLogoUrl = firstEp?.logoUrl;
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true));
     return () => cancelAnimationFrame(id);
   }, []);
+
+  useEffect(() => {
+    if (!firstEp) return;
+    setOmdbLoading(true);
+    setOmdbData(null);
+    fetchOmdbData(firstEp.id, showTitle, "series")
+      .then(setOmdbData)
+      .catch(() => {})
+      .finally(() => setOmdbLoading(false));
+  }, [firstEp?.id, showTitle]);
 
   const handleClose = () => {
     setVisible(false);
@@ -118,6 +132,25 @@ export function SeriesDetailModal({
         : `Season ${selectedSeason}`
       : "";
 
+  // Derived display values
+  const posterSrc =
+    omdbData?.posterUrl && omdbData.posterUrl !== "N/A"
+      ? omdbData.posterUrl
+      : showLogoUrl ?? null;
+
+  const imdbRating = omdbData?.imdbRating && omdbData.imdbRating !== "N/A" ? omdbData.imdbRating : null;
+  const rottenTomatoes = omdbData?.rottenTomatoes && omdbData.rottenTomatoes !== "N/A" ? omdbData.rottenTomatoes : null;
+  const year = omdbData?.year && omdbData.year !== "N/A" ? omdbData.year : null;
+  const rated = omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null;
+  const genre = omdbData?.genre && omdbData.genre !== "N/A" ? omdbData.genre : null;
+  const runtime = omdbData?.runtime && omdbData.runtime !== "N/A" ? omdbData.runtime : null;
+  const director = omdbData?.director && omdbData.director !== "N/A" ? omdbData.director : null;
+  const actors = omdbData?.actors && omdbData.actors !== "N/A" ? omdbData.actors : null;
+  const plot = omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null;
+
+  const truncatedActors = actors && actors.length > 60 ? actors.slice(0, 57) + "..." : actors;
+  const genreRuntime = [genre, runtime ? `${runtime}/ep` : null].filter(Boolean).join(" · ");
+
   return (
     <div className="fixed inset-0 z-50">
       {/* Backdrop */}
@@ -167,8 +200,8 @@ export function SeriesDetailModal({
             <div className="flex gap-4 px-5 pb-4 shrink-0">
               {/* Poster */}
               <div className="w-20 h-28 rounded-xl bg-secondary overflow-hidden shrink-0 flex items-center justify-center">
-                {showLogoUrl ? (
-                  <img src={showLogoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                {posterSrc ? (
+                  <img src={posterSrc} alt="" className="h-full w-full object-cover" loading="lazy" />
                 ) : (
                   <MonitorPlay className="h-8 w-8 text-muted-foreground/30" />
                 )}
@@ -176,22 +209,63 @@ export function SeriesDetailModal({
 
               {/* Show info — ~65% of remaining space */}
               <div className="flex flex-col justify-center gap-1.5 flex-[2] min-w-0">
-                <p className="text-base font-semibold leading-tight line-clamp-2">{showTitle}</p>
-                <p className="text-xs text-muted-foreground">Series · —</p>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="flex items-center gap-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
-                    <Star className="h-2.5 w-2.5" /> N/A
-                  </span>
-                  <span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
-                    🍅 N/A
-                  </span>
-                  <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-500 px-2 py-0.5 rounded-full">
-                    🍿 N/A
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                  No description available.
-                </p>
+                {omdbLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span className="text-xs">Loading info…</span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Title + year + rated */}
+                    <div className="flex items-baseline gap-1.5 flex-wrap">
+                      <p className="text-base font-semibold leading-tight line-clamp-2">{showTitle}</p>
+                      {year && (
+                        <span className="text-xs text-muted-foreground shrink-0">({year})</span>
+                      )}
+                      {rated && (
+                        <span className="text-[11px] font-semibold bg-secondary text-muted-foreground px-1.5 py-0.5 rounded shrink-0">
+                          {rated}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Ratings row */}
+                    {(imdbRating || rottenTomatoes) && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {imdbRating && (
+                          <span className="flex items-center gap-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
+                            <Star className="h-2.5 w-2.5" /> {imdbRating}
+                          </span>
+                        )}
+                        {rottenTomatoes && (
+                          <span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
+                            🍅 {rottenTomatoes}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Genre + runtime */}
+                    {genreRuntime && (
+                      <p className="text-xs text-muted-foreground">{genreRuntime}</p>
+                    )}
+
+                    {/* Director / Created by */}
+                    {director && (
+                      <p className="text-xs text-muted-foreground truncate">Created by: {director}</p>
+                    )}
+
+                    {/* Cast */}
+                    {truncatedActors && (
+                      <p className="text-xs text-muted-foreground">Cast: {truncatedActors}</p>
+                    )}
+
+                    {/* Fallback: no OMDB data */}
+                    {!omdbData && (
+                      <p className="text-xs text-muted-foreground">Series · —</p>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* Season/episode stats — ~35% of remaining space */}
@@ -212,6 +286,14 @@ export function SeriesDetailModal({
                 </div>
               </div>
             </div>
+
+            {/* Plot — shown below the main row when available */}
+            {plot && !omdbLoading && (
+              <div className="px-5 pb-3 shrink-0">
+                <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{plot}</p>
+              </div>
+            )}
+
             <div className="border-t border-border mx-5 shrink-0" />
           </>
         )}
