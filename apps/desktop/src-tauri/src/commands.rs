@@ -434,6 +434,7 @@ pub async fn get_omdb_api_key<R: Runtime>(app: AppHandle<R>) -> Result<Option<St
 pub async fn set_omdb_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
     let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
     store.set(OMDB_API_KEY, serde_json::Value::String(key));
+    store.save().map_err(|e| e.to_string())?;
     Ok(())
 }
 

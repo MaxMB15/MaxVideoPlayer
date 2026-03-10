@@ -21,11 +21,13 @@ export function Settings() {
   const [omdbKeyVisible, setOmdbKeyVisible] = useState(false);
   const [omdbStatus, setOmdbStatus] = useState<OmdbStatus>("idle");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [omdbTesting, setOmdbTesting] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // History state
   const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("idle");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -46,11 +48,16 @@ export function Settings() {
   const PlatformIcon = platformIcon;
 
   async function handleSaveOmdbKey() {
-    await setOmdbApiKey(omdbKey);
-    setSaveStatus("saved");
-    setOmdbStatus("idle");
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+    try {
+      await setOmdbApiKey(omdbKey);
+      setSaveStatus("saved");
+      setSaveError(null);
+      setOmdbStatus("idle");
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveError("Failed to save. Please try again.");
+    }
   }
 
   async function handleTestOmdbKey() {
@@ -68,10 +75,15 @@ export function Settings() {
 
   async function handleClearHistory() {
     if (!window.confirm("Are you sure you want to clear all watch history? This cannot be undone.")) return;
-    await clearWatchHistory();
-    setHistoryStatus("cleared");
-    if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
-    historyTimerRef.current = setTimeout(() => setHistoryStatus("idle"), 2000);
+    try {
+      await clearWatchHistory();
+      setHistoryStatus("cleared");
+      setHistoryError(null);
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+      historyTimerRef.current = setTimeout(() => setHistoryStatus("idle"), 2000);
+    } catch {
+      setHistoryError("Failed to clear history. Please try again.");
+    }
   }
 
   return (
@@ -189,6 +201,11 @@ export function Settings() {
               </Button>
             </div>
 
+            {/* Save error */}
+            {saveError && (
+              <p className="mt-1 text-xs text-destructive">{saveError}</p>
+            )}
+
             {/* Status line */}
             <div className="mt-2 text-xs">
               {omdbStatus === "valid" && (
@@ -225,18 +242,23 @@ export function Settings() {
           <CardTitle className="text-base">Watch History</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleClearHistory}
-            >
-              Clear All History…
-            </Button>
-            {historyStatus === "cleared" && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <CheckCircle className="h-3 w-3" /> History cleared
-              </span>
+          <div className="space-y-2">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleClearHistory}
+              >
+                Clear All History…
+              </Button>
+              {historyStatus === "cleared" && (
+                <span className="flex items-center gap-1 text-xs text-green-500">
+                  <CheckCircle className="h-3 w-3" /> History cleared
+                </span>
+              )}
+            </div>
+            {historyError && (
+              <p className="text-xs text-destructive">{historyError}</p>
             )}
           </div>
         </CardContent>
