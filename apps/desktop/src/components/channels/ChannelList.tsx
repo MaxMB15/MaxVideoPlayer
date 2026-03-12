@@ -204,6 +204,16 @@ export function ChannelList() {
     [byType, navigate]
   );
 
+  // Must be declared before any early returns to satisfy Rules of Hooks
+  const favoritesByType = useMemo(() => {
+    const favs = filtered;
+    return {
+      live: favs.filter((ch) => ch.contentType === "live"),
+      movie: favs.filter((ch) => ch.contentType === "movie"),
+      series: favs.filter((ch) => ch.contentType === "series"),
+    };
+  }, [filtered]);
+
   const isGrid = activeTab !== "live";
   const columnsPerRow = isGrid ? (layoutMode === "tv" ? 6 : 6) : 1;
   const rowCount =
@@ -244,16 +254,6 @@ export function ChannelList() {
     activeTab === "movie" ? "movies" :
     activeTab === "series" ? "shows" :
     "favorites";
-
-  // Favorites tab: group by content type with section headers
-  const favoritesByType = useMemo(() => {
-    const favs = filtered;
-    return {
-      live: favs.filter((ch) => ch.contentType === "live"),
-      movie: favs.filter((ch) => ch.contentType === "movie"),
-      series: favs.filter((ch) => ch.contentType === "series"),
-    };
-  }, [filtered]);
 
   return (
     <div className="flex flex-col h-full">
