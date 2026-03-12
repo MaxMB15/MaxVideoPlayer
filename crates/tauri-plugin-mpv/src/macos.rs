@@ -319,8 +319,23 @@ impl PlatformRenderer for MacosGlRenderer {
             let appkit_y = if is_flipped {
                 y
             } else {
-                let bounds: NSRect = NSView::bounds(parent);
-                bounds.size.height - y - h
+                // With transparent+decorations, wry sets fullSizeContentView so the
+                // WKWebView (ns_view) extends under the titlebar — bounds.size.height
+                // equals the full window height. But CSS getBoundingClientRect() measures
+                // from the layout viewport which excludes the titlebar area (matching
+                // 100vh). Using bounds.size.height produces an offset equal to the
+                // titlebar height, shifting the GL view up and leaving a gap at the bottom.
+                // contentLayoutRect gives the usable content area height below the titlebar,
+                // matching the CSS viewport reference.
+                let window: *mut objc::runtime::Object = msg_send![parent, window];
+                let ref_height: f64 = if !window.is_null() {
+                    let layout_rect: NSRect = msg_send![window, contentLayoutRect];
+                    layout_rect.size.height
+                } else {
+                    let bounds: NSRect = NSView::bounds(parent);
+                    bounds.size.height
+                };
+                ref_height - y - h
             };
             use cocoa::foundation::NSPoint;
             let frame = NSRect::new(

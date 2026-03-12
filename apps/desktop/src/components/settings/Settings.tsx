@@ -87,13 +87,14 @@ export function Settings() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto">
-      <div className="flex items-center gap-3">
-        <SettingsIcon className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Settings</h1>
-      </div>
+    <div className="h-full overflow-y-auto">
+      <div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto">
+        <div className="flex items-center gap-3">
+          <SettingsIcon className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold">Settings</h1>
+        </div>
 
-      <Card>
+        <Card>
         <CardHeader>
           <CardTitle className="text-base">Platform</CardTitle>
         </CardHeader>
@@ -277,6 +278,7 @@ export function Settings() {
           </p>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

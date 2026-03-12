@@ -77,6 +77,30 @@ fn extract_rotten_tomatoes(ratings: Option<Vec<OmdbRating>>) -> Option<String> {
     ratings?.into_iter().find(|r| r.source == "Rotten Tomatoes").map(|r| r.value)
 }
 
+/// Strip a trailing ` (YYYY)` year suffix from a title if present.
+/// Matches the common IPTV pattern where titles are stored as `"Title (Year)"`.
+/// Returns the bare title without the year; `None` if the pattern does not match.
+///
+/// # Examples
+///
+/// - `"Inception (2010)"` → `Some("Inception")`
+/// - `"Breaking Bad (2008)"` → `Some("Breaking Bad")`
+/// - `"Plain Title"` → `None`
+fn strip_trailing_year(title: &str) -> Option<&str> {
+    let trimmed = title.trim_end();
+    if trimmed.len() >= 7 {
+        let rest = trimmed.len() - 7; // " (XXXX)".len() == 7
+        let suffix = &trimmed[rest..];
+        if suffix.starts_with(" (") && suffix.ends_with(')') {
+            let year_part = &suffix[2..6];
+            if year_part.chars().all(|c| c.is_ascii_digit()) {
+                return Some(trimmed[..rest].trim_end());
+            }
+        }
+    }
+    None
+}
+
 /// Parse an OMDB API JSON response (as serde_json::Value) into OmdbData.
 /// Separated from the HTTP call so it can be unit-tested without network access.
 pub fn parse_omdb_response(json: serde_json::Value) -> Result<OmdbData, OmdbError> {
@@ -104,19 +128,40 @@ pub fn parse_omdb_response(json: serde_json::Value) -> Result<OmdbData, OmdbErro
     })
 }
 
-/// Fetch OMDB data for a title. `content_type` should be `"movie"` or `"series"`.
-pub async fn fetch_omdb(title: &str, content_type: &str, api_key: &str) -> Result<OmdbData, OmdbError> {
-    // Client constructed per-call; acceptable for low-frequency on-demand OMDB fetches.
-    // A shared client can be introduced if this path becomes high-frequency.
-    let client = reqwest::Client::new();
+/// Perform an OMDB API lookup for the given title.
+async fn do_fetch(
+    client: &reqwest::Client,
+    title: &str,
+    content_type: &str,
+    api_key: &str,
+) -> Result<OmdbData, OmdbError> {
     let response = client
         .get("https://www.omdbapi.com/")
-        .query(&[("t", title), ("type", content_type), ("apikey", api_key)])
+        .query(&[("t", title), ("type", content_type), ("plot", "full"), ("apikey", api_key)])
         .send()
         .await?
         .json::<serde_json::Value>()
         .await?;
     parse_omdb_response(response)
+}
+
+/// Fetch OMDB data for a title. `content_type` should be `"movie"` or `"series"`.
+///
+/// If the title matches the pattern `Title (Year)` (e.g. `"Inception (2010)"`), the year
+/// suffix is stripped and OMDB is queried with the bare title first. If that lookup fails,
+/// the full title is tried as a fallback.
+pub async fn fetch_omdb(title: &str, content_type: &str, api_key: &str) -> Result<OmdbData, OmdbError> {
+    let client = reqwest::Client::new();
+
+    if let Some(stripped) = strip_trailing_year(title) {
+        match do_fetch(&client, stripped, content_type, api_key).await {
+            Ok(data) => return Ok(data),
+            Err(OmdbError::Api(_)) => { /* fall through to full title */ }
+            Err(e) => return Err(e),
+        }
+    }
+
+    do_fetch(&client, title, content_type, api_key).await
 }
 
 #[cfg(test)]
@@ -143,6 +188,16 @@ mod tests {
                 { "Source": "Metacritic", "Value": "84/100" }
             ]
         })
+    }
+
+    #[test]
+    fn test_strip_trailing_year() {
+        assert_eq!(strip_trailing_year("Inception (2010)"), Some("Inception"));
+        assert_eq!(strip_trailing_year("Breaking Bad (2008)"), Some("Breaking Bad"));
+        assert_eq!(strip_trailing_year("The Dark Knight (2008)"), Some("The Dark Knight"));
+        assert_eq!(strip_trailing_year("Plain Title"), None);
+        assert_eq!(strip_trailing_year("Avatar"), None);
+        assert_eq!(strip_trailing_year("Movie (I)"), None); // roman numeral, not year
     }
 
     #[test]
