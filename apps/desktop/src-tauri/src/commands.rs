@@ -86,11 +86,6 @@ pub async fn load_m3u_file(
     let provider_id = format!("m3u-{}", uuid_simple());
     prefix_channel_ids(&provider_id, &mut channels);
 
-    let source_label = std::path::Path::new(&path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.clone());
-
     let provider = Provider {
         id: provider_id.clone(),
         name,

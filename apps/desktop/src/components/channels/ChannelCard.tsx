@@ -46,12 +46,21 @@ const RowCard = ({
 			LIVE
 		</span>
 		{onToggleFavorite && (
-			<button
+			<div
+				role="button"
+				tabIndex={0}
 				onClick={(e) => {
 					e.stopPropagation();
 					onToggleFavorite(channel);
 				}}
-				className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				onKeyDown={(e) => {
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						e.stopPropagation();
+						onToggleFavorite(channel);
+					}
+				}}
+				className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
 				aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
 			>
 				<Heart
@@ -59,7 +68,7 @@ const RowCard = ({
 						channel.isFavorite ? "fill-current text-red-500" : "text-muted-foreground"
 					}`}
 				/>
-			</button>
+			</div>
 		)}
 	</button>
 );
@@ -105,12 +114,21 @@ const PosterCard = ({
 						</div>
 					)}
 					{onToggleFavorite && (
-						<button
+						<div
+							role="button"
+							tabIndex={0}
 							onClick={(e) => {
 								e.stopPropagation();
 								onToggleFavorite(channel);
 							}}
-							className="absolute top-1 right-1 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors"
+							onKeyDown={(e) => {
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									e.stopPropagation();
+									onToggleFavorite(channel);
+								}
+							}}
+							className="absolute top-1 right-1 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors cursor-pointer"
 							aria-label={
 								channel.isFavorite ? "Remove from favorites" : "Add to favorites"
 							}
@@ -120,7 +138,7 @@ const PosterCard = ({
 									channel.isFavorite ? "fill-current text-red-500" : "text-white"
 								}`}
 							/>
-						</button>
+						</div>
 					)}
 				</div>
 				<p className="text-xs leading-snug line-clamp-2 text-foreground/85 group-hover:text-foreground transition-colors px-0.5">
