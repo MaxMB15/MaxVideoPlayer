@@ -1,4 +1,12 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import {
+	createContext,
+	useContext,
+	useState,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+} from "react";
 import type { Channel, Category, Provider } from "@/lib/types";
 import {
 	loadM3uPlaylist,
@@ -88,6 +96,12 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const startupDone = useRef(false);
+
+	const channelIndex = useMemo(() => {
+		const m = new Map<string, number>();
+		channels.forEach((ch, i) => m.set(ch.id, i));
+		return m;
+	}, [channels]);
 
 	const deriveCategories = (chs: Channel[]) => {
 		const map = new Map<string, number>();
@@ -218,13 +232,19 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 	const toggleFavorite = useCallback(
 		async (channelId: string) => {
 			try {
-				await toggleFavoriteApi(channelId);
-				await refreshChannels();
+				const newFavorite = await toggleFavoriteApi(channelId);
+				setChannels((prev) => {
+					const idx = channelIndex.get(channelId);
+					if (idx === undefined) return prev;
+					const next = [...prev];
+					next[idx] = { ...next[idx], isFavorite: newFavorite };
+					return next;
+				});
 			} catch (e) {
 				setError(String(e));
 			}
 		},
-		[refreshChannels]
+		[channelIndex]
 	);
 
 	// Initial load
