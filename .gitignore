@@ -45,4 +45,5 @@ libs/macos/
 # AI Generated Files
 .claude/
 docs/
+CLAUDE.md
 

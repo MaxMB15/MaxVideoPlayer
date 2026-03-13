@@ -1,6 +1,10 @@
 # MaxVideoPlayer
 
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+
 A cross-platform IPTV player built with **Tauri v2**, **React**, and **libmpv**. The Rust core (`mvp-core`) handles M3U/Xtream/EPG parsing and SQLite caching across all targets. A custom `tauri-plugin-mpv` embeds libmpv directly into the native window using `NSOpenGLView` on macOS, giving hardware-accelerated playback for virtually any IPTV protocol (HLS, RTMP, RTSP, TS, etc.).
+
+See [LICENSE](LICENSE) for terms, [NOTICE](NOTICE) for trademark and legal disclaimers.
 
 ## Platform Support
 
