@@ -41,3 +41,8 @@ libs/ios/*.a
 libs/android/**/*.so
 libs/mpv-src/
 libs/macos/
+
+# AI Generated Files
+.claude/
+docs/
+

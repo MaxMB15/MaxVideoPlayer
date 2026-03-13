@@ -3,59 +3,61 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 220 14% 7%;
-    --foreground: 220 10% 95%;
-    --card: 220 13% 10%;
-    --card-foreground: 220 10% 95%;
-    --popover: 220 13% 10%;
-    --popover-foreground: 220 10% 95%;
-    --primary: 214 91% 62%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 12% 16%;
-    --secondary-foreground: 220 10% 80%;
-    --muted: 220 12% 14%;
-    --muted-foreground: 220 8% 55%;
-    --accent: 220 12% 18%;
-    --accent-foreground: 220 10% 95%;
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 220 12% 20%;
-    --input: 220 12% 16%;
-    --ring: 214 91% 62%;
-    --radius: 0.625rem;
-  }
+	:root {
+		--background: 220 14% 7%;
+		--foreground: 220 10% 95%;
+		--card: 220 13% 10%;
+		--card-foreground: 220 10% 95%;
+		--popover: 220 13% 10%;
+		--popover-foreground: 220 10% 95%;
+		--primary: 214 91% 62%;
+		--primary-foreground: 0 0% 100%;
+		--secondary: 220 12% 16%;
+		--secondary-foreground: 220 10% 80%;
+		--muted: 220 12% 14%;
+		--muted-foreground: 220 8% 55%;
+		--accent: 220 12% 18%;
+		--accent-foreground: 220 10% 95%;
+		--destructive: 0 72% 55%;
+		--destructive-foreground: 0 0% 100%;
+		--border: 220 12% 20%;
+		--input: 220 12% 16%;
+		--ring: 214 91% 62%;
+		--radius: 0.625rem;
+	}
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
-  html,
-  body {
-    /* Disable WKWebView elastic/bounce scroll — this is an app, not a webpage. */
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
-  body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
+	* {
+		@apply border-border;
+	}
+	html,
+	body {
+		/* Disable WKWebView elastic/bounce scroll — this is an app, not a webpage. */
+		overflow: hidden;
+		overscroll-behavior: none;
+	}
+	body {
+		@apply bg-background text-foreground;
+		font-feature-settings:
+			"rlig" 1,
+			"calt" 1;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+	}
 }
 
 /* Hide scrollbar but allow scrolling */
 .scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+	-ms-overflow-style: none;
+	scrollbar-width: none;
 }
 .scrollbar-hide::-webkit-scrollbar {
-  display: none;
+	display: none;
 }
 
 /* Transparent video area for MPV rendering beneath */
 .video-surface {
-  background: transparent;
-  -webkit-app-region: no-drag;
+	background: transparent;
+	-webkit-app-region: no-drag;
 }

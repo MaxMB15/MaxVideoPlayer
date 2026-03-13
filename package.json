@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "description": "Cross-platform IPTV player — desktop (Tauri), iOS & Android (native)",
   "scripts": {
+    "prepare": "husky",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "lint": "eslint apps/desktop/src",
+    "lint:fix": "eslint apps/desktop/src --fix",
     "dev:macos": "npm run tauri dev --workspace=apps/desktop",
     "dev:desktop": "npm run tauri dev --workspace=apps/desktop",
     "dev:desktop:web": "npm run dev --workspace=apps/desktop",
@@ -13,5 +18,23 @@
     "test:core": "cargo test -p mvp-core",
     "test:desktop": "npm run test --workspace=apps/desktop"
   },
-  "workspaces": ["apps/desktop"]
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "lint-staged": {
+    "apps/**/*.{ts,tsx,js,jsx,json,css,md}": ["prettier --write"],
+    "apps/**/*.{ts,tsx}": ["eslint --fix"]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.3",
+    "prettier": "^3.4.2",
+    "typescript-eslint": "^8.57.0"
+  }
 }

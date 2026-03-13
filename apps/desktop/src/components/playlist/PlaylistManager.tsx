@@ -9,140 +9,151 @@ import { useChannels } from "@/hooks/useChannels";
 import type { Provider } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-function displayUrl(url: string): string {
-  if (url.startsWith("file://")) {
-    const path = url.slice(7);
-    return path.split("/").pop() || path;
-  }
-  return url;
-}
+const displayUrl = (url: string): string => {
+	if (url.startsWith("file://")) {
+		const path = url.slice(7);
+		return path.split("/").pop() || path;
+	}
+	return url;
+};
 
-export function PlaylistManager() {
-  const {
-    providers,
-    loadM3u,
-    loadM3uFile,
-    loadXtream,
-    removeProvider,
-    refreshProvider,
-    updateProvider,
-  } = useChannels();
+export const PlaylistManager = () => {
+	const {
+		providers,
+		loadM3u,
+		loadM3uFile,
+		loadXtream,
+		removeProvider,
+		refreshProvider,
+		updateProvider,
+	} = useChannels();
 
-  const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
-  const [settingsProvider, setSettingsProvider] = useState<Provider | null>(null);
+	const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+	const [settingsProvider, setSettingsProvider] = useState<Provider | null>(null);
 
-  const handleAddM3u = async (name: string, url: string) => {
-    await loadM3u(name, url);
-  };
+	const handleAddM3u = async (name: string, url: string) => {
+		await loadM3u(name, url);
+	};
 
-  const handleAddM3uFile = async (name: string, path: string) => {
-    await loadM3uFile(name, path);
-  };
+	const handleAddM3uFile = async (name: string, path: string) => {
+		await loadM3uFile(name, path);
+	};
 
-  const handleAddXtream = async (
-    name: string,
-    url: string,
-    username: string,
-    password: string
-  ) => {
-    await loadXtream(name, url, username, password);
-  };
+	const handleAddXtream = async (
+		name: string,
+		url: string,
+		username: string,
+		password: string
+	) => {
+		await loadXtream(name, url, username, password);
+	};
 
-  const handleRefresh = async (id: string) => {
-    setRefreshingIds((s) => new Set(s).add(id));
-    try {
-      await refreshProvider(id);
-    } catch {}
-    setRefreshingIds((s) => {
-      const next = new Set(s);
-      next.delete(id);
-      return next;
-    });
-  };
+	const handleRefresh = async (id: string) => {
+		setRefreshingIds((s) => new Set(s).add(id));
+		try {
+			await refreshProvider(id);
+		} catch {}
+		setRefreshingIds((s) => {
+			const next = new Set(s);
+			next.delete(id);
+			return next;
+		});
+	};
 
-  return (
-    <div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto h-full overflow-y-auto">
-      <h1 className="text-2xl font-bold">Playlists</h1>
+	return (
+		<div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto h-full overflow-y-auto">
+			<h1 className="text-2xl font-bold">Playlists</h1>
 
-      <AddProvider
-        onAddM3u={handleAddM3u}
-        onAddM3uFile={handleAddM3uFile}
-        onAddXtream={handleAddXtream}
-      />
+			<AddProvider
+				onAddM3u={handleAddM3u}
+				onAddM3uFile={handleAddM3uFile}
+				onAddXtream={handleAddXtream}
+			/>
 
-      {providers.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Your Providers</h2>
-          {providers.map((p) => {
-            const isRefreshing = refreshingIds.has(p.id);
-            const isFile = p.url.startsWith("file://");
-            return (
-              <Card key={p.id}>
-                <CardHeader className="py-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <CardTitle className="text-base truncate">{p.name}</CardTitle>
-                      <Badge variant="secondary" className="text-[10px] shrink-0">
-                        {p.type}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0 ml-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        title="Settings"
-                        onClick={() => setSettingsProvider(p)}
-                      >
-                        <Settings2 className="h-3.5 w-3.5" />
-                      </Button>
-                      {!isFile && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title="Refresh"
-                          disabled={isRefreshing}
-                          onClick={() => handleRefresh(p.id)}
-                        >
-                          <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        title="Remove"
-                        onClick={() => removeProvider(p.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0 pb-4">
-                  <p className="text-xs text-muted-foreground truncate">
-                    {displayUrl(p.url)}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {p.channelCount.toLocaleString()} channels
-                    {p.lastUpdated && ` \u00b7 Updated ${new Date(p.lastUpdated).toLocaleString()}`}
-                  </p>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+			{providers.length > 0 && (
+				<div className="flex flex-col gap-3">
+					<h2 className="text-lg font-semibold">Your Providers</h2>
+					{providers.map((p) => {
+						const isRefreshing = refreshingIds.has(p.id);
+						const isFile = p.url.startsWith("file://");
+						return (
+							<Card key={p.id}>
+								<CardHeader className="py-4">
+									<div className="flex items-center justify-between">
+										<div className="flex items-center gap-2 min-w-0">
+											<CardTitle className="text-base truncate">
+												{p.name}
+											</CardTitle>
+											<Badge
+												variant="secondary"
+												className="text-[10px] shrink-0"
+											>
+												{p.type}
+											</Badge>
+										</div>
+										<div className="flex items-center gap-1 shrink-0 ml-2">
+											<Button
+												variant="ghost"
+												size="icon"
+												className="h-8 w-8"
+												title="Settings"
+												onClick={() => setSettingsProvider(p)}
+											>
+												<Settings2 className="h-3.5 w-3.5" />
+											</Button>
+											{!isFile && (
+												<Button
+													variant="ghost"
+													size="icon"
+													className="h-8 w-8"
+													title="Refresh"
+													disabled={isRefreshing}
+													onClick={() => handleRefresh(p.id)}
+												>
+													<RefreshCw
+														className={cn(
+															"h-3.5 w-3.5",
+															isRefreshing && "animate-spin"
+														)}
+													/>
+												</Button>
+											)}
+											<Button
+												variant="ghost"
+												size="icon"
+												className="h-8 w-8 text-destructive hover:text-destructive"
+												title="Remove"
+												onClick={() => removeProvider(p.id)}
+											>
+												<Trash2 className="h-3.5 w-3.5" />
+											</Button>
+										</div>
+									</div>
+								</CardHeader>
+								<CardContent className="pt-0 pb-4">
+									<p className="text-xs text-muted-foreground truncate">
+										{displayUrl(p.url)}
+									</p>
+									<p className="text-xs text-muted-foreground mt-1">
+										{p.channelCount.toLocaleString()} channels
+										{p.lastUpdated &&
+											` \u00b7 Updated ${new Date(p.lastUpdated).toLocaleString()}`}
+									</p>
+								</CardContent>
+							</Card>
+						);
+					})}
+				</div>
+			)}
 
-      {settingsProvider && (
-        <ProviderSettingsModal
-          provider={settingsProvider}
-          onClose={() => setSettingsProvider(null)}
-          onRefreshNow={handleRefresh}
-          onUpdateProvider={updateProvider}
-        />
-      )}
-    </div>
-  );
-}
+			{settingsProvider && (
+				<ProviderSettingsModal
+					provider={settingsProvider}
+					onClose={() => setSettingsProvider(null)}
+					onRefreshNow={handleRefresh}
+					onUpdateProvider={updateProvider}
+				/>
+			)}
+		</div>
+	);
+};

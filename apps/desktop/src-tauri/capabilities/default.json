@@ -1,13 +1,13 @@
 {
-  "identifier": "default",
-  "description": "Default capabilities for the main window",
-  "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "core:window:allow-set-fullscreen",
-    "os:default",
-    "dialog:default",
-    "mpv:default",
-    "store:default"
-  ]
+	"identifier": "default",
+	"description": "Default capabilities for the main window",
+	"windows": ["main"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-set-fullscreen",
+		"os:default",
+		"dialog:default",
+		"mpv:default",
+		"store:default"
+	]
 }

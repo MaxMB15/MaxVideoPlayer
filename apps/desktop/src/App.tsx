@@ -9,21 +9,21 @@ import { ChannelsContext, useChannelsProvider } from "./hooks/useChannels";
 import { FullscreenProvider } from "./lib/fullscreen-context";
 
 export default function App() {
-  const channelsValue = useChannelsProvider();
+	const channelsValue = useChannelsProvider();
 
-  return (
-    <ChannelsContext.Provider value={channelsValue}>
-      <FullscreenProvider>
-      <Routes>
-        <Route element={<AppLayout />}>
-          <Route path="/" element={<ChannelList />} />
-          <Route path="/player" element={<PlayerView />} />
-          <Route path="/guide" element={<ProgramGuide />} />
-          <Route path="/playlists" element={<PlaylistManager />} />
-          <Route path="/settings" element={<Settings />} />
-        </Route>
-      </Routes>
-      </FullscreenProvider>
-    </ChannelsContext.Provider>
-  );
+	return (
+		<ChannelsContext.Provider value={channelsValue}>
+			<FullscreenProvider>
+				<Routes>
+					<Route element={<AppLayout />}>
+						<Route path="/" element={<ChannelList />} />
+						<Route path="/player" element={<PlayerView />} />
+						<Route path="/guide" element={<ProgramGuide />} />
+						<Route path="/playlists" element={<PlaylistManager />} />
+						<Route path="/settings" element={<Settings />} />
+					</Route>
+				</Routes>
+			</FullscreenProvider>
+		</ChannelsContext.Provider>
+	);
 }

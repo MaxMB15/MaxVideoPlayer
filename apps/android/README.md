@@ -7,7 +7,7 @@ Native Android app using Kotlin/Jetpack Compose with ExoPlayer for video playbac
 - **UI**: Jetpack Compose
 - **Video**: ExoPlayer (HLS, MPEG-TS, DASH)
 - **Core logic**: `mvp-core` (Rust) via JNI or UniFFI
-  - M3U parsing, Xtream Codes API, EPG, SQLite cache
+    - M3U parsing, Xtream Codes API, EPG, SQLite cache
 
 ## Setup (Future)
 

@@ -7,7 +7,7 @@ Native iOS app using Swift/SwiftUI with AVPlayer for video playback.
 - **UI**: SwiftUI
 - **Video**: AVPlayer (native HLS, MPEG-TS support)
 - **Core logic**: `mvp-core` (Rust) via UniFFI / XCFramework
-  - M3U parsing, Xtream Codes API, EPG, SQLite cache
+    - M3U parsing, Xtream Codes API, EPG, SQLite cache
 
 ## Setup (Future)
 
