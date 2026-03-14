@@ -1034,6 +1034,8 @@ mod tests {
             poster_url: Some("https://example.com/poster.jpg".into()),
             imdb_rating: Some("9.0".into()),
             rotten_tomatoes: Some("94%".into()),
+            imdb_id: Some("tt0468569".into()),
+            imdb_votes: Some("2,844,668".into()),
         }
     }
 
@@ -1092,6 +1094,8 @@ mod tests {
             poster_url: None,
             imdb_rating: None,
             rotten_tomatoes: None,
+            imdb_id: None,
+            imdb_votes: None,
         };
         store.save_omdb_cache("ch1", &second).unwrap();
 
@@ -1115,6 +1119,8 @@ mod tests {
             poster_url: None,
             imdb_rating: None,
             rotten_tomatoes: None,
+            imdb_id: None,
+            imdb_votes: None,
         };
         store.save_omdb_cache("ch2", &data).unwrap();
 

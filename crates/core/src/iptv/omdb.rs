@@ -15,6 +15,8 @@ pub struct OmdbData {
     pub poster_url: Option<String>,
     pub imdb_rating: Option<String>,
     pub rotten_tomatoes: Option<String>,
+    pub imdb_id: Option<String>,
+    pub imdb_votes: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +59,10 @@ struct OmdbApiResponse {
     imdb_rating: Option<String>,
     #[serde(rename = "Ratings")]
     ratings: Option<Vec<OmdbRating>>,
+    #[serde(rename = "imdbID")]
+    imdb_id: Option<String>,
+    #[serde(rename = "imdbVotes")]
+    imdb_votes: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +131,8 @@ pub fn parse_omdb_response(json: serde_json::Value) -> Result<OmdbData, OmdbErro
         poster_url: na_to_none(resp.poster),
         imdb_rating: na_to_none(resp.imdb_rating),
         rotten_tomatoes: extract_rotten_tomatoes(resp.ratings),
+        imdb_id: na_to_none(resp.imdb_id),
+        imdb_votes: na_to_none(resp.imdb_votes),
     })
 }
 
@@ -182,6 +190,8 @@ mod tests {
             "Plot": "Batman raises the stakes in his war on crime.",
             "Poster": "https://example.com/poster.jpg",
             "imdbRating": "9.0",
+            "imdbID": "tt0468569",
+            "imdbVotes": "2,844,668",
             "Ratings": [
                 { "Source": "Internet Movie Database", "Value": "9.0/10" },
                 { "Source": "Rotten Tomatoes", "Value": "94%" },
@@ -214,6 +224,8 @@ mod tests {
         assert_eq!(data.poster_url.as_deref(), Some("https://example.com/poster.jpg"));
         assert_eq!(data.imdb_rating.as_deref(), Some("9.0"));
         assert_eq!(data.rotten_tomatoes.as_deref(), Some("94%"));
+        assert_eq!(data.imdb_id.as_deref(), Some("tt0468569"));
+        assert_eq!(data.imdb_votes.as_deref(), Some("2,844,668"));
     }
 
     #[test]
@@ -230,6 +242,8 @@ mod tests {
             "Plot": "N/A",
             "Poster": "N/A",
             "imdbRating": "N/A",
+            "imdbID": "N/A",
+            "imdbVotes": "N/A",
             "Ratings": []
         });
         let data = parse_omdb_response(response).unwrap();
@@ -244,6 +258,8 @@ mod tests {
         assert!(data.poster_url.is_none());
         assert!(data.imdb_rating.is_none());
         assert!(data.rotten_tomatoes.is_none());
+        assert!(data.imdb_id.is_none());
+        assert!(data.imdb_votes.is_none());
     }
 
     #[test]
@@ -317,10 +333,38 @@ mod tests {
             poster_url: Some("https://example.com/p.jpg".into()),
             imdb_rating: Some("8.5".into()),
             rotten_tomatoes: None,
+            imdb_id: None,
+            imdb_votes: None,
         };
         let json_str = serde_json::to_string(&data).unwrap();
         assert!(json_str.contains("\"posterUrl\""));
         assert!(json_str.contains("\"imdbRating\""));
         assert!(json_str.contains("\"rottenTomatoes\""));
+        assert!(json_str.contains("\"imdbId\""));
+        assert!(json_str.contains("\"imdbVotes\""));
+    }
+
+    #[test]
+    fn test_imdb_id_and_votes_parsed() {
+        let response = json!({
+            "Response": "True",
+            "Title": "Inception",
+            "imdbID": "tt1375666",
+            "imdbVotes": "2,500,000"
+        });
+        let data = parse_omdb_response(response).unwrap();
+        assert_eq!(data.imdb_id.as_deref(), Some("tt1375666"));
+        assert_eq!(data.imdb_votes.as_deref(), Some("2,500,000"));
+    }
+
+    #[test]
+    fn test_missing_imdb_id_and_votes_are_none() {
+        let response = json!({
+            "Response": "True",
+            "Title": "No IDs Movie"
+        });
+        let data = parse_omdb_response(response).unwrap();
+        assert!(data.imdb_id.is_none());
+        assert!(data.imdb_votes.is_none());
     }
 }

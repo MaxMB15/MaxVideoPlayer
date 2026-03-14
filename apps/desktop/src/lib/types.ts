@@ -68,6 +68,8 @@ export interface OmdbData {
 	posterUrl?: string;
 	imdbRating?: string;
 	rottenTomatoes?: string;
+	imdbId?: string;
+	imdbVotes?: string;
 }
 
 export interface WatchHistoryEntry {
