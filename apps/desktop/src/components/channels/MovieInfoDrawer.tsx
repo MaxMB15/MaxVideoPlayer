@@ -34,6 +34,13 @@ export const MovieInfoDrawer = ({
 		return () => cancelAnimationFrame(id);
 	}, []);
 
+	// Sync when prefetched MDBList data arrives after drawer opens
+	useEffect(() => {
+		if (prefetchedMdbListData !== undefined) {
+			setMdbListData(prefetchedMdbListData ?? null);
+		}
+	}, [prefetchedMdbListData]);
+
 	useEffect(() => {
 		if (prefetchedOmdbData !== undefined) return; // already have data
 		if (!movie) return;

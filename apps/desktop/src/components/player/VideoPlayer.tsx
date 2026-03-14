@@ -91,8 +91,25 @@ export const PlayerView = () => {
 				playStartTimeRef.current = Date.now();
 				recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
 			}
+		} else {
+			// Navigating back to player without a new channel (e.g. via sidebar menu)
+			const saved = sessionStorage.getItem("mvp_lastChannel");
+			if (saved) {
+				try {
+					const ch: Channel = JSON.parse(saved);
+					setActiveChannel(ch);
+					setActiveChannelName(ch.name);
+				} catch {}
+			}
 		}
 	}, [navState?.url]);
+
+	// Persist last active channel so it can be restored when navigating back
+	useEffect(() => {
+		if (activeChannel) {
+			sessionStorage.setItem("mvp_lastChannel", JSON.stringify(activeChannel));
+		}
+	}, [activeChannel]);
 
 	// Pre-fetch enriched metadata when activeChannel changes to a movie or series
 	useEffect(() => {
@@ -107,8 +124,9 @@ export const PlayerView = () => {
 		setEnrichedMeta(null);
 
 		const mediaType = activeChannel.contentType === "series" ? "series" : "movie";
+		const titleForOmdb = activeChannel.seriesTitle ?? showTitle(activeChannel.name);
 
-		fetchOmdbData(activeChannel.id, activeChannel.name, mediaType as "movie" | "series")
+		fetchOmdbData(activeChannel.id, titleForOmdb, mediaType as "movie" | "series")
 			.then((omdbData) => {
 				if (cancelled) return;
 				setEnrichedMeta({ omdbData, mdbListData: null });
