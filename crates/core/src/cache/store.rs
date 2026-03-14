@@ -1,6 +1,7 @@
 use crate::iptv::m3u::parse_series_name;
 use crate::iptv::mdblist::MdbListData;
 use crate::iptv::omdb::OmdbData;
+use crate::iptv::opensubtitles::SubtitleSearchResult;
 use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -163,6 +164,13 @@ impl CacheStore {
             );
             CREATE INDEX IF NOT EXISTS idx_history_last_watched
                 ON watch_history(last_watched_at DESC);"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS opensubtitles_search_cache (
+                cache_key   TEXT PRIMARY KEY,
+                data_json   TEXT NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );"
         )?;
         Ok(())
     }
@@ -623,6 +631,65 @@ impl CacheStore {
                     return Ok(None); // stale
                 }
                 let data: MdbListData = serde_json::from_str(&data_json)?;
+                Ok(Some(data))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    // --- OpenSubtitles Search Cache ---
+
+    fn opensubtitles_cache_key(imdb_id: &str, season: Option<u32>, episode: Option<u32>) -> String {
+        match (season, episode) {
+            (Some(s), Some(e)) => format!("{imdb_id}:{s}:{e}"),
+            _ => imdb_id.to_string(),
+        }
+    }
+
+    /// Store OpenSubtitles search results. Overwrites any existing cached entry.
+    pub fn save_opensubtitles_search_cache(
+        &self,
+        imdb_id: &str,
+        season: Option<u32>,
+        episode: Option<u32>,
+        data: &SubtitleSearchResult,
+    ) -> Result<(), CacheError> {
+        let key = Self::opensubtitles_cache_key(imdb_id, season, episode);
+        let data_json = serde_json::to_string(data)?;
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO opensubtitles_search_cache (cache_key, data_json, fetched_at) VALUES (?1, ?2, ?3)",
+            params![key, data_json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve cached OpenSubtitles search results. Returns `None` if not cached or stale.
+    pub fn get_opensubtitles_search_cache(
+        &self,
+        imdb_id: &str,
+        season: Option<u32>,
+        episode: Option<u32>,
+        ttl_seconds: i64,
+    ) -> Result<Option<SubtitleSearchResult>, CacheError> {
+        let key = Self::opensubtitles_cache_key(imdb_id, season, episode);
+        let result = self.conn.query_row(
+            "SELECT data_json, fetched_at FROM opensubtitles_search_cache WHERE cache_key = ?1",
+            params![key],
+            |row| {
+                let data_json: String = row.get(0)?;
+                let fetched_at: i64 = row.get(1)?;
+                Ok((data_json, fetched_at))
+            },
+        );
+        match result {
+            Ok((data_json, fetched_at)) => {
+                let now = chrono::Utc::now().timestamp();
+                if now - fetched_at > ttl_seconds {
+                    return Ok(None); // stale
+                }
+                let data: SubtitleSearchResult = serde_json::from_str(&data_json)?;
                 Ok(Some(data))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1348,5 +1415,102 @@ mod tests {
         assert!(cached.tomatometer.is_none());
         assert!(cached.imdb_rating.is_none());
         assert!(cached.metacritic_score.is_none());
+    }
+
+    // --- OpenSubtitles Search Cache Tests ---
+
+    fn make_subtitle_result() -> SubtitleSearchResult {
+        use crate::iptv::opensubtitles::SubtitleEntry;
+        SubtitleSearchResult {
+            entries: vec![
+                SubtitleEntry {
+                    file_id: 4052244,
+                    language_code: "en".into(),
+                    language_name: "en".into(),
+                    format: "srt".into(),
+                    release_name: Some("The.Dark.Knight.2008.BluRay".into()),
+                    download_count: Some(5000),
+                },
+                SubtitleEntry {
+                    file_id: 9988776,
+                    language_code: "fr".into(),
+                    language_name: "fr".into(),
+                    format: "srt".into(),
+                    release_name: None,
+                    download_count: Some(1200),
+                },
+            ],
+            languages: vec!["en".into(), "fr".into()],
+        }
+    }
+
+    #[test]
+    fn test_save_and_retrieve_opensubtitles_search_cache() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = make_subtitle_result();
+
+        store
+            .save_opensubtitles_search_cache("tt0468569", None, None, &data)
+            .unwrap();
+
+        let ttl = 24 * 60 * 60; // 24 hours
+        let cached = store
+            .get_opensubtitles_search_cache("tt0468569", None, None, ttl)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(cached.entries.len(), 2);
+        assert_eq!(cached.entries[0].file_id, 4052244);
+        assert_eq!(cached.entries[0].language_code, "en");
+        assert_eq!(cached.entries[1].file_id, 9988776);
+        assert_eq!(cached.languages, vec!["en", "fr"]);
+    }
+
+    #[test]
+    fn test_opensubtitles_search_cache_episode_key() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = make_subtitle_result();
+
+        store
+            .save_opensubtitles_search_cache("tt0903747", Some(3), Some(7), &data)
+            .unwrap();
+
+        let ttl = 24 * 60 * 60;
+        // Episode-specific lookup should find the entry.
+        let cached = store
+            .get_opensubtitles_search_cache("tt0903747", Some(3), Some(7), ttl)
+            .unwrap();
+        assert!(cached.is_some());
+
+        // Movie-style lookup (no season/ep) for same IMDB ID must NOT find it.
+        let miss = store
+            .get_opensubtitles_search_cache("tt0903747", None, None, ttl)
+            .unwrap();
+        assert!(miss.is_none());
+    }
+
+    #[test]
+    fn test_opensubtitles_search_cache_returns_none_on_stale() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = make_subtitle_result();
+
+        store
+            .save_opensubtitles_search_cache("tt0468569", None, None, &data)
+            .unwrap();
+
+        // TTL of -1 seconds — always stale.
+        let result = store
+            .get_opensubtitles_search_cache("tt0468569", None, None, -1)
+            .unwrap();
+        assert!(result.is_none(), "stale cache entry must return None");
+    }
+
+    #[test]
+    fn test_opensubtitles_search_cache_returns_none_for_missing() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let result = store
+            .get_opensubtitles_search_cache("tt9999999", None, None, 3600)
+            .unwrap();
+        assert!(result.is_none());
     }
 }
