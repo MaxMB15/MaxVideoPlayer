@@ -21,7 +21,7 @@ import {
 	clearWatchHistory,
 	getMdbListApiKey,
 	setMdbListApiKey,
-	fetchMdbListData,
+	testMdbListApiKey,
 	getOpenSubtitlesApiKey,
 	setOpenSubtitlesApiKey,
 } from "@/lib/tauri";
@@ -135,9 +135,8 @@ export const Settings = () => {
 		setMdblistTesting(true);
 		setMdblistTestStatus("idle");
 		try {
-			// Test with a known IMDB ID (The Dark Knight)
-			const result = await fetchMdbListData("tt0468569", "movie");
-			setMdblistTestStatus(result ? "valid" : "invalid");
+			const valid = await testMdbListApiKey(mdblistKey);
+			setMdblistTestStatus(valid ? "valid" : "invalid");
 		} catch {
 			setMdblistTestStatus("invalid");
 		} finally {

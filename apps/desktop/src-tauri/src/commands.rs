@@ -536,6 +536,19 @@ pub async fn set_mdblist_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> 
     Ok(())
 }
 
+/// Test an MDBList API key directly (does not use/update cache or stored key).
+/// Used by the Settings UI to validate a key before saving.
+#[command]
+pub async fn test_mdblist_api_key(key: String) -> Result<bool, String> {
+    // Use a known IMDB ID (The Dark Knight) to validate the key
+    let result = mvp_core::iptv::mdblist::fetch_mdblist("tt0468569", "movie", &key).await;
+    match result {
+        Ok(_) => Ok(true),
+        Err(mvp_core::iptv::mdblist::MdbListError::Api(_)) => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Fetch MDBList data for an IMDB ID. Checks cache first; fetches on miss.
 /// Returns None if no MDBList API key is configured.
 #[command]

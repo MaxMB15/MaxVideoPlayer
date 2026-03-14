@@ -103,6 +103,9 @@ export const getMdbListApiKey = (): Promise<string | null> => invoke("get_mdblis
 
 export const setMdbListApiKey = (key: string): Promise<void> => invoke("set_mdblist_api_key", { key });
 
+export const testMdbListApiKey = (key: string): Promise<boolean> =>
+	invoke("test_mdblist_api_key", { key });
+
 export const fetchMdbListData = (
 	imdbId: string,
 	mediaType: string

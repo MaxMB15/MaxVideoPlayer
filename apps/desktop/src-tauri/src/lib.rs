@@ -40,6 +40,7 @@ pub fn run() {
             commands::fetch_omdb_data,
             commands::get_mdblist_api_key,
             commands::set_mdblist_api_key,
+            commands::test_mdblist_api_key,
             commands::fetch_mdblist_data,
             commands::get_opensubtitles_api_key,
             commands::set_opensubtitles_api_key,
