@@ -1,20 +1,33 @@
 import { useState, useEffect } from "react";
-import { X, Play, Star, Clapperboard, Loader2 } from "lucide-react";
+import { X, Play, Clapperboard, Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
-import type { Channel, OmdbData } from "@/lib/types";
+import type { Channel, OmdbData, MdbListData } from "@/lib/types";
 import { fetchOmdbData } from "@/lib/tauri";
+import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface MovieInfoDrawerProps {
 	movie: Channel;
 	onClose: () => void;
 	onPlay: (ch: Channel) => void;
+	// Optional pre-fetched data from PlayerView to avoid double-fetch
+	prefetchedOmdbData?: OmdbData | null;
+	prefetchedMdbListData?: MdbListData | null;
 }
 
-export const MovieInfoDrawer = ({ movie, onClose, onPlay }: MovieInfoDrawerProps) => {
+export const MovieInfoDrawer = ({
+	movie,
+	onClose,
+	onPlay,
+	prefetchedOmdbData,
+	prefetchedMdbListData,
+}: MovieInfoDrawerProps) => {
 	const [visible, setVisible] = useState(false);
 	const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
-	const [omdbData, setOmdbData] = useState<OmdbData | null>(null);
-	const [omdbLoading, setOmdbLoading] = useState(true);
+	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
+	const [omdbLoading, setOmdbLoading] = useState(!prefetchedOmdbData);
+	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
+		prefetchedMdbListData ?? null,
+	);
 
 	useEffect(() => {
 		const id = requestAnimationFrame(() => setVisible(true));
@@ -22,9 +35,11 @@ export const MovieInfoDrawer = ({ movie, onClose, onPlay }: MovieInfoDrawerProps
 	}, []);
 
 	useEffect(() => {
+		if (prefetchedOmdbData !== undefined) return; // already have data
 		if (!movie) return;
 		setOmdbLoading(true);
 		setOmdbData(null);
+		setMdbListData(null);
 		fetchOmdbData(movie.id, movie.name, "movie")
 			.then(setOmdbData)
 			.catch(() => {})
@@ -56,19 +71,15 @@ export const MovieInfoDrawer = ({ movie, onClose, onPlay }: MovieInfoDrawerProps
 			? omdbData.posterUrl
 			: (movie.logoUrl ?? null);
 
-	const imdbRating =
-		omdbData?.imdbRating && omdbData.imdbRating !== "N/A" ? omdbData.imdbRating : null;
-	const rottenTomatoes =
-		omdbData?.rottenTomatoes && omdbData.rottenTomatoes !== "N/A"
-			? omdbData.rottenTomatoes
-			: null;
 	const year = omdbData?.year && omdbData.year !== "N/A" ? omdbData.year : null;
 	const rated = omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null;
 	const genre = omdbData?.genre && omdbData.genre !== "N/A" ? omdbData.genre : null;
 	const runtime = omdbData?.runtime && omdbData.runtime !== "N/A" ? omdbData.runtime : null;
 	const director = omdbData?.director && omdbData.director !== "N/A" ? omdbData.director : null;
 	const actors = omdbData?.actors && omdbData.actors !== "N/A" ? omdbData.actors : null;
-	const plot = omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null;
+	const plot =
+		mdbListData?.description ??
+		(omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null);
 
 	const truncatedActors = actors && actors.length > 60 ? actors.slice(0, 57) + "..." : actors;
 
@@ -146,20 +157,7 @@ export const MovieInfoDrawer = ({ movie, onClose, onPlay }: MovieInfoDrawerProps
 								</div>
 
 								{/* Ratings row */}
-								{(imdbRating || rottenTomatoes) && (
-									<div className="flex items-center gap-1.5 flex-wrap">
-										{imdbRating && (
-											<span className="flex items-center gap-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
-												<Star className="h-2.5 w-2.5" /> {imdbRating}
-											</span>
-										)}
-										{rottenTomatoes && (
-											<span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
-												🍅 {rottenTomatoes}
-											</span>
-										)}
-									</div>
-								)}
+								<RatingsRow omdbData={omdbData} mdbListData={mdbListData} />
 
 								{/* Genre + runtime */}
 								{genreRuntime && (
