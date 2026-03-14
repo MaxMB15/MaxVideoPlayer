@@ -44,6 +44,7 @@ export const PlayerView = () => {
 	const { isFullscreen, setFullscreen } = useFullscreen();
 	const [enrichedMeta, setEnrichedMeta] = useState<EnrichedMeta | null>(null);
 	const [showSubtitlePicker, setShowSubtitlePicker] = useState(false);
+	const [selectedSubtitleId, setSelectedSubtitleId] = useState<number | null>(null);
 
 	const navState = location.state as {
 		url?: string;
@@ -156,6 +157,7 @@ export const PlayerView = () => {
 			setActiveChannelName(channel.name);
 			setActiveChannel(channel);
 			setSeriesEpisodes([]);
+			setSelectedSubtitleId(null);
 		},
 		[mpv.load]
 	);
@@ -393,6 +395,7 @@ export const PlayerView = () => {
 					onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
 					onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
 					onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
+					hasSubtitles={selectedSubtitleId !== null}
 					onSubtitles={
 						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
 					}
@@ -412,6 +415,7 @@ export const PlayerView = () => {
 					season={activeChannel?.season ?? undefined}
 					episode={activeChannel?.episode ?? undefined}
 					onClose={() => setShowSubtitlePicker(false)}
+					onSubtitleSelected={(id) => setSelectedSubtitleId(id)}
 				/>
 			)}
 

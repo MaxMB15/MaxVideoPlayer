@@ -109,13 +109,17 @@ impl MpvEngine {
             .map_err(|e| e.to_string())
     }
 
-    /// Remove all external subtitle tracks (pass index -1 to remove all).
+    /// Remove an external subtitle track. Pass -1 to remove the current track (no-arg form).
     pub fn sub_remove(&self, id: i64) -> Result<(), String> {
-        self.mpv
+        let mpv = self
+            .mpv
             .as_ref()
-            .ok_or_else(|| "no mpv instance".to_string())?
-            .command("sub-remove", &[&id.to_string()])
-            .map_err(|e| e.to_string())
+            .ok_or_else(|| "no mpv instance".to_string())?;
+        if id == -1 {
+            mpv.command("sub-remove", &[]).map_err(|e| e.to_string())
+        } else {
+            mpv.command("sub-remove", &[&id.to_string()]).map_err(|e| e.to_string())
+        }
     }
 
     pub fn get_state(&self) -> PlayerState {

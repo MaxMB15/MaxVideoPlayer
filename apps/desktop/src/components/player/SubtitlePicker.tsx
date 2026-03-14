@@ -9,9 +9,16 @@ interface SubtitlePickerProps {
 	season?: number;
 	episode?: number;
 	onClose: () => void;
+	onSubtitleSelected?: (fileId: number | null) => void;
 }
 
-export const SubtitlePicker = ({ imdbId, season, episode, onClose }: SubtitlePickerProps) => {
+export const SubtitlePicker = ({
+	imdbId,
+	season,
+	episode,
+	onClose,
+	onSubtitleSelected,
+}: SubtitlePickerProps) => {
 	const [loading, setLoading] = useState(true);
 	const [result, setResult] = useState<SubtitleSearchResult | null>(null);
 	const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
@@ -37,6 +44,7 @@ export const SubtitlePicker = ({ imdbId, season, episode, onClose }: SubtitlePic
 			const localPath = await downloadSubtitle(entry.fileId);
 			await mpvSubAdd(localPath);
 			setSelectedFileId(entry.fileId);
+			onSubtitleSelected?.(entry.fileId);
 		} catch (e) {
 			setError("Failed to load subtitle. Try another.");
 		} finally {
@@ -47,12 +55,13 @@ export const SubtitlePicker = ({ imdbId, season, episode, onClose }: SubtitlePic
 	const handleNone = async () => {
 		await mpvSubRemove(-1).catch(() => {});
 		setSelectedFileId(null);
+		onSubtitleSelected?.(null);
 	};
 
 	// Group entries by language
 	const grouped = (result?.languages ?? []).map((lang) => ({
 		lang,
-		entries: result!.entries.filter((e) => e.languageCode === lang),
+		entries: result?.entries.filter((e) => e.languageCode === lang),
 	}));
 
 	return (
