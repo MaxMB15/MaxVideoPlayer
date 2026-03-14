@@ -44,6 +44,7 @@ pub fn run() {
             commands::fetch_mdblist_data,
             commands::get_opensubtitles_api_key,
             commands::set_opensubtitles_api_key,
+            commands::test_opensubtitles_api_key,
             commands::search_subtitles,
             commands::download_subtitle,
             commands::record_play_start,

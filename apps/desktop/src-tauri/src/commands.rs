@@ -622,6 +622,19 @@ pub async fn set_opensubtitles_api_key<R: Runtime>(app: AppHandle<R>, key: Strin
     Ok(())
 }
 
+/// Test an OpenSubtitles API key directly (does not use/update cache or stored key).
+/// Used by the Settings UI to validate a key before saving.
+#[command]
+pub async fn test_opensubtitles_api_key(key: String) -> Result<bool, String> {
+    // Use a known IMDB ID (The Dark Knight) to validate the key
+    let result = mvp_core::iptv::opensubtitles::search_subtitles("tt0468569", None, None, &key).await;
+    match result {
+        Ok(_) => Ok(true),
+        Err(mvp_core::iptv::opensubtitles::OpenSubtitlesError::Api(_)) => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 const OPENSUBTITLES_SEARCH_CACHE_TTL: i64 = 24 * 60 * 60;
 
 /// Search subtitles for a channel. Resolves IMDB ID from OMDB cache first.

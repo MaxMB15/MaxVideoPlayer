@@ -39,8 +39,8 @@ export const SubtitlePicker = ({
 		setDownloadingId(entry.fileId);
 		setError(null);
 		try {
-			// Remove previous subtitle (index -1 removes all)
-			await mpvSubRemove(-1);
+			// Remove previous subtitle (index -1 removes all); ignore error if no track loaded
+			await mpvSubRemove(-1).catch(() => {});
 			const localPath = await downloadSubtitle(entry.fileId);
 			await mpvSubAdd(localPath);
 			setSelectedFileId(entry.fileId);

@@ -24,6 +24,7 @@ import {
 	testMdbListApiKey,
 	getOpenSubtitlesApiKey,
 	setOpenSubtitlesApiKey,
+	testOpenSubtitlesApiKey,
 } from "@/lib/tauri";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
@@ -164,8 +165,10 @@ export const Settings = () => {
 		setOpenSubtitlesTesting(true);
 		setOpenSubtitlesTestStatus("idle");
 		try {
-			// Real test will come in Task 9; for now validate that key is non-empty
-			setOpenSubtitlesTestStatus(openSubtitlesKey.trim() ? "valid" : "invalid");
+			const valid = await testOpenSubtitlesApiKey(openSubtitlesKey);
+			setOpenSubtitlesTestStatus(valid ? "valid" : "invalid");
+		} catch {
+			setOpenSubtitlesTestStatus("invalid");
 		} finally {
 			setOpenSubtitlesTesting(false);
 		}

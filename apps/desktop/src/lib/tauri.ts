@@ -120,6 +120,9 @@ export const getOpenSubtitlesApiKey = (): Promise<string | null> =>
 export const setOpenSubtitlesApiKey = (key: string): Promise<void> =>
 	invoke("set_opensubtitles_api_key", { key });
 
+export const testOpenSubtitlesApiKey = (key: string): Promise<boolean> =>
+	invoke("test_opensubtitles_api_key", { key });
+
 export const searchSubtitles = (
 	imdbId: string,
 	season?: number,
