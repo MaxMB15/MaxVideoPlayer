@@ -10,7 +10,7 @@ pub struct MdbListData {
     pub imdb_id: Option<String>,
     pub description: Option<String>,
     pub language: Option<String>,
-    pub mediatype: Option<String>, // "movie" or "show"
+    pub media_type: Option<String>, // "movie" or "show"
 
     // IMDb
     pub imdb_rating: Option<f64>,
@@ -135,19 +135,19 @@ pub fn parse_mdblist_response(json: serde_json::Value) -> Result<MdbListData, Md
         for r in ratings {
             match r.source.as_str() {
                 "metacritic" => {
-                    metacritic_score = r.score.as_ref().and_then(|v| value_to_i32(v));
-                    metacritic_votes = r.votes.as_ref().and_then(|v| value_to_i32(v));
+                    metacritic_score = r.score.as_ref().and_then(value_to_i32);
+                    metacritic_votes = r.votes.as_ref().and_then(value_to_i32);
                 }
                 "tmdb" => {
-                    tmdb_rating = r.score.as_ref().and_then(|v| value_to_f64(v));
-                    tmdb_votes = r.votes.as_ref().and_then(|v| value_to_i32(v));
+                    tmdb_rating = r.score.as_ref().and_then(value_to_f64);
+                    tmdb_votes = r.votes.as_ref().and_then(value_to_i32);
                 }
                 "trakt" => {
-                    trakt_rating = r.score.as_ref().and_then(|v| value_to_f64(v));
-                    trakt_votes = r.votes.as_ref().and_then(|v| value_to_i32(v));
+                    trakt_rating = r.score.as_ref().and_then(value_to_f64);
+                    trakt_votes = r.votes.as_ref().and_then(value_to_i32);
                 }
                 "letterboxd" => {
-                    letterboxd_rating = r.score.as_ref().and_then(|v| value_to_f64(v));
+                    letterboxd_rating = r.score.as_ref().and_then(value_to_f64);
                 }
                 _ => {}
             }
@@ -158,7 +158,7 @@ pub fn parse_mdblist_response(json: serde_json::Value) -> Result<MdbListData, Md
         imdb_id: resp.imdbid,
         description: resp.description,
         language: resp.language,
-        mediatype: resp.mediatype,
+        media_type: resp.mediatype,
         imdb_rating: resp.imdbrating,
         imdb_votes: resp.imdbvotes,
         tomatometer: resp.tomatometer,
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(data.imdb_id.as_deref(), Some("tt0468569"));
         assert!(data.description.is_some());
         assert_eq!(data.language.as_deref(), Some("en"));
-        assert_eq!(data.mediatype.as_deref(), Some("movie"));
+        assert_eq!(data.media_type.as_deref(), Some("movie"));
 
         assert_eq!(data.imdb_rating, Some(9.0));
         assert_eq!(data.imdb_votes, Some(2_844_668));
@@ -256,7 +256,7 @@ mod tests {
         assert!(data.imdb_id.is_none());
         assert!(data.description.is_none());
         assert!(data.language.is_none());
-        assert!(data.mediatype.is_none());
+        assert!(data.media_type.is_none());
         assert!(data.imdb_rating.is_none());
         assert!(data.imdb_votes.is_none());
         assert!(data.tomatometer.is_none());
@@ -315,7 +315,7 @@ mod tests {
             imdb_id: Some("tt0468569".into()),
             description: None,
             language: None,
-            mediatype: None,
+            media_type: None,
             imdb_rating: Some(9.0),
             imdb_votes: Some(2_844_668),
             tomatometer: None,
