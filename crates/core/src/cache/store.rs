@@ -1,4 +1,5 @@
 use crate::iptv::m3u::parse_series_name;
+use crate::iptv::mdblist::MdbListData;
 use crate::iptv::omdb::OmdbData;
 use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
@@ -137,6 +138,13 @@ impl CacheStore {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS omdb_cache (
                 channel_id  TEXT PRIMARY KEY,
+                data_json   TEXT NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS mdblist_cache (
+                imdb_id     TEXT PRIMARY KEY,
                 data_json   TEXT NOT NULL,
                 fetched_at  INTEGER NOT NULL
             );"
@@ -577,6 +585,44 @@ impl CacheStore {
                     return Ok(None); // stale
                 }
                 let data: OmdbData = serde_json::from_str(&data_json)?;
+                Ok(Some(data))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    // --- MDBList Cache ---
+
+    /// Store MDBList data for an IMDB ID. Overwrites any existing cached entry.
+    pub fn save_mdblist_cache(&self, imdb_id: &str, data: &MdbListData) -> Result<(), CacheError> {
+        let data_json = serde_json::to_string(data)?;
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO mdblist_cache (imdb_id, data_json, fetched_at) VALUES (?1, ?2, ?3)",
+            params![imdb_id, data_json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve cached MDBList data for an IMDB ID. Returns `None` if not cached or stale.
+    pub fn get_mdblist_cache(&self, imdb_id: &str, ttl_seconds: i64) -> Result<Option<MdbListData>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT data_json, fetched_at FROM mdblist_cache WHERE imdb_id = ?1",
+            params![imdb_id],
+            |row| {
+                let data_json: String = row.get(0)?;
+                let fetched_at: i64 = row.get(1)?;
+                Ok((data_json, fetched_at))
+            },
+        );
+        match result {
+            Ok((data_json, fetched_at)) => {
+                let now = chrono::Utc::now().timestamp();
+                if now - fetched_at >= ttl_seconds {
+                    return Ok(None); // stale
+                }
+                let data: MdbListData = serde_json::from_str(&data_json)?;
                 Ok(Some(data))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1242,5 +1288,42 @@ mod tests {
         store.record_play_end("ch1", -5).unwrap();
         let history = store.get_watch_history(10).unwrap();
         assert_eq!(history[0].total_duration_seconds, 30); // only 30 accumulated
+    }
+
+    // --- MDBList Cache Tests ---
+
+    #[test]
+    fn test_save_and_retrieve_mdblist_cache() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = MdbListData {
+            imdb_id: Some("tt0468569".into()),
+            description: Some("When the menace known as the Joker...".into()),
+            tomatometer: Some(94),
+            imdb_rating: Some(9.0),
+            imdb_votes: Some(2_844_668),
+            ..Default::default()
+        };
+        store.save_mdblist_cache("tt0468569", &data).unwrap();
+        let cached = store.get_mdblist_cache("tt0468569", 7 * 24 * 60 * 60).unwrap().unwrap();
+        assert_eq!(cached.imdb_id.as_deref(), Some("tt0468569"));
+        assert_eq!(cached.tomatometer, Some(94));
+        assert_eq!(cached.imdb_rating, Some(9.0));
+    }
+
+    #[test]
+    fn test_mdblist_cache_returns_none_on_stale() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = MdbListData { imdb_id: Some("tt1234567".into()), ..Default::default() };
+        store.save_mdblist_cache("tt1234567", &data).unwrap();
+        // TTL of 0 seconds means everything is stale
+        let result = store.get_mdblist_cache("tt1234567", 0).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_mdblist_cache_returns_none_for_missing() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let result = store.get_mdblist_cache("tt9999999", 3600).unwrap();
+        assert!(result.is_none());
     }
 }

@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// Enriched metadata returned by the MDBList API for a given IMDB ID.
 /// All fields are optional because the API may omit or null any of them.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MdbListData {
     // Core metadata
