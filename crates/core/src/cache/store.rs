@@ -1054,6 +1054,8 @@ mod tests {
         assert_eq!(cached.title, "The Dark Knight");
         assert_eq!(cached.imdb_rating.as_deref(), Some("9.0"));
         assert_eq!(cached.rotten_tomatoes.as_deref(), Some("94%"));
+        assert_eq!(cached.imdb_id.as_deref(), Some("tt0468569"));
+        assert_eq!(cached.imdb_votes.as_deref(), Some("2,844,668"));
     }
 
     #[test]
