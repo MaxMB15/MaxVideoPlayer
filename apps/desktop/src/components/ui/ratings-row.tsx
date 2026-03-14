@@ -6,6 +6,12 @@ interface RatingsRowProps {
 	mdbListData?: MdbListData | null;
 }
 
+const formatVotes = (n: number): string => {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+	return n.toString();
+};
+
 export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 	// Priority: use MDBList data when available, fall back to OMDB
 	const rawOmdbRating = omdbData?.imdbRating;
@@ -14,19 +20,16 @@ export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 		mdbListData?.imdbRating != null ? mdbListData.imdbRating.toFixed(1) : omdbRatingClean;
 	const imdbVotes = mdbListData?.imdbVotes ?? null;
 	const rtCritic = mdbListData?.tomatometer ?? null;
+	// When MDBList has no tomatometer, fall back to OMDB's rottenTomatoes string
+	const rtCriticFallback =
+		rtCritic === null && omdbData?.rottenTomatoes && omdbData.rottenTomatoes !== "N/A"
+			? omdbData.rottenTomatoes
+			: null;
 	const rtAudience = mdbListData?.tomatoAudienceScore ?? null;
 	const rtAudienceCount = mdbListData?.tomatoAudienceCount ?? null;
-	// Fall back to OMDB single RT value when no MDBList
-	const rtFallback =
-		!mdbListData && omdbData?.rottenTomatoes ? omdbData.rottenTomatoes : null;
+	const rtCriticCount = mdbListData?.tomatometerCount ?? null;
 
-	const formatVotes = (n: number): string => {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-		return n.toString();
-	};
-
-	const hasAny = imdbRating || rtCritic !== null || rtAudience !== null || rtFallback;
+	const hasAny = imdbRating || rtCritic !== null || rtCriticFallback || rtAudience !== null;
 	if (!hasAny) return null;
 
 	return (
@@ -43,6 +46,14 @@ export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 			{rtCritic !== null && (
 				<span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
 					🍅 {rtCritic}%
+					{rtCriticCount && (
+						<span className="font-normal opacity-70"> · {formatVotes(rtCriticCount)}</span>
+					)}
+				</span>
+			)}
+			{rtCriticFallback && (
+				<span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
+					🍅 {rtCriticFallback}
 				</span>
 			)}
 			{rtAudience !== null && (
@@ -51,11 +62,6 @@ export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 					{rtAudienceCount && (
 						<span className="font-normal opacity-70"> · {formatVotes(rtAudienceCount)}</span>
 					)}
-				</span>
-			)}
-			{rtFallback && (
-				<span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
-					🍅 {rtFallback}
 				</span>
 			)}
 		</div>
