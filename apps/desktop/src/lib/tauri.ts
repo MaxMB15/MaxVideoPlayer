@@ -108,6 +108,14 @@ export const fetchMdbListData = (
 	mediaType: string
 ): Promise<MdbListData | null> => invoke("fetch_mdblist_data", { imdbId, mediaType });
 
+// --- OpenSubtitles Commands ---
+
+export const getOpenSubtitlesApiKey = (): Promise<string | null> =>
+	invoke("get_opensubtitles_api_key");
+
+export const setOpenSubtitlesApiKey = (key: string): Promise<void> =>
+	invoke("set_opensubtitles_api_key", { key });
+
 // --- Watch History Commands ---
 
 export const recordPlayStart = (

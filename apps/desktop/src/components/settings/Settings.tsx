@@ -14,7 +14,17 @@ import {
 	CheckCircle,
 	XCircle,
 } from "lucide-react";
-import { getOmdbApiKey, setOmdbApiKey, fetchOmdbData, clearWatchHistory } from "@/lib/tauri";
+import {
+	getOmdbApiKey,
+	setOmdbApiKey,
+	fetchOmdbData,
+	clearWatchHistory,
+	getMdbListApiKey,
+	setMdbListApiKey,
+	fetchMdbListData,
+	getOpenSubtitlesApiKey,
+	setOpenSubtitlesApiKey,
+} from "@/lib/tauri";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved";
@@ -34,6 +44,24 @@ export const Settings = () => {
 	const [omdbTesting, setOmdbTesting] = useState(false);
 	const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// MDBList state
+	const [mdblistKey, setMdblistKey] = useState("");
+	const [mdblistKeyVisible, setMdblistKeyVisible] = useState(false);
+	const [mdblistSaveStatus, setMdblistSaveStatus] = useState<SaveStatus>("idle");
+	const [mdblistTestStatus, setMdblistTestStatus] = useState<OmdbStatus>("idle");
+	const [mdblistTesting, setMdblistTesting] = useState(false);
+	const [mdblistSaveError, setMdblistSaveError] = useState<string | null>(null);
+	const mdblistSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// OpenSubtitles state
+	const [openSubtitlesKey, setOpenSubtitlesKey] = useState("");
+	const [openSubtitlesKeyVisible, setOpenSubtitlesKeyVisible] = useState(false);
+	const [openSubtitlesSaveStatus, setOpenSubtitlesSaveStatus] = useState<SaveStatus>("idle");
+	const [openSubtitlesTestStatus, setOpenSubtitlesTestStatus] = useState<OmdbStatus>("idle");
+	const [openSubtitlesTesting, setOpenSubtitlesTesting] = useState(false);
+	const [openSubtitlesSaveError, setOpenSubtitlesSaveError] = useState<string | null>(null);
+	const openSubtitlesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	// History state
 	const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("idle");
 	const [historyError, setHistoryError] = useState<string | null>(null);
@@ -43,9 +71,17 @@ export const Settings = () => {
 		getOmdbApiKey().then((key) => {
 			if (key) setOmdbKey(key);
 		});
+		getMdbListApiKey().then((key) => {
+			if (key) setMdblistKey(key);
+		});
+		getOpenSubtitlesApiKey().then((key) => {
+			if (key) setOpenSubtitlesKey(key);
+		});
 		return () => {
 			if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 			if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+			if (mdblistSaveTimerRef.current) clearTimeout(mdblistSaveTimerRef.current);
+			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
 		};
 	}, []);
 
@@ -79,6 +115,60 @@ export const Settings = () => {
 			setOmdbStatus("invalid");
 		} finally {
 			setOmdbTesting(false);
+		}
+	};
+
+	const handleSaveMdblistKey = async () => {
+		try {
+			await setMdbListApiKey(mdblistKey);
+			setMdblistSaveStatus("saved");
+			setMdblistSaveError(null);
+			setMdblistTestStatus("idle");
+			if (mdblistSaveTimerRef.current) clearTimeout(mdblistSaveTimerRef.current);
+			mdblistSaveTimerRef.current = setTimeout(() => setMdblistSaveStatus("idle"), 2000);
+		} catch {
+			setMdblistSaveError("Failed to save. Please try again.");
+		}
+	};
+
+	const handleTestMdblistKey = async () => {
+		setMdblistTesting(true);
+		setMdblistTestStatus("idle");
+		try {
+			// Test with a known IMDB ID (The Dark Knight)
+			const result = await fetchMdbListData("tt0468569", "movie");
+			setMdblistTestStatus(result ? "valid" : "invalid");
+		} catch {
+			setMdblistTestStatus("invalid");
+		} finally {
+			setMdblistTesting(false);
+		}
+	};
+
+	const handleSaveOpenSubtitlesKey = async () => {
+		try {
+			await setOpenSubtitlesApiKey(openSubtitlesKey);
+			setOpenSubtitlesSaveStatus("saved");
+			setOpenSubtitlesSaveError(null);
+			setOpenSubtitlesTestStatus("idle");
+			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
+			openSubtitlesSaveTimerRef.current = setTimeout(
+				() => setOpenSubtitlesSaveStatus("idle"),
+				2000
+			);
+		} catch {
+			setOpenSubtitlesSaveError("Failed to save. Please try again.");
+		}
+	};
+
+	const handleTestOpenSubtitlesKey = async () => {
+		setOpenSubtitlesTesting(true);
+		setOpenSubtitlesTestStatus("idle");
+		try {
+			// Real test will come in Task 9; for now validate that key is non-empty
+			setOpenSubtitlesTestStatus(openSubtitlesKey.trim() ? "valid" : "invalid");
+		} finally {
+			setOpenSubtitlesTesting(false);
 		}
 	};
 
@@ -255,6 +345,197 @@ export const Settings = () => {
 								)}
 							</div>
 						</div>
+
+						{/* Optional enrichment services — only shown when OMDB key is set */}
+						{omdbKey.trim() && (
+							<div className="border-t border-border pt-4 space-y-4">
+								<p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+									Optional enrichment (require OMDB key)
+								</p>
+
+								{/* MDBList section */}
+								<div>
+									<p className="text-sm font-medium mb-1">MDBList API</p>
+									<div className="flex items-center gap-2">
+										<div className="relative flex-1">
+											<Input
+												type={mdblistKeyVisible ? "text" : "password"}
+												placeholder="Enter API key…"
+												value={mdblistKey}
+												onChange={(e) => {
+													setMdblistKey(e.target.value);
+													setMdblistTestStatus("idle");
+													setMdblistSaveStatus("idle");
+												}}
+												className="pr-10"
+											/>
+											<button
+												type="button"
+												className="absolute inset-y-0 right-2 flex items-center text-muted-foreground hover:text-foreground"
+												onClick={() => setMdblistKeyVisible((v) => !v)}
+												aria-label={
+													mdblistKeyVisible ? "Hide key" : "Show key"
+												}
+											>
+												{mdblistKeyVisible ? (
+													<EyeOff className="h-4 w-4" />
+												) : (
+													<Eye className="h-4 w-4" />
+												)}
+											</button>
+										</div>
+										<Button
+											size="sm"
+											variant="secondary"
+											onClick={handleSaveMdblistKey}
+											disabled={!mdblistKey.trim()}
+										>
+											{mdblistSaveStatus === "saved" ? (
+												<span className="flex items-center gap-1 text-green-500">
+													<CheckCircle className="h-4 w-4" /> Saved
+												</span>
+											) : (
+												"Save"
+											)}
+										</Button>
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={handleTestMdblistKey}
+											disabled={!mdblistKey.trim() || mdblistTesting}
+										>
+											{mdblistTesting ? "Testing…" : "Test"}
+										</Button>
+									</div>
+
+									{mdblistSaveError && (
+										<p className="mt-1 text-xs text-destructive">
+											{mdblistSaveError}
+										</p>
+									)}
+
+									<div className="mt-2 text-xs">
+										{mdblistTestStatus === "valid" && (
+											<span className="flex items-center gap-1 text-green-500">
+												<CheckCircle className="h-3 w-3" /> Valid key
+											</span>
+										)}
+										{mdblistTestStatus === "invalid" && (
+											<span className="flex items-center gap-1 text-destructive">
+												<XCircle className="h-3 w-3" /> Invalid key
+											</span>
+										)}
+									</div>
+
+									<div className="mt-1 text-xs text-muted-foreground">
+										Get a free key at{" "}
+										<a
+											href="https://mdblist.com/api/"
+											target="_blank"
+											rel="noreferrer"
+											className="underline hover:text-foreground"
+										>
+											mdblist.com
+										</a>
+									</div>
+								</div>
+
+								{/* OpenSubtitles section */}
+								<div>
+									<p className="text-sm font-medium mb-1">OpenSubtitles API</p>
+									<div className="flex items-center gap-2">
+										<div className="relative flex-1">
+											<Input
+												type={
+													openSubtitlesKeyVisible ? "text" : "password"
+												}
+												placeholder="Enter API key…"
+												value={openSubtitlesKey}
+												onChange={(e) => {
+													setOpenSubtitlesKey(e.target.value);
+													setOpenSubtitlesTestStatus("idle");
+													setOpenSubtitlesSaveStatus("idle");
+												}}
+												className="pr-10"
+											/>
+											<button
+												type="button"
+												className="absolute inset-y-0 right-2 flex items-center text-muted-foreground hover:text-foreground"
+												onClick={() =>
+													setOpenSubtitlesKeyVisible((v) => !v)
+												}
+												aria-label={
+													openSubtitlesKeyVisible
+														? "Hide key"
+														: "Show key"
+												}
+											>
+												{openSubtitlesKeyVisible ? (
+													<EyeOff className="h-4 w-4" />
+												) : (
+													<Eye className="h-4 w-4" />
+												)}
+											</button>
+										</div>
+										<Button
+											size="sm"
+											variant="secondary"
+											onClick={handleSaveOpenSubtitlesKey}
+											disabled={!openSubtitlesKey.trim()}
+										>
+											{openSubtitlesSaveStatus === "saved" ? (
+												<span className="flex items-center gap-1 text-green-500">
+													<CheckCircle className="h-4 w-4" /> Saved
+												</span>
+											) : (
+												"Save"
+											)}
+										</Button>
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={handleTestOpenSubtitlesKey}
+											disabled={
+												!openSubtitlesKey.trim() || openSubtitlesTesting
+											}
+										>
+											{openSubtitlesTesting ? "Testing…" : "Test"}
+										</Button>
+									</div>
+
+									{openSubtitlesSaveError && (
+										<p className="mt-1 text-xs text-destructive">
+											{openSubtitlesSaveError}
+										</p>
+									)}
+
+									<div className="mt-2 text-xs">
+										{openSubtitlesTestStatus === "valid" && (
+											<span className="flex items-center gap-1 text-green-500">
+												<CheckCircle className="h-3 w-3" /> Valid key
+											</span>
+										)}
+										{openSubtitlesTestStatus === "invalid" && (
+											<span className="flex items-center gap-1 text-destructive">
+												<XCircle className="h-3 w-3" /> Invalid key
+											</span>
+										)}
+									</div>
+
+									<div className="mt-1 text-xs text-muted-foreground">
+										Get an API key at{" "}
+										<a
+											href="https://www.opensubtitles.com/consumers"
+											target="_blank"
+											rel="noreferrer"
+											className="underline hover:text-foreground"
+										>
+											opensubtitles.com
+										</a>
+									</div>
+								</div>
+							</div>
+						)}
 					</CardContent>
 				</Card>
 

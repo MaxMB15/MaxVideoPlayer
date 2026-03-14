@@ -588,6 +588,27 @@ pub async fn fetch_mdblist_data<R: Runtime>(
     Ok(Some(data))
 }
 
+// --- OpenSubtitles Commands ---
+
+const OPENSUBTITLES_API_KEY: &str = "opensubtitles_api_key";
+
+#[command]
+pub async fn get_opensubtitles_api_key<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let key = store
+        .get(OPENSUBTITLES_API_KEY)
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    Ok(key)
+}
+
+#[command]
+pub async fn set_opensubtitles_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(OPENSUBTITLES_API_KEY, serde_json::Value::String(key));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // --- Watch History Commands ---
 
 #[derive(serde::Serialize)]
