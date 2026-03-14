@@ -619,7 +619,7 @@ impl CacheStore {
         match result {
             Ok((data_json, fetched_at)) => {
                 let now = chrono::Utc::now().timestamp();
-                if now - fetched_at >= ttl_seconds {
+                if now - fetched_at > ttl_seconds {
                     return Ok(None); // stale
                 }
                 let data: MdbListData = serde_json::from_str(&data_json)?;
@@ -1315,8 +1315,8 @@ mod tests {
         let store = CacheStore::open_in_memory().unwrap();
         let data = MdbListData { imdb_id: Some("tt1234567".into()), ..Default::default() };
         store.save_mdblist_cache("tt1234567", &data).unwrap();
-        // TTL of 0 seconds means everything is stale
-        let result = store.get_mdblist_cache("tt1234567", 0).unwrap();
+        // TTL of -1 seconds means everything is stale (negative TTL always stale)
+        let result = store.get_mdblist_cache("tt1234567", -1).unwrap();
         assert!(result.is_none());
     }
 
@@ -1325,5 +1325,28 @@ mod tests {
         let store = CacheStore::open_in_memory().unwrap();
         let result = store.get_mdblist_cache("tt9999999", 3600).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_save_mdblist_cache_overwrites_existing() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data1 = MdbListData { imdb_id: Some("tt0468569".into()), tomatometer: Some(94), ..Default::default() };
+        let data2 = MdbListData { imdb_id: Some("tt0468569".into()), tomatometer: Some(80), ..Default::default() };
+        store.save_mdblist_cache("tt0468569", &data1).unwrap();
+        store.save_mdblist_cache("tt0468569", &data2).unwrap();
+        let cached = store.get_mdblist_cache("tt0468569", 3600).unwrap().unwrap();
+        assert_eq!(cached.tomatometer, Some(80)); // second write wins
+    }
+
+    #[test]
+    fn test_mdblist_cache_preserves_none_fields() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let data = MdbListData { imdb_id: Some("tt0000001".into()), ..Default::default() };
+        store.save_mdblist_cache("tt0000001", &data).unwrap();
+        let cached = store.get_mdblist_cache("tt0000001", 3600).unwrap().unwrap();
+        assert!(cached.description.is_none());
+        assert!(cached.tomatometer.is_none());
+        assert!(cached.imdb_rating.is_none());
+        assert!(cached.metacritic_score.is_none());
     }
 }
