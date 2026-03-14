@@ -7,12 +7,17 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
-import { mpvSetBounds, recordPlayStart, recordPlayEnd } from "@/lib/tauri";
-import type { Channel } from "@/lib/types";
+import { mpvSetBounds, recordPlayStart, recordPlayEnd, fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
+import type { Channel, OmdbData, MdbListData } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
 
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
+
+interface EnrichedMeta {
+	omdbData: OmdbData | null;
+	mdbListData: MdbListData | null;
+}
 
 const sortEpisodes = (eps: Channel[]): Channel[] =>
 	[...eps].sort((a, b) => {
@@ -36,6 +41,7 @@ export const PlayerView = () => {
 	// Episode list for series navigation — set when navigating from SeriesDetailModal
 	const [seriesEpisodes, setSeriesEpisodes] = useState<Channel[]>([]);
 	const { isFullscreen, setFullscreen } = useFullscreen();
+	const [enrichedMeta, setEnrichedMeta] = useState<EnrichedMeta | null>(null);
 
 	const navState = location.state as {
 		url?: string;
@@ -84,6 +90,41 @@ export const PlayerView = () => {
 			}
 		}
 	}, [navState?.url]);
+
+	// Pre-fetch enriched metadata when activeChannel changes to a movie or series
+	useEffect(() => {
+		if (!activeChannel || activeChannel.contentType === "live") {
+			setEnrichedMeta(null);
+			return;
+		}
+
+		// Reset on channel change
+		setEnrichedMeta(null);
+
+		const mediaType = activeChannel.contentType === "series" ? "series" : "movie";
+
+		fetchOmdbData(activeChannel.id, activeChannel.name, mediaType as "movie" | "series")
+			.then((omdbData) => {
+				// Set OMDB data immediately
+				setEnrichedMeta({ omdbData, mdbListData: null });
+
+				// If we got an imdb_id, fetch MDBList in parallel
+				if (omdbData?.imdbId) {
+					const mdbMediaType = activeChannel.contentType === "series" ? "show" : "movie";
+					fetchMdbListData(omdbData.imdbId, mdbMediaType)
+						.then((mdbListData) => {
+							setEnrichedMeta({ omdbData, mdbListData });
+						})
+						.catch(() => {
+							// Keep omdbData, leave mdbListData as null
+						});
+				}
+			})
+			.catch(() => {
+				// Signal that fetch was attempted but failed
+				setEnrichedMeta({ omdbData: null, mdbListData: null });
+			});
+	}, [activeChannel?.id]);
 
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
@@ -358,6 +399,8 @@ export const PlayerView = () => {
 					episodes={episodesForDrawer}
 					onClose={() => setShowInfoDrawer(false)}
 					onPlay={(ch) => playEpisode(ch)}
+					prefetchedOmdbData={enrichedMeta?.omdbData}
+					prefetchedMdbListData={enrichedMeta?.mdbListData}
 				/>
 			)}
 
@@ -384,6 +427,8 @@ export const PlayerView = () => {
 						setActiveChannelName(ch.name);
 						setActiveChannel(ch);
 					}}
+					prefetchedOmdbData={enrichedMeta?.omdbData}
+					prefetchedMdbListData={enrichedMeta?.mdbListData}
 				/>
 			)}
 
