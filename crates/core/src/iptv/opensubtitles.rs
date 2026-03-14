@@ -2,12 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+/// TTL for OpenSubtitles search cache: 24 hours.
+pub const SEARCH_CACHE_TTL_SECS: i64 = 24 * 60 * 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleEntry {
     pub file_id: i64,
     pub language_code: String,
-    pub language_name: String,
     pub format: String,
     pub release_name: Option<String>,
     pub download_count: Option<i64>,
@@ -132,7 +134,6 @@ pub fn parse_search_response(json: serde_json::Value) -> Result<SubtitleSearchRe
 
         entries.push(SubtitleEntry {
             file_id,
-            language_name: language_code.clone(),
             language_code,
             format,
             release_name,
@@ -188,6 +189,8 @@ pub async fn search_subtitles(
         .header("Accept", "application/json")
         .send()
         .await?
+        .error_for_status()
+        .map_err(OpenSubtitlesError::Http)?
         .json::<serde_json::Value>()
         .await?;
 
@@ -222,6 +225,8 @@ pub async fn download_subtitle(
         .json(&post_body)
         .send()
         .await?
+        .error_for_status()
+        .map_err(OpenSubtitlesError::Http)?
         .json()
         .await?;
 
@@ -233,6 +238,8 @@ pub async fn download_subtitle(
         .get(&dl_response.link)
         .send()
         .await?
+        .error_for_status()
+        .map_err(OpenSubtitlesError::Http)?
         .bytes()
         .await?;
 
@@ -363,7 +370,6 @@ mod tests {
         let entry = SubtitleEntry {
             file_id: 123,
             language_code: "en".into(),
-            language_name: "en".into(),
             format: "srt".into(),
             release_name: Some("Test.Release".into()),
             download_count: Some(999),
@@ -371,7 +377,7 @@ mod tests {
         let s = serde_json::to_string(&entry).unwrap();
         assert!(s.contains("\"fileId\""));
         assert!(s.contains("\"languageCode\""));
-        assert!(s.contains("\"languageName\""));
+        assert!(!s.contains("\"languageName\""));
         assert!(s.contains("\"releaseName\""));
         assert!(s.contains("\"downloadCount\""));
     }

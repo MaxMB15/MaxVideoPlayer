@@ -1426,7 +1426,6 @@ mod tests {
                 SubtitleEntry {
                     file_id: 4052244,
                     language_code: "en".into(),
-                    language_name: "en".into(),
                     format: "srt".into(),
                     release_name: Some("The.Dark.Knight.2008.BluRay".into()),
                     download_count: Some(5000),
@@ -1434,7 +1433,6 @@ mod tests {
                 SubtitleEntry {
                     file_id: 9988776,
                     language_code: "fr".into(),
-                    language_name: "fr".into(),
                     format: "srt".into(),
                     release_name: None,
                     download_count: Some(1200),
