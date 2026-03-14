@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Play, Clapperboard, Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import type { Channel, OmdbData, MdbListData } from "@/lib/types";
-import { fetchOmdbData } from "@/lib/tauri";
+import { fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface MovieInfoDrawerProps {
@@ -24,7 +24,7 @@ export const MovieInfoDrawer = ({
 	const [visible, setVisible] = useState(false);
 	const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
-	const [omdbLoading, setOmdbLoading] = useState(!prefetchedOmdbData);
+	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
 	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
 		prefetchedMdbListData ?? null,
 	);
@@ -41,7 +41,16 @@ export const MovieInfoDrawer = ({
 		setOmdbData(null);
 		setMdbListData(null);
 		fetchOmdbData(movie.id, movie.name, "movie")
-			.then(setOmdbData)
+			.then((data) => {
+				setOmdbData(data);
+				// Also fetch MDBList if we got an imdb_id
+				if (data?.imdbId) {
+					const mediaType = movie.contentType === "series" ? "show" : "movie";
+					fetchMdbListData(data.imdbId, mediaType)
+						.then(setMdbListData)
+						.catch(() => {});
+				}
+			})
 			.catch(() => {})
 			.finally(() => setOmdbLoading(false));
 	}, [movie.id]);

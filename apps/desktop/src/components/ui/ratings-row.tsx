@@ -8,8 +8,10 @@ interface RatingsRowProps {
 
 export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 	// Priority: use MDBList data when available, fall back to OMDB
+	const rawOmdbRating = omdbData?.imdbRating;
+	const omdbRatingClean = rawOmdbRating && rawOmdbRating !== "N/A" ? rawOmdbRating : null;
 	const imdbRating =
-		mdbListData?.imdbRating?.toFixed(1) ?? (omdbData?.imdbRating ?? null);
+		mdbListData?.imdbRating != null ? mdbListData.imdbRating.toFixed(1) : omdbRatingClean;
 	const imdbVotes = mdbListData?.imdbVotes ?? null;
 	const rtCritic = mdbListData?.tomatometer ?? null;
 	const rtAudience = mdbListData?.tomatoAudienceScore ?? null;

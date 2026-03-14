@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { X, Play, ChevronLeft, ChevronRight, MonitorPlay, Loader2 } from "lucide-react";
 import type { Channel, OmdbData, MdbListData } from "@/lib/types";
-import { fetchOmdbData } from "@/lib/tauri";
+import { fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface SeriesDetailDrawerProps {
@@ -52,7 +52,7 @@ export const SeriesDetailModal = ({
 	const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
 	const [sourceEp, setSourceEp] = useState<Channel | null>(null);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
-	const [omdbLoading, setOmdbLoading] = useState(!prefetchedOmdbData);
+	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
 	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
 		prefetchedMdbListData ?? null,
 	);
@@ -75,7 +75,15 @@ export const SeriesDetailModal = ({
 		setOmdbData(null);
 		setMdbListData(null);
 		fetchOmdbData(firstEp.id, showTitle, "series")
-			.then(setOmdbData)
+			.then((data) => {
+				setOmdbData(data);
+				// Also fetch MDBList if we got an imdb_id
+				if (data?.imdbId) {
+					fetchMdbListData(data.imdbId, "show")
+						.then(setMdbListData)
+						.catch(() => {});
+				}
+			})
 			.catch(() => {})
 			.finally(() => setOmdbLoading(false));
 	}, [firstEp?.id, showTitle]);
