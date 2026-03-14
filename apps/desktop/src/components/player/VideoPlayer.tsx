@@ -98,32 +98,34 @@ export const PlayerView = () => {
 			return;
 		}
 
-		// Reset on channel change
+		let cancelled = false;
 		setEnrichedMeta(null);
 
 		const mediaType = activeChannel.contentType === "series" ? "series" : "movie";
 
 		fetchOmdbData(activeChannel.id, activeChannel.name, mediaType as "movie" | "series")
 			.then((omdbData) => {
-				// Set OMDB data immediately
+				if (cancelled) return;
 				setEnrichedMeta({ omdbData, mdbListData: null });
 
-				// If we got an imdb_id, fetch MDBList in parallel
 				if (omdbData?.imdbId) {
 					const mdbMediaType = activeChannel.contentType === "series" ? "show" : "movie";
 					fetchMdbListData(omdbData.imdbId, mdbMediaType)
 						.then((mdbListData) => {
+							if (cancelled) return;
 							setEnrichedMeta({ omdbData, mdbListData });
 						})
-						.catch(() => {
-							// Keep omdbData, leave mdbListData as null
-						});
+						.catch(() => {});
 				}
 			})
 			.catch(() => {
-				// Signal that fetch was attempted but failed
+				if (cancelled) return;
 				setEnrichedMeta({ omdbData: null, mdbListData: null });
 			});
+
+		return () => {
+			cancelled = true;
+		};
 	}, [activeChannel?.id]);
 
 	const handleSelectChannel = useCallback(
