@@ -188,6 +188,14 @@ impl MpvState {
         self.inner.lock().map_err(|e| e.to_string())?.set_volume(volume)
     }
 
+    pub fn sub_add(&self, path: &str) -> Result<(), String> {
+        self.inner.lock().map_err(|e| e.to_string())?.sub_add(path)
+    }
+
+    pub fn sub_remove(&self, id: i64) -> Result<(), String> {
+        self.inner.lock().map_err(|e| e.to_string())?.sub_remove(id)
+    }
+
     pub fn get_state(&self) -> PlayerState {
         self.inner.lock().unwrap().get_state()
     }

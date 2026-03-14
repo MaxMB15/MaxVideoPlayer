@@ -6,7 +6,7 @@ use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
 use std::sync::Mutex;
-use tauri::{command, AppHandle, Runtime, State};
+use tauri::{command, AppHandle, Manager, Runtime, State};
 use tauri_plugin_store::StoreExt;
 
 pub struct AppState {
@@ -620,6 +620,92 @@ pub async fn set_opensubtitles_api_key<R: Runtime>(app: AppHandle<R>, key: Strin
     store.set(OPENSUBTITLES_API_KEY, serde_json::Value::String(key));
     store.save().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+const OPENSUBTITLES_SEARCH_CACHE_TTL: i64 = 24 * 60 * 60;
+
+/// Search subtitles for a channel. Resolves IMDB ID from OMDB cache first.
+/// Returns None if no OpenSubtitles API key is configured or no OMDB data.
+#[command]
+pub async fn search_subtitles<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    imdb_id: String,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> Result<Option<mvp_core::iptv::opensubtitles::SubtitleSearchResult>, String> {
+    // 1. Check search cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        match cache.get_opensubtitles_search_cache(&imdb_id, season, episode, OPENSUBTITLES_SEARCH_CACHE_TTL) {
+            Ok(Some(data)) => {
+                tracing::debug!("[OpenSubtitles] search cache hit for imdb_id={}", imdb_id);
+                return Ok(Some(data));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    // 2. Get API key
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let api_key = match store.get(OPENSUBTITLES_API_KEY).and_then(|v| v.as_str().map(|s| s.to_string())) {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            tracing::debug!("[OpenSubtitles] no API key configured");
+            return Ok(None);
+        }
+    };
+
+    // 3. Search
+    tracing::info!("[OpenSubtitles] searching for imdb_id={} season={:?} episode={:?}", imdb_id, season, episode);
+    let result = mvp_core::iptv::opensubtitles::search_subtitles(&imdb_id, season, episode, &api_key)
+        .await
+        .map_err(|e| {
+            tracing::warn!("[OpenSubtitles] search failed: {}", e);
+            e.to_string()
+        })?;
+
+    // 4. Cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = cache.save_opensubtitles_search_cache(&imdb_id, season, episode, &result) {
+            tracing::warn!("[OpenSubtitles] failed to save search cache: {}", e);
+        }
+    }
+
+    Ok(Some(result))
+}
+
+/// Download a subtitle file by file_id. Returns the local file path.
+#[command]
+pub async fn download_subtitle<R: Runtime>(
+    app: AppHandle<R>,
+    file_id: i64,
+) -> Result<String, String> {
+    // Get API key
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let api_key = match store.get(OPENSUBTITLES_API_KEY).and_then(|v| v.as_str().map(|s| s.to_string())) {
+        Some(k) if !k.is_empty() => k,
+        _ => return Err("No OpenSubtitles API key configured".into()),
+    };
+
+    // Get subtitle download directory
+    let subtitles_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e: tauri::Error| e.to_string())?
+        .join("subtitles");
+
+    tracing::info!("[OpenSubtitles] downloading subtitle file_id={}", file_id);
+    let path = mvp_core::iptv::opensubtitles::download_subtitle(file_id, &api_key, &subtitles_dir)
+        .await
+        .map_err(|e| {
+            tracing::warn!("[OpenSubtitles] download failed: {}", e);
+            e.to_string()
+        })?;
+
+    Ok(path.to_string_lossy().into_owned())
 }
 
 // --- Watch History Commands ---

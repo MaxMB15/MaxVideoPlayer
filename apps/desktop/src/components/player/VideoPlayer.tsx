@@ -1,5 +1,6 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
+import { SubtitlePicker } from "./SubtitlePicker";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
 import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
 import { LiveInfoDrawer } from "@/components/channels/LiveInfoDrawer";
@@ -42,6 +43,7 @@ export const PlayerView = () => {
 	const [seriesEpisodes, setSeriesEpisodes] = useState<Channel[]>([]);
 	const { isFullscreen, setFullscreen } = useFullscreen();
 	const [enrichedMeta, setEnrichedMeta] = useState<EnrichedMeta | null>(null);
+	const [showSubtitlePicker, setShowSubtitlePicker] = useState(false);
 
 	const navState = location.state as {
 		url?: string;
@@ -93,6 +95,8 @@ export const PlayerView = () => {
 
 	// Pre-fetch enriched metadata when activeChannel changes to a movie or series
 	useEffect(() => {
+		setShowSubtitlePicker(false);
+
 		if (!activeChannel || activeChannel.contentType === "live") {
 			setEnrichedMeta(null);
 			return;
@@ -127,6 +131,11 @@ export const PlayerView = () => {
 			cancelled = true;
 		};
 	}, [activeChannel?.id]);
+
+	const activeImdbId = enrichedMeta?.omdbData?.imdbId ?? null;
+	const canShowSubtitles =
+		activeImdbId !== null &&
+		(activeChannel?.contentType === "movie" || activeChannel?.contentType === "series");
 
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
@@ -384,6 +393,9 @@ export const PlayerView = () => {
 					onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
 					onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
 					onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
+					onSubtitles={
+						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
+					}
 				/>
 			)}
 
@@ -391,6 +403,15 @@ export const PlayerView = () => {
 				<ChannelOverlay
 					onClose={() => setShowChannelOsd(false)}
 					onSelectChannel={handleSelectChannel}
+				/>
+			)}
+
+			{showSubtitlePicker && activeImdbId && (
+				<SubtitlePicker
+					imdbId={activeImdbId}
+					season={activeChannel?.season ?? undefined}
+					episode={activeChannel?.episode ?? undefined}
+					onClose={() => setShowSubtitlePicker(false)}
 				/>
 			)}
 

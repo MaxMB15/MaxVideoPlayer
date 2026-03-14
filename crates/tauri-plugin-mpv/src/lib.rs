@@ -35,6 +35,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::mpv_set_bounds,
             commands::mpv_set_visible,
             commands::mpv_get_state,
+            commands::mpv_sub_add,
+            commands::mpv_sub_remove,
         ])
         .setup(|app, _api| {
             app.manage(MpvState::new());

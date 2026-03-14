@@ -89,6 +89,28 @@ pub async fn mpv_set_visible<R: Runtime>(
 }
 
 #[command]
+pub async fn mpv_sub_add<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, MpvState>,
+    path: String,
+) -> Result<(), String> {
+    tracing::info!("[MPV cmd] sub_add path={}", path);
+    state.sub_add(&path)?;
+    Ok(())
+}
+
+#[command]
+pub async fn mpv_sub_remove<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, MpvState>,
+    id: i64,
+) -> Result<(), String> {
+    tracing::info!("[MPV cmd] sub_remove id={}", id);
+    state.sub_remove(id)?;
+    Ok(())
+}
+
+#[command]
 pub async fn mpv_get_state<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, MpvState>,

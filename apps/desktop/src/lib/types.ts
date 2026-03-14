@@ -106,5 +106,18 @@ export interface WatchHistoryEntry {
 	playCount: number;
 }
 
+export interface SubtitleEntry {
+	fileId: number;
+	languageCode: string;
+	format: string;
+	releaseName?: string;
+	downloadCount?: number;
+}
+
+export interface SubtitleSearchResult {
+	entries: SubtitleEntry[];
+	languages: string[];
+}
+
 export type Platform = "macos" | "ios" | "android" | "windows" | "linux";
 export type LayoutMode = "desktop" | "mobile" | "tv";

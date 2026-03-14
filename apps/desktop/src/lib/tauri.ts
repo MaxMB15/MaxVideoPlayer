@@ -7,6 +7,7 @@ import type {
 	OmdbData,
 	MdbListData,
 	WatchHistoryEntry,
+	SubtitleSearchResult,
 } from "./types";
 
 // --- MPV Player Commands ---
@@ -118,6 +119,22 @@ export const getOpenSubtitlesApiKey = (): Promise<string | null> =>
 
 export const setOpenSubtitlesApiKey = (key: string): Promise<void> =>
 	invoke("set_opensubtitles_api_key", { key });
+
+export const searchSubtitles = (
+	imdbId: string,
+	season?: number,
+	episode?: number
+): Promise<SubtitleSearchResult | null> =>
+	invoke("search_subtitles", { imdbId, season, episode });
+
+export const downloadSubtitle = (fileId: number): Promise<string> =>
+	invoke("download_subtitle", { fileId });
+
+export const mpvSubAdd = (path: string): Promise<void> =>
+	invoke("plugin:mpv|mpv_sub_add", { path });
+
+export const mpvSubRemove = (id: number): Promise<void> =>
+	invoke("plugin:mpv|mpv_sub_remove", { id });
 
 // --- Watch History Commands ---
 
