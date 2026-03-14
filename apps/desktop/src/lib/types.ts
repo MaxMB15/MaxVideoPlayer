@@ -72,6 +72,29 @@ export interface OmdbData {
 	imdbVotes?: string;
 }
 
+export interface MdbListData {
+	imdbId?: string;
+	description?: string;
+	language?: string;
+	mediaType?: string;
+	imdbRating?: number;
+	imdbVotes?: number;
+	tomatometer?: number;
+	tomatometerState?: string;
+	tomatometerCount?: number;
+	tomatoAudienceScore?: number;
+	tomatoAudienceCount?: number;
+	tomatoAudienceState?: string;
+	metacriticScore?: number;
+	metacriticVotes?: number;
+	tmdbRating?: number;
+	tmdbVotes?: number;
+	traktRating?: number;
+	traktVotes?: number;
+	letterboxdRating?: number;
+	mdblistScore?: number;
+}
+
 export interface WatchHistoryEntry {
 	channelId: string;
 	channelName: string;

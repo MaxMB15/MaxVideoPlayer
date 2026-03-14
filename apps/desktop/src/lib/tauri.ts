@@ -5,6 +5,7 @@ import type {
 	Provider,
 	EpgProgram,
 	OmdbData,
+	MdbListData,
 	WatchHistoryEntry,
 } from "./types";
 
@@ -95,6 +96,17 @@ export const fetchOmdbData = (
 	title: string,
 	contentType: "movie" | "series"
 ): Promise<OmdbData | null> => invoke("fetch_omdb_data", { channelId, title, contentType });
+
+// --- MDBList Commands ---
+
+export const getMdbListApiKey = (): Promise<string | null> => invoke('get_mdblist_api_key');
+
+export const setMdbListApiKey = (key: string): Promise<void> => invoke('set_mdblist_api_key', { key });
+
+export const fetchMdbListData = (
+	imdbId: string,
+	mediaType: string
+): Promise<MdbListData | null> => invoke('fetch_mdblist_data', { imdbId, mediaType });
 
 // --- Watch History Commands ---
 

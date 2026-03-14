@@ -1,5 +1,6 @@
 use mvp_core::cache::store::{CacheStore, WatchHistoryEntry};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
+use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
 use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes, get_xtream_epg_url};
 use mvp_core::models::channel::Channel;
@@ -506,6 +507,81 @@ pub async fn fetch_omdb_data<R: Runtime>(
         let cache = state.cache.lock().map_err(|e| e.to_string())?;
         if let Err(e) = cache.save_omdb_cache(&channel_id, &data) {
             tracing::warn!("[OMDB] failed to save cache for channel_id={}: {e}", channel_id);
+        }
+    }
+
+    Ok(Some(data))
+}
+
+// --- MDBList Commands ---
+
+const MDBLIST_API_KEY: &str = "mdblist_api_key";
+/// 7-day TTL in seconds
+const MDBLIST_CACHE_TTL: i64 = 7 * 24 * 60 * 60;
+
+#[command]
+pub async fn get_mdblist_api_key<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let key = store
+        .get(MDBLIST_API_KEY)
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    Ok(key)
+}
+
+#[command]
+pub async fn set_mdblist_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(MDBLIST_API_KEY, serde_json::Value::String(key));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Fetch MDBList data for an IMDB ID. Checks cache first; fetches on miss.
+/// Returns None if no MDBList API key is configured.
+#[command]
+pub async fn fetch_mdblist_data<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    imdb_id: String,
+    media_type: String,
+) -> Result<Option<MdbListData>, String> {
+    // 1. Check cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        match cache.get_mdblist_cache(&imdb_id, MDBLIST_CACHE_TTL) {
+            Ok(Some(data)) => {
+                tracing::debug!("[MDBList] cache hit for imdb_id={}", imdb_id);
+                return Ok(Some(data));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    // 2. Get API key
+    let store = app.store(OMDB_STORE_FILE).map_err(|e| e.to_string())?;
+    let api_key = match store.get(MDBLIST_API_KEY).and_then(|v| v.as_str().map(|s| s.to_string())) {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            tracing::debug!("[MDBList] no API key configured, skipping fetch");
+            return Ok(None);
+        }
+    };
+
+    // 3. Fetch
+    tracing::info!("[MDBList] fetching data for imdb_id={} type={}", imdb_id, media_type);
+    let data = mvp_core::iptv::mdblist::fetch_mdblist(&imdb_id, &media_type, &api_key)
+        .await
+        .map_err(|e| {
+            tracing::warn!("[MDBList] fetch failed for imdb_id={}: {}", imdb_id, e);
+            e.to_string()
+        })?;
+
+    // 4. Cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = cache.save_mdblist_cache(&imdb_id, &data) {
+            tracing::warn!("[MDBList] failed to save cache for imdb_id={}: {}", imdb_id, e);
         }
     }
 
