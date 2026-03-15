@@ -102,11 +102,12 @@ impl MpvEngine {
 
     /// Add a subtitle track from a local file path.
     pub fn sub_add(&self, path: &str) -> Result<(), String> {
-        self.mpv
-            .as_ref()
-            .ok_or_else(|| "no mpv instance".to_string())?
-            .command("sub-add", &[path, "select"])
-            .map_err(|e| e.to_string())
+        let mpv = self.mpv.as_ref().ok_or_else(|| "no mpv instance".to_string())?;
+        mpv.command("sub-add", &[path, "select"])
+            .map_err(|e| e.to_string())?;
+        // Ensure subtitle rendering is visible after adding.
+        let _ = mpv.set_property("sub-visibility", true);
+        Ok(())
     }
 
     /// Remove an external subtitle track. Pass -1 to remove the current track (no-arg form).

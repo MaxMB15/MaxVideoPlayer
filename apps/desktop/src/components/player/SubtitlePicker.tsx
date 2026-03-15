@@ -45,6 +45,8 @@ export const SubtitlePicker = ({
 			await mpvSubAdd(localPath);
 			setSelectedFileId(entry.fileId);
 			onSubtitleSelected?.(entry.fileId);
+			// Close picker so it doesn't cover the subtitle area at the bottom of the video
+			onClose();
 		} catch (e) {
 			setError("Failed to load subtitle. Try another.");
 		} finally {

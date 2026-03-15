@@ -234,8 +234,10 @@ pub async fn download_subtitle(
     let extension = if extension.is_empty() { "srt".to_string() } else { extension };
 
     // Step 2: GET the pre-signed link (no auth headers needed).
+    // Request uncompressed content so the bytes written to disk are valid SRT/VTT.
     let content = client
         .get(&dl_response.link)
+        .header("Accept-Encoding", "identity")
         .send()
         .await?
         .error_for_status()

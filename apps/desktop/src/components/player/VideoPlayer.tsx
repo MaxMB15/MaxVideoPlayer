@@ -15,6 +15,13 @@ import { useFullscreen } from "@/lib/fullscreen-context";
 
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
 
+/** Extract season/episode numbers from a channel name like "Show S01E05". */
+const parseSeasonEpisode = (name: string): { season?: number; episode?: number } => {
+	const m = name.match(/S(\d{1,3})E(\d{1,3})/i);
+	if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
+	return {};
+};
+
 interface EnrichedMeta {
 	omdbData: OmdbData | null;
 	mdbListData: MdbListData | null;
@@ -101,15 +108,27 @@ export const PlayerView = () => {
 					setActiveChannelName(ch.name);
 				} catch {}
 			}
+			const savedEpisodes = sessionStorage.getItem("mvp_lastSeriesEpisodes");
+			if (savedEpisodes) {
+				try {
+					setSeriesEpisodes(JSON.parse(savedEpisodes));
+				} catch {}
+			}
 		}
 	}, [navState?.url]);
 
-	// Persist last active channel so it can be restored when navigating back
+	// Persist last active channel and series episode list so they can be restored when navigating back
 	useEffect(() => {
 		if (activeChannel) {
 			sessionStorage.setItem("mvp_lastChannel", JSON.stringify(activeChannel));
 		}
 	}, [activeChannel]);
+
+	useEffect(() => {
+		if (seriesEpisodes.length > 0) {
+			sessionStorage.setItem("mvp_lastSeriesEpisodes", JSON.stringify(seriesEpisodes));
+		}
+	}, [seriesEpisodes]);
 
 	// Pre-fetch enriched metadata when activeChannel changes to a movie or series
 	useEffect(() => {
@@ -155,6 +174,13 @@ export const PlayerView = () => {
 	const canShowSubtitles =
 		activeImdbId !== null &&
 		(activeChannel?.contentType === "movie" || activeChannel?.contentType === "series");
+
+	// Season/episode for subtitle search: prefer structured channel data, fall back to parsing the name
+	const { season: parsedSeason, episode: parsedEpisode } = activeChannel
+		? parseSeasonEpisode(activeChannel.name)
+		: {};
+	const subtitleSeason = activeChannel?.season ?? parsedSeason;
+	const subtitleEpisode = activeChannel?.episode ?? parsedEpisode;
 
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
@@ -430,8 +456,8 @@ export const PlayerView = () => {
 			{showSubtitlePicker && activeImdbId && (
 				<SubtitlePicker
 					imdbId={activeImdbId}
-					season={activeChannel?.season ?? undefined}
-					episode={activeChannel?.episode ?? undefined}
+					season={subtitleSeason}
+					episode={subtitleEpisode}
 					onClose={() => setShowSubtitlePicker(false)}
 					onSubtitleSelected={(id) => setSelectedSubtitleId(id)}
 				/>
