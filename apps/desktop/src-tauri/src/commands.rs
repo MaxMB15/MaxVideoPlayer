@@ -805,6 +805,11 @@ pub async fn clear_watch_history(state: State<'_, AppState>) -> Result<(), Strin
     cache.clear_watch_history().map_err(|e| e.to_string())
 }
 
+#[command]
+pub async fn read_subtitle_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
 fn uuid_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()

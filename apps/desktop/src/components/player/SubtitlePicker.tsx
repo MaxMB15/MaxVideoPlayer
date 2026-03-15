@@ -1,15 +1,47 @@
-import { useState, useEffect } from "react";
-import { Check, Loader2, X } from "lucide-react";
-import { searchSubtitles, downloadSubtitle, mpvSubAdd, mpvSubRemove, mpvSetSubPos, mpvSetSubDelay } from "@/lib/tauri";
-import type { SubtitleEntry, SubtitleSearchResult } from "@/lib/types";
+import { useState, useEffect, useRef } from "react";
+import { Check, Loader2, X, Settings, ArrowLeft } from "lucide-react";
+import {
+	searchSubtitles,
+	downloadSubtitle,
+	readSubtitleFile,
+	mpvSubAdd,
+	mpvSubRemove,
+} from "@/lib/tauri";
+import type { SubtitleEntry, SubtitleSearchResult, SubtitleCue } from "@/lib/types";
+import { parseSrt } from "@/lib/subtitle-parser";
+import { getDelayStep, getDelayInterval } from "@/lib/subtitle-delay";
 import { cn } from "@/lib/utils";
 
+// ─── Font family options ───────────────────────────────────────────────────
+const FONT_FAMILIES: { label: string; value: string }[] = [
+	{ label: "Default", value: "system-ui, sans-serif" },
+	{ label: "Sans-serif", value: "Arial, Helvetica, sans-serif" },
+	{ label: "Serif", value: "Georgia, 'Times New Roman', serif" },
+	{ label: "Monospace", value: "'Courier New', Courier, monospace" },
+];
+
+// ─── Props ─────────────────────────────────────────────────────────────────
 interface SubtitlePickerProps {
 	imdbId: string;
 	season?: number;
 	episode?: number;
 	onClose: () => void;
-	onSubtitleSelected?: (fileId: number | null) => void;
+	onSubtitleSelected?: (
+		fileId: number | null,
+		cues?: SubtitleCue[],
+		entry?: SubtitleEntry | null,
+		rankInLanguage?: number
+	) => void;
+	// State from VideoPlayer (persists across remounts)
+	currentSelectedId?: number | null;
+	currentSelectedEntry?: SubtitleEntry | null;
+	subtitleFontSize?: number;
+	subtitleFontFamily?: string;
+	subtitleDelay?: number;
+	onFontSizeChange?: (size: number) => void;
+	onFontFamilyChange?: (family: string) => void;
+	onDelayChange?: (delay: number) => void;
+	onSettingsModeChange?: (active: boolean) => void;
 }
 
 export const SubtitlePicker = ({
@@ -18,16 +50,68 @@ export const SubtitlePicker = ({
 	episode,
 	onClose,
 	onSubtitleSelected,
+	currentSelectedId = null,
+	currentSelectedEntry = null,
+	subtitleFontSize = 18,
+	subtitleFontFamily = "system-ui, sans-serif",
+	subtitleDelay = 0,
+	onFontSizeChange,
+	onFontFamilyChange,
+	onDelayChange,
+	onSettingsModeChange,
 }: SubtitlePickerProps) => {
+	// ── Local UI state ──────────────────────────────────────────────────────
 	const [loading, setLoading] = useState(true);
 	const [result, setResult] = useState<SubtitleSearchResult | null>(null);
-	const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+	// Initialise selectedFileId from the prop so checkmark is correct on reopen
+	const [selectedFileId, setSelectedFileId] = useState<number | null>(currentSelectedId);
 	const [downloadingId, setDownloadingId] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [subPos, setSubPos] = useState(100);
-	const [subDelay, setSubDelay] = useState(0);
+	const [showSettings, setShowSettings] = useState(false);
+	const [delayHovered, setDelayHovered] = useState(false);
 
-	// Search on mount — lazy, runs once
+	// ── Refs ────────────────────────────────────────────────────────────────
+	const pickerRef = useRef<HTMLDivElement>(null);
+	const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const holdStartRef = useRef<number>(0);
+	const holdDirectionRef = useRef<1 | -1>(1);
+
+	// ── Click-outside to close ──────────────────────────────────────────────
+	useEffect(() => {
+		const handleMouseDown = (e: MouseEvent) => {
+			if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+				onClose();
+			}
+		};
+		document.addEventListener("mousedown", handleMouseDown);
+		return () => document.removeEventListener("mousedown", handleMouseDown);
+	}, [onClose]);
+
+	// ── Notify parent when settings pane opens/closes ──────────────────────
+	useEffect(() => {
+		onSettingsModeChange?.(showSettings);
+	}, [showSettings, onSettingsModeChange]);
+
+	// ── Arrow keys ←/→ for delay when delay row is hovered ─────────────────
+	useEffect(() => {
+		if (!delayHovered) return;
+		const handleKey = (e: KeyboardEvent) => {
+			if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+			e.preventDefault();
+			e.stopPropagation();
+			const delta = e.key === "ArrowRight" ? 0.1 : -0.1;
+			onDelayChange?.(Math.round((subtitleDelay + delta) * 10) / 10);
+		};
+		document.addEventListener("keydown", handleKey);
+		return () => document.removeEventListener("keydown", handleKey);
+	}, [delayHovered, subtitleDelay, onDelayChange]);
+
+	// ── Cleanup hold timer on unmount ───────────────────────────────────────
+	useEffect(() => {
+		return () => clearHoldTimer();
+	}, []);
+
+	// ── Search on mount ─────────────────────────────────────────────────────
 	useEffect(() => {
 		searchSubtitles(imdbId, season, episode)
 			.then(setResult)
@@ -35,21 +119,31 @@ export const SubtitlePicker = ({
 			.finally(() => setLoading(false));
 	}, [imdbId, season, episode]);
 
+	// ── Group entries by language ────────────────────────────────────────────
+	const grouped = (result?.languages ?? []).map((lang) => ({
+		lang,
+		entries: result?.entries?.filter((e) => e.languageCode === lang) ?? [],
+	}));
+
+	// ─── Subtitle selection ─────────────────────────────────────────────────
 	const handleSelect = async (entry: SubtitleEntry) => {
 		if (downloadingId !== null) return;
-
 		setDownloadingId(entry.fileId);
 		setError(null);
 		try {
-			// Remove previous subtitle (index -1 removes all); ignore error if no track loaded
 			await mpvSubRemove(-1).catch(() => {});
 			const localPath = await downloadSubtitle(entry.fileId);
-			await mpvSubAdd(localPath);
+			mpvSubAdd(localPath).catch(() => {});
+			const content = await readSubtitleFile(localPath);
+			const cues = parseSrt(content);
 			setSelectedFileId(entry.fileId);
-			onSubtitleSelected?.(entry.fileId);
-			// Close picker so it doesn't cover the subtitle area at the bottom of the video
+			// Compute rank within this language group for auto-selection on next episode.
+			const langGroup = grouped.find((g) => g.lang === entry.languageCode);
+			const rankInLanguage = langGroup?.entries.findIndex((e) => e.fileId === entry.fileId) ?? 0;
+			onSubtitleSelected?.(entry.fileId, cues, entry, rankInLanguage);
 			onClose();
 		} catch (e) {
+			console.error("[SubtitlePicker] subtitle load error:", e);
 			setError("Failed to load subtitle. Try another.");
 		} finally {
 			setDownloadingId(null);
@@ -59,120 +153,273 @@ export const SubtitlePicker = ({
 	const handleNone = async () => {
 		await mpvSubRemove(-1).catch(() => {});
 		setSelectedFileId(null);
-		onSubtitleSelected?.(null);
+		onSubtitleSelected?.(null, [], null, undefined);
 	};
 
-	const handleSubPos = (delta: number) => {
-		const next = Math.min(150, Math.max(0, subPos + delta));
-		setSubPos(next);
-		mpvSetSubPos(next).catch(() => {});
-	};
-	const handleSubDelay = (delta: number) => {
-		const next = Math.round((subDelay + delta) * 10) / 10;
-		setSubDelay(next);
-		mpvSetSubDelay(next).catch(() => {});
+	// ─── Hold-to-accelerate delay buttons ──────────────────────────────────
+	const clearHoldTimer = () => {
+		if (holdTimerRef.current !== null) {
+			clearTimeout(holdTimerRef.current);
+			holdTimerRef.current = null;
+		}
 	};
 
-	// Group entries by language
-	const grouped = (result?.languages ?? []).map((lang) => ({
-		lang,
-		entries: result?.entries?.filter((e) => e.languageCode === lang) ?? [],
-	}));
+	const scheduleNextStep = () => {
+		const elapsed = Date.now() - holdStartRef.current;
+		const step = getDelayStep(elapsed);
+		const interval = getDelayInterval(elapsed);
+		holdTimerRef.current = setTimeout(() => {
+			onDelayChange?.(
+				Math.round((subtitleDelay + holdDirectionRef.current * step) * 10) / 10
+			);
+			scheduleNextStep();
+		}, interval);
+	};
 
+	const startHold = (direction: 1 | -1) => {
+		holdDirectionRef.current = direction;
+		holdStartRef.current = Date.now();
+		onDelayChange?.(
+			Math.round((subtitleDelay + direction * getDelayStep(0)) * 10) / 10
+		);
+		scheduleNextStep();
+	};
+
+	const stopHold = () => clearHoldTimer();
+
+	// ─── Helpers ────────────────────────────────────────────────────────────
+	const formatDelay = (d: number) => {
+		if (d === 0) return "0.0s";
+		return d > 0 ? `+${d.toFixed(1)}s` : `${d.toFixed(1)}s`;
+	};
+
+	const panelClass =
+		"rounded-xl bg-black/90 backdrop-blur-sm border border-white/10 shadow-2xl text-white text-sm";
+
+	// ─── Render ─────────────────────────────────────────────────────────────
 	return (
-		<div className="absolute bottom-20 right-4 z-50 w-72 max-h-[50vh] overflow-y-auto rounded-xl bg-black/90 backdrop-blur-sm border border-white/10 shadow-2xl text-white text-sm">
-			{/* Header */}
-			<div className="flex items-center justify-between px-3 py-2.5 border-b border-white/10">
-				<span className="font-semibold text-xs tracking-wide uppercase text-white/70">
-					Subtitles
-				</span>
-				<button onClick={onClose} className="text-white/50 hover:text-white">
-					<X className="h-4 w-4" />
-				</button>
-			</div>
+		// Outer wrapper anchors both panels; pickerRef covers the whole area for click-outside.
+		<div
+			ref={pickerRef}
+			className="absolute bottom-20 right-4 z-50 flex items-end gap-2"
+		>
+			{/* ── Settings panel (floats to the left of the list) ── */}
+			{showSettings && (
+				<div className={cn(panelClass, "w-64 max-h-[60vh] overflow-y-auto")}>
+					<div className="flex items-center justify-between px-3 py-2.5 border-b border-white/10 sticky top-0 bg-black/90 backdrop-blur-sm">
+						<span className="font-semibold text-xs tracking-wide uppercase text-white/70">
+							Subtitle Settings
+						</span>
+						<button
+							onClick={() => setShowSettings(false)}
+							className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10"
+							aria-label="Close settings"
+						>
+							<ArrowLeft className="h-4 w-4" />
+						</button>
+					</div>
 
-			{loading && (
-				<div className="flex items-center gap-2 p-3 text-white/60">
-					<Loader2 className="h-4 w-4 animate-spin" />
-					<span>Searching…</span>
-				</div>
-			)}
-
-			{!loading && !result?.entries.length && (
-				<div className="p-3 text-white/50 text-xs">No subtitles found</div>
-			)}
-
-			{!loading && result && result.entries.length > 0 && (
-				<div className="p-1">
-					{/* None option */}
-					<button
-						onClick={handleNone}
-						className={cn(
-							"w-full text-left px-3 py-1.5 rounded-lg text-xs hover:bg-white/10",
-							selectedFileId === null && "text-white font-medium"
-						)}
-					>
-						{selectedFileId === null && <Check className="inline h-3 w-3 mr-1.5" />}
-						None
-					</button>
-
-					{/* Grouped by language */}
-					{grouped.map(({ lang, entries }) => (
-						<div key={lang}>
-							<div className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/40 font-medium mt-1">
-								{lang} ({entries.length})
+					<div className="px-3 py-3 space-y-4">
+						{/* Font */}
+						<div className="space-y-2">
+							<div className="text-[10px] uppercase tracking-wide text-white/40 font-medium">
+								Font
 							</div>
-							{entries.map((entry) => (
-								<button
-									key={entry.fileId}
-									onClick={() => handleSelect(entry)}
-									disabled={downloadingId !== null}
-									className="w-full text-left px-3 py-1.5 rounded-lg text-xs hover:bg-white/10 disabled:opacity-50 flex items-center gap-1.5"
-								>
-									{downloadingId === entry.fileId ? (
-										<Loader2 className="h-3 w-3 animate-spin shrink-0" />
-									) : selectedFileId === entry.fileId ? (
-										<Check className="h-3 w-3 shrink-0 text-blue-400" />
-									) : (
-										<span className="w-3 shrink-0" />
-									)}
-									<span className="truncate">
-										{entry.releaseName ?? `Subtitle ${entry.fileId}`}
+							<select
+								value={subtitleFontFamily}
+								onChange={(e) => onFontFamilyChange?.(e.target.value)}
+								className="w-full bg-white/10 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-white/30"
+							>
+								{FONT_FAMILIES.map((f) => (
+									<option key={f.value} value={f.value} className="bg-black">
+										{f.label}
+									</option>
+								))}
+							</select>
+							<div className="flex items-center justify-between">
+								<span className="text-[10px] text-white/40">Size</span>
+								<div className="flex items-center gap-2">
+									<button
+										onClick={() => onFontSizeChange?.(Math.max(12, subtitleFontSize - 2))}
+										className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs font-bold"
+									>
+										A−
+									</button>
+									<span className="text-white/60 text-xs w-10 text-center">
+										{subtitleFontSize}px
 									</span>
-									<span className="text-white/30 shrink-0">.{entry.format}</span>
+									<button
+										onClick={() => onFontSizeChange?.(Math.min(40, subtitleFontSize + 2))}
+										className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-sm font-bold"
+									>
+										A+
+									</button>
+								</div>
+							</div>
+						</div>
+
+						{/* Delay */}
+						<div
+							className="space-y-1.5"
+							onMouseEnter={() => setDelayHovered(true)}
+							onMouseLeave={() => setDelayHovered(false)}
+						>
+							<div className="text-[10px] uppercase tracking-wide text-white/40 font-medium">
+								Delay
+							</div>
+							<div className="flex items-center gap-2">
+								<button
+									className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-xs select-none"
+									onMouseDown={() => startHold(-1)}
+									onMouseUp={stopHold}
+									onMouseLeave={stopHold}
+								>
+									−
 								</button>
-							))}
+								<span className="flex-1 text-center text-white/80 text-xs tabular-nums">
+									{formatDelay(subtitleDelay)}
+								</span>
+								<button
+									className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-xs select-none"
+									onMouseDown={() => startHold(1)}
+									onMouseUp={stopHold}
+									onMouseLeave={stopHold}
+								>
+									+
+								</button>
+							</div>
+							<p className="text-[10px] text-white/30">
+								Hold for faster · ←/→ keys for ±0.1s
+							</p>
 						</div>
-					))}
-				</div>
-			)}
 
-			{error && (
-				<div className="px-3 py-2 text-xs text-red-400 border-t border-white/10">
-					{error}
-				</div>
-			)}
-
-			{!loading && (
-				<div className="border-t border-white/10 px-3 py-2 space-y-1.5">
-					<div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-white/40">
-						<span>Position</span>
-						<div className="flex items-center gap-1">
-							<button onClick={() => handleSubPos(5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">↑</button>
-							<span className="text-white/60 w-6 text-center text-xs">{subPos}</span>
-							<button onClick={() => handleSubPos(-5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">↓</button>
-						</div>
-					</div>
-					<div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-white/40">
-						<span>Delay</span>
-						<div className="flex items-center gap-1">
-							<button onClick={() => handleSubDelay(-0.5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">−0.5s</button>
-							<span className="text-white/60 w-10 text-center text-xs">{subDelay > 0 ? `+${subDelay}s` : `${subDelay}s`}</span>
-							<button onClick={() => handleSubDelay(0.5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">+0.5s</button>
+						{/* Position */}
+						<div className="space-y-1">
+							<div className="text-[10px] uppercase tracking-wide text-white/40 font-medium">
+								Position
+							</div>
+							<p className="text-[10px] text-white/40 leading-relaxed">
+								Drag the subtitle text on screen, or use ↑ ↓ ← → arrow keys to reposition.
+							</p>
 						</div>
 					</div>
 				</div>
 			)}
+
+			{/* ── Main subtitle list panel ── */}
+			<div className={cn(panelClass, "w-80 max-h-[60vh] overflow-y-auto")}>
+				{/* Header */}
+				<div className="flex items-center justify-between px-3 py-2.5 border-b border-white/10 sticky top-0 bg-black/90 backdrop-blur-sm z-10">
+					<span className="font-semibold text-xs tracking-wide uppercase text-white/70">
+						Subtitles
+					</span>
+					<div className="flex items-center gap-1">
+						<button
+							onClick={() => setShowSettings((v) => !v)}
+							className={cn(
+								"p-1 rounded text-white/50 hover:text-white hover:bg-white/10",
+								showSettings && "text-white bg-white/10"
+							)}
+							aria-label="Subtitle settings"
+						>
+							<Settings className="h-4 w-4" />
+						</button>
+						<button
+							onClick={onClose}
+							className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10"
+						>
+							<X className="h-4 w-4" />
+						</button>
+					</div>
+				</div>
+
+				{/* Search loading */}
+				{loading && (
+					<div className="flex items-center gap-2 p-3 text-white/60">
+						<Loader2 className="h-4 w-4 animate-spin" />
+						<span>Searching…</span>
+					</div>
+				)}
+
+				{!loading && !result?.entries.length && (
+					<div className="p-3 text-white/50 text-xs">No subtitles found</div>
+				)}
+
+				{/* Subtitle list */}
+				{!loading && result && result.entries.length > 0 && (
+					<div className="p-1">
+						{/* Pinned active subtitle (at very top) */}
+						{selectedFileId !== null && currentSelectedEntry && (
+							<div className="mb-1">
+								<div className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/40 font-medium">
+									Active
+								</div>
+								<div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-xs">
+									<Check className="h-3 w-3 shrink-0 text-blue-400" />
+									<span className="truncate text-white font-medium">
+										{currentSelectedEntry.releaseName ?? `Subtitle ${currentSelectedEntry.fileId}`}
+									</span>
+									<span className="text-white/30 shrink-0 ml-auto">
+										{currentSelectedEntry.languageCode}
+									</span>
+								</div>
+							</div>
+						)}
+
+						{/* None option */}
+						<button
+							onClick={handleNone}
+							className={cn(
+								"w-full text-left px-3 py-1.5 rounded-lg text-xs hover:bg-white/10 flex items-center gap-1.5",
+								selectedFileId === null && "text-white font-medium"
+							)}
+						>
+							{selectedFileId === null ? (
+								<Check className="h-3 w-3 shrink-0" />
+							) : (
+								<span className="w-3 shrink-0" />
+							)}
+							None
+						</button>
+
+						{/* Language-grouped entries */}
+						{grouped.map(({ lang, entries }) => (
+							<div key={lang}>
+								<div className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/40 font-medium mt-1">
+									{lang} ({entries.length})
+								</div>
+								{entries.map((entry) => (
+									<button
+										key={entry.fileId}
+										onClick={() => handleSelect(entry)}
+										disabled={downloadingId !== null}
+										className="w-full text-left px-3 py-1.5 rounded-lg text-xs hover:bg-white/10 disabled:opacity-50 flex items-center gap-1.5"
+									>
+										{downloadingId === entry.fileId ? (
+											<Loader2 className="h-3 w-3 animate-spin shrink-0" />
+										) : selectedFileId === entry.fileId ? (
+											<Check className="h-3 w-3 shrink-0 text-blue-400" />
+										) : (
+											<span className="w-3 shrink-0" />
+										)}
+										<span className="truncate">
+											{entry.releaseName ?? `Subtitle ${entry.fileId}`}
+										</span>
+										<span className="text-white/30 shrink-0">.{entry.format}</span>
+									</button>
+								))}
+							</div>
+						))}
+					</div>
+				)}
+
+				{/* Error */}
+				{error && (
+					<div className="px-3 py-2 text-xs text-red-400 border-t border-white/10">
+						{error}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 };

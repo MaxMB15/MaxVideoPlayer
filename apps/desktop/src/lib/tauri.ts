@@ -133,6 +133,9 @@ export const searchSubtitles = (
 export const downloadSubtitle = (fileId: number): Promise<string> =>
 	invoke("download_subtitle", { fileId });
 
+export const readSubtitleFile = (path: string): Promise<string> =>
+	invoke("read_subtitle_file", { path });
+
 export const mpvSubAdd = (path: string): Promise<void> =>
 	invoke("plugin:mpv|mpv_sub_add", { path });
 

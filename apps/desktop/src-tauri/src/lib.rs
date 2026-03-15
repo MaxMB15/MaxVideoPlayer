@@ -47,6 +47,7 @@ pub fn run() {
             commands::test_opensubtitles_api_key,
             commands::search_subtitles,
             commands::download_subtitle,
+            commands::read_subtitle_file,
             commands::record_play_start,
             commands::record_play_end,
             commands::get_watch_history,

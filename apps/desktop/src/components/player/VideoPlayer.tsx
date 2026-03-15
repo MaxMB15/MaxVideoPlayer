@@ -1,6 +1,7 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
+import { SubtitleOverlay } from "./SubtitleOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
 import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
 import { LiveInfoDrawer } from "@/components/channels/LiveInfoDrawer";
@@ -8,8 +9,9 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
-import { mpvSetBounds, recordPlayStart, recordPlayEnd, fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
-import type { Channel, OmdbData, MdbListData } from "@/lib/types";
+import { mpvSetBounds, recordPlayStart, recordPlayEnd, fetchOmdbData, fetchMdbListData, searchSubtitles, downloadSubtitle, readSubtitleFile, mpvSubAdd, mpvSubRemove } from "@/lib/tauri";
+import { parseSrt } from "@/lib/subtitle-parser";
+import type { Channel, OmdbData, MdbListData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
 
@@ -52,6 +54,23 @@ export const PlayerView = () => {
 	const [enrichedMeta, setEnrichedMeta] = useState<EnrichedMeta | null>(null);
 	const [showSubtitlePicker, setShowSubtitlePicker] = useState(false);
 	const [selectedSubtitleId, setSelectedSubtitleId] = useState<number | null>(null);
+	const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+	const [selectedSubtitleEntry, setSelectedSubtitleEntry] = useState<SubtitleEntry | null>(null);
+	const [subtitleFontSize, setSubtitleFontSize] = useState(18);
+	const [subtitleFontFamily, setSubtitleFontFamily] = useState("system-ui, sans-serif");
+	const [subtitlePos, setSubtitlePos] = useState({ x: 50, y: 88 });
+	const [subtitleDelay, setSubtitleDelay] = useState(0);
+	const [subtitleEditMode, setSubtitleEditMode] = useState(false);
+	// Remembers which language + rank-within-language the user last picked so the
+	// same subtitle can be auto-selected when navigating to the next episode.
+	const [subtitlePreference, setSubtitlePreference] = useState<{
+		languageCode: string;
+		rankInLanguage: number;
+	} | null>(null);
+	// Refs used by the auto-load effect to avoid stale closures.
+	const subtitlePreferenceRef = useRef(subtitlePreference);
+	subtitlePreferenceRef.current = subtitlePreference;
+	const shouldAutoLoadSubtitleRef = useRef(false);
 
 	const navState = location.state as {
 		url?: string;
@@ -83,6 +102,31 @@ export const PlayerView = () => {
 		ro.observe(el);
 		return () => ro.disconnect();
 	}, [mpv.state.currentUrl]);
+
+	// Arrow keys reposition subtitle overlay when settings pane is open
+	useEffect(() => {
+		if (!subtitleEditMode) return;
+		const handleKey = (e: KeyboardEvent) => {
+			if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+			e.preventDefault();
+			setSubtitlePos((p) => ({
+				x:
+					e.key === "ArrowLeft"
+						? Math.max(5, p.x - 2)
+						: e.key === "ArrowRight"
+							? Math.min(95, p.x + 2)
+							: p.x,
+				y:
+					e.key === "ArrowUp"
+						? Math.max(3, p.y - 2)
+						: e.key === "ArrowDown"
+							? Math.min(97, p.y + 2)
+							: p.y,
+			}));
+		};
+		window.addEventListener("keydown", handleKey);
+		return () => window.removeEventListener("keydown", handleKey);
+	}, [subtitleEditMode]);
 
 	useEffect(() => {
 		if (navState?.url) {
@@ -133,6 +177,12 @@ export const PlayerView = () => {
 	// Pre-fetch enriched metadata when activeChannel changes to a movie or series
 	useEffect(() => {
 		setShowSubtitlePicker(false);
+		setSelectedSubtitleId(null);
+		setSubtitleCues([]);
+		setSelectedSubtitleEntry(null);
+		setSubtitleEditMode(false);
+		setSubtitleDelay(0);
+		setSubtitlePos({ x: 50, y: 88 });
 
 		if (!activeChannel || activeChannel.contentType === "live") {
 			setEnrichedMeta(null);
@@ -182,6 +232,49 @@ export const PlayerView = () => {
 	const subtitleSeason = activeChannel?.season ?? parsedSeason;
 	const subtitleEpisode = activeChannel?.episode ?? parsedEpisode;
 
+	// Refs so the auto-load effect can read fresh values without stale closures.
+	const subtitleSeasonRef = useRef(subtitleSeason);
+	subtitleSeasonRef.current = subtitleSeason;
+	const subtitleEpisodeRef = useRef(subtitleEpisode);
+	subtitleEpisodeRef.current = subtitleEpisode;
+
+	// Auto-load: when activeImdbId becomes available after a playEpisode call,
+	// apply the stored subtitle preference for the new episode.
+	useEffect(() => {
+		if (!shouldAutoLoadSubtitleRef.current) return;
+		// activeImdbId may still be null while the metadata fetch is in-flight;
+		// we'll re-run when it resolves.
+		if (!activeImdbId) return;
+		const pref = subtitlePreferenceRef.current;
+		if (!pref) return;
+
+		shouldAutoLoadSubtitleRef.current = false;
+		let cancelled = false;
+
+		searchSubtitles(activeImdbId, subtitleSeasonRef.current, subtitleEpisodeRef.current)
+			.then(async (result) => {
+				if (cancelled) return;
+				const langEntries = (result?.entries ?? []).filter((e) => e.languageCode === pref.languageCode);
+				if (langEntries.length === 0) return; // preferred language not available — keep none
+				const entry = langEntries[Math.min(pref.rankInLanguage, langEntries.length - 1)];
+				await mpvSubRemove(-1).catch(() => {});
+				const localPath = await downloadSubtitle(entry.fileId);
+				mpvSubAdd(localPath).catch(() => {});
+				const content = await readSubtitleFile(localPath);
+				const cues = parseSrt(content);
+				if (cancelled) return;
+				setSelectedSubtitleId(entry.fileId);
+				setSubtitleCues(cues);
+				setSelectedSubtitleEntry(entry);
+			})
+			.catch(() => {}); // silent — subtitle is best-effort
+
+		return () => {
+			cancelled = true;
+		};
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [activeChannel?.id, activeImdbId]);
+
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
 			// Record end of current channel
@@ -202,6 +295,7 @@ export const PlayerView = () => {
 			setActiveChannel(channel);
 			setSeriesEpisodes([]);
 			setSelectedSubtitleId(null);
+			setSubtitleCues([]);
 		},
 		[mpv.load]
 	);
@@ -247,6 +341,13 @@ export const PlayerView = () => {
 			setActiveChannelName(ep.name);
 			setActiveChannel(ep);
 			setShowInfoDrawer(false);
+			setSelectedSubtitleId(null);
+			setSubtitleCues([]);
+			setSelectedSubtitleEntry(null);
+			setSubtitleEditMode(false);
+			setSubtitleDelay(0);
+			// Signal the auto-load effect to apply the subtitle preference for this episode.
+			shouldAutoLoadSubtitleRef.current = true;
 		},
 		[mpv.load]
 	);
@@ -308,6 +409,11 @@ export const PlayerView = () => {
 	// --- Keyboard ---
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			// While the subtitle settings pane is open, arrow keys belong to subtitle
+			// position/delay handlers — don't let them also seek or change volume.
+			const isArrow = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key);
+			if (subtitleEditMode && isArrow) return;
+
 			switch (e.key) {
 				case " ":
 					e.preventDefault();
@@ -350,7 +456,7 @@ export const PlayerView = () => {
 			}
 			setShowControls(true);
 		},
-		[mpv, isFullscreen, showInfoDrawer, showChannelOsd, navigate, setFullscreen]
+		[mpv, isFullscreen, showInfoDrawer, showChannelOsd, navigate, setFullscreen, subtitleEditMode]
 	);
 
 	const handleStop = useCallback(() => {
@@ -458,8 +564,47 @@ export const PlayerView = () => {
 					imdbId={activeImdbId}
 					season={subtitleSeason}
 					episode={subtitleEpisode}
-					onClose={() => setShowSubtitlePicker(false)}
-					onSubtitleSelected={(id) => setSelectedSubtitleId(id)}
+					onClose={() => {
+						setShowSubtitlePicker(false);
+						setSubtitleEditMode(false);
+					}}
+					onSubtitleSelected={(id, cues, entry, rankInLanguage) => {
+						setSelectedSubtitleId(id);
+						setSubtitleCues(cues ?? []);
+						setSelectedSubtitleEntry(entry ?? null);
+						if (entry && rankInLanguage !== undefined) {
+							setSubtitlePreference({ languageCode: entry.languageCode, rankInLanguage });
+						} else {
+							// User clicked None — clear preference so next episode gets no subtitle.
+							setSubtitlePreference(null);
+						}
+					}}
+					currentSelectedId={selectedSubtitleId}
+					currentSelectedEntry={selectedSubtitleEntry}
+					subtitleFontSize={subtitleFontSize}
+					subtitleFontFamily={subtitleFontFamily}
+					subtitleDelay={subtitleDelay}
+					onFontSizeChange={setSubtitleFontSize}
+					onFontFamilyChange={setSubtitleFontFamily}
+					onDelayChange={(d) => {
+						setSubtitleDelay(d);
+						import("@/lib/tauri").then(({ mpvSetSubDelay }) => mpvSetSubDelay(d).catch(() => {}));
+					}}
+					onSettingsModeChange={(active) => setSubtitleEditMode(active)}
+				/>
+			)}
+
+			{(subtitleCues.length > 0 || subtitleEditMode) && (
+				<SubtitleOverlay
+					cues={subtitleCues}
+					position={mpv.state.position}
+					fontSize={subtitleFontSize}
+					fontFamily={subtitleFontFamily}
+					posX={subtitlePos.x}
+					posY={subtitlePos.y}
+					delay={subtitleDelay}
+					editMode={subtitleEditMode}
+					onPositionChange={(x, y) => setSubtitlePos({ x, y })}
 				/>
 			)}
 

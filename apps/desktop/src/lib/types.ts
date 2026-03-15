@@ -119,5 +119,11 @@ export interface SubtitleSearchResult {
 	languages: string[];
 }
 
+export interface SubtitleCue {
+	start: number; // seconds
+	end: number;   // seconds
+	text: string;
+}
+
 export type Platform = "macos" | "ios" | "android" | "windows" | "linux";
 export type LayoutMode = "desktop" | "mobile" | "tv";
