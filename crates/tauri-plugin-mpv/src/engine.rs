@@ -103,10 +103,20 @@ impl MpvEngine {
     /// Add a subtitle track from a local file path.
     pub fn sub_add(&self, path: &str) -> Result<(), String> {
         let mpv = self.mpv.as_ref().ok_or_else(|| "no mpv instance".to_string())?;
-        mpv.command("sub-add", &[path, "select"])
-            .map_err(|e| e.to_string())?;
-        // Ensure subtitle rendering is visible after adding.
+        // Convert to file:// URI so MPV path resolution is unambiguous for local files
+        let uri = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            path.to_string()
+        };
+        tracing::info!("[MPV] sub-add: uri={}", uri);
+        mpv.command("sub-add", &[&uri, "select"])
+            .map_err(|e| {
+                tracing::warn!("[MPV] sub-add failed: {}", e);
+                e.to_string()
+            })?;
         let _ = mpv.set_property("sub-visibility", true);
+        tracing::info!("[MPV] sub-add: complete, sub-visibility set");
         Ok(())
     }
 
@@ -121,6 +131,24 @@ impl MpvEngine {
         } else {
             mpv.command("sub-remove", &[&id.to_string()]).map_err(|e| e.to_string())
         }
+    }
+
+    /// Set subtitle vertical position (0 = top, 100 = bottom). Default is 100.
+    pub fn set_sub_pos(&self, pos: f64) -> Result<(), String> {
+        self.mpv
+            .as_ref()
+            .ok_or_else(|| "no mpv instance".to_string())?
+            .set_property("sub-pos", pos.clamp(0.0, 150.0))
+            .map_err(|e| e.to_string())
+    }
+
+    /// Set subtitle time delay in seconds (negative = earlier, positive = later).
+    pub fn set_sub_delay(&self, delay: f64) -> Result<(), String> {
+        self.mpv
+            .as_ref()
+            .ok_or_else(|| "no mpv instance".to_string())?
+            .set_property("sub-delay", delay)
+            .map_err(|e| e.to_string())
     }
 
     pub fn get_state(&self) -> PlayerState {

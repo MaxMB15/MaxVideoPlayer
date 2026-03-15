@@ -139,6 +139,12 @@ export const mpvSubAdd = (path: string): Promise<void> =>
 export const mpvSubRemove = (id: number): Promise<void> =>
 	invoke("plugin:mpv|mpv_sub_remove", { id });
 
+export const mpvSetSubPos = (pos: number): Promise<void> =>
+	invoke("plugin:mpv|mpv_set_sub_pos", { pos });
+
+export const mpvSetSubDelay = (delay: number): Promise<void> =>
+	invoke("plugin:mpv|mpv_set_sub_delay", { delay });
+
 // --- Watch History Commands ---
 
 export const recordPlayStart = (

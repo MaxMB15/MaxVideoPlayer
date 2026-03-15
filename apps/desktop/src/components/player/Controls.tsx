@@ -120,20 +120,6 @@ export const Controls = ({
 
 				{onInfo && <div className="w-px h-4 bg-white/20 mx-0.5 shrink-0" />}
 
-				{onSubtitles && (
-					<>
-						<div className="w-px h-4 bg-white/20 mx-0.5 shrink-0" />
-						<Button
-							variant="ghost"
-							size="icon"
-							className={cn("text-white hover:bg-white/20", hasSubtitles && "text-blue-400")}
-							onClick={onSubtitles}
-							aria-label="Subtitles"
-						>
-							<Subtitles className="h-5 w-5" />
-						</Button>
-					</>
-				)}
 
 				{/* Playback controls */}
 				{state.isPaused || !state.isPlaying ? (
@@ -214,6 +200,18 @@ export const Controls = ({
 						aria-label="Next episode"
 					>
 						<SkipForward className="h-5 w-5" />
+					</Button>
+				)}
+
+				{onSubtitles && (
+					<Button
+						variant="ghost"
+						size="icon"
+						className={cn("text-white hover:bg-white/20", hasSubtitles && "text-blue-400")}
+						onClick={onSubtitles}
+						aria-label="Subtitles"
+					>
+						<Subtitles className="h-5 w-5" />
 					</Button>
 				)}
 

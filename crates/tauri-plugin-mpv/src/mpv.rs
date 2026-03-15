@@ -196,6 +196,14 @@ impl MpvState {
         self.inner.lock().map_err(|e| e.to_string())?.sub_remove(id)
     }
 
+    pub fn set_sub_pos(&self, pos: f64) -> Result<(), String> {
+        self.inner.lock().map_err(|e| e.to_string())?.set_sub_pos(pos)
+    }
+
+    pub fn set_sub_delay(&self, delay: f64) -> Result<(), String> {
+        self.inner.lock().map_err(|e| e.to_string())?.set_sub_delay(delay)
+    }
+
     pub fn get_state(&self) -> PlayerState {
         self.inner.lock().unwrap().get_state()
     }

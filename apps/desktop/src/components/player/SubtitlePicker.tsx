@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Check, Loader2, X } from "lucide-react";
-import { searchSubtitles, downloadSubtitle, mpvSubAdd, mpvSubRemove } from "@/lib/tauri";
+import { searchSubtitles, downloadSubtitle, mpvSubAdd, mpvSubRemove, mpvSetSubPos, mpvSetSubDelay } from "@/lib/tauri";
 import type { SubtitleEntry, SubtitleSearchResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,8 @@ export const SubtitlePicker = ({
 	const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
 	const [downloadingId, setDownloadingId] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [subPos, setSubPos] = useState(100);
+	const [subDelay, setSubDelay] = useState(0);
 
 	// Search on mount — lazy, runs once
 	useEffect(() => {
@@ -60,10 +62,21 @@ export const SubtitlePicker = ({
 		onSubtitleSelected?.(null);
 	};
 
+	const handleSubPos = (delta: number) => {
+		const next = Math.min(150, Math.max(0, subPos + delta));
+		setSubPos(next);
+		mpvSetSubPos(next).catch(() => {});
+	};
+	const handleSubDelay = (delta: number) => {
+		const next = Math.round((subDelay + delta) * 10) / 10;
+		setSubDelay(next);
+		mpvSetSubDelay(next).catch(() => {});
+	};
+
 	// Group entries by language
 	const grouped = (result?.languages ?? []).map((lang) => ({
 		lang,
-		entries: result?.entries.filter((e) => e.languageCode === lang),
+		entries: result?.entries?.filter((e) => e.languageCode === lang) ?? [],
 	}));
 
 	return (
@@ -137,6 +150,27 @@ export const SubtitlePicker = ({
 			{error && (
 				<div className="px-3 py-2 text-xs text-red-400 border-t border-white/10">
 					{error}
+				</div>
+			)}
+
+			{!loading && (
+				<div className="border-t border-white/10 px-3 py-2 space-y-1.5">
+					<div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-white/40">
+						<span>Position</span>
+						<div className="flex items-center gap-1">
+							<button onClick={() => handleSubPos(5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">↑</button>
+							<span className="text-white/60 w-6 text-center text-xs">{subPos}</span>
+							<button onClick={() => handleSubPos(-5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">↓</button>
+						</div>
+					</div>
+					<div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-white/40">
+						<span>Delay</span>
+						<div className="flex items-center gap-1">
+							<button onClick={() => handleSubDelay(-0.5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">−0.5s</button>
+							<span className="text-white/60 w-10 text-center text-xs">{subDelay > 0 ? `+${subDelay}s` : `${subDelay}s`}</span>
+							<button onClick={() => handleSubDelay(0.5)} className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs">+0.5s</button>
+						</div>
+					</div>
 				</div>
 			)}
 		</div>
