@@ -106,25 +106,75 @@ jobs:
           print("[signing] Key written to GITHUB_ENV.")
           EOF
 
-      - name: Wake display for DMG bundling
-        # bundle_dmg.sh uses osascript/Finder for DMG window styling.
-        # On CI the display may be idle; wake it so Finder is responsive.
-        run: |
-          caffeinate -u -t 1
-          sleep 2
+      - name: Build Tauri app
+        # Build without updater artifacts so bundle_dmg.sh doesn't race with
+        # hdiutil over the .app bundle. We create the updater artifacts manually below.
+        run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
-      - name: Build and publish release
-        uses: tauri-apps/tauri-action@v0
+      - name: Create updater artifacts
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          BUNDLE_DIR="target/release/bundle/macos"
+          UPDATER="$BUNDLE_DIR/MaxVideoPlayer.app.tar.gz"
+
+          # Create the .tar.gz updater archive from the built .app
+          cd "$BUNDLE_DIR"
+          tar czf MaxVideoPlayer.app.tar.gz MaxVideoPlayer.app
+          cd -
+
+          # Sign using the signing key already in the environment (set by Prepare signing key step)
+          if [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
+            cd apps/desktop && npx tauri signer sign \
+              -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+              "../../$UPDATER"
+            cd -
+          else
+            cd apps/desktop && npx tauri signer sign \
+              --no-password \
+              "../../$UPDATER"
+            cd -
+          fi
+
+          # Build latest.json for the auto-updater endpoint
+          SIG=$(cat "${UPDATER}.sig")
+          python3 - "$VERSION" "$SIG" << 'PYEOF'
+          import json, sys
+          from datetime import datetime, timezone
+          version, sig = sys.argv[1], sys.argv[2]
+          data = {
+            "version": version,
+            "notes": "See the CHANGELOG for details.",
+            "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": sig,
+                "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}/MaxVideoPlayer_{version}_aarch64.app.tar.gz"
+              }
+            }
+          }
+          with open("latest.json", "w") as f:
+            json.dump(data, f, indent=2)
+          print("latest.json written")
+          PYEOF
+
+      - name: Publish GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "MaxVideoPlayer ${{ github.ref_name }}"
-          releaseBody: |
-            See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details.
-          releaseDraft: true
-          prerelease: false
-          updaterJsonPath: latest.json
-          updaterJsonKeepUniversal: false
-          args: --verbose
+        run: |
+          set -euo pipefail
+          VERSION="$VERSION"
+          DMG="target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg"
+          UPDATER="target/release/bundle/macos/MaxVideoPlayer.app.tar.gz"
+
+          gh release create "v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "MaxVideoPlayer v${VERSION}" \
+            --notes "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details." \
+            --draft \
+            "$DMG" \
+            "${UPDATER}#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz" \
+            "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig" \
+            "latest.json"
