@@ -1,18 +1,19 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
-import { ChannelCard } from "./ChannelCard";
+import { ChannelCard, ROW_CARD_LEFT_WIDTH } from "./ChannelCard";
 import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { HistoryTab } from "./HistoryTab";
+import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { usePlatform } from "@/hooks/usePlatform";
-import { getXtreamSeriesEpisodes } from "@/lib/tauri";
-import type { Channel, Category, WatchHistoryEntry } from "@/lib/types";
+import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
+import type { Channel, Category, EpgProgram, EpgSearchResult, WatchHistoryEntry } from "@/lib/types";
 
 type Tab = "live" | "movie" | "series" | "favorites" | "history";
 
@@ -24,7 +25,33 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 	{ id: "history", label: "History", icon: History },
 ];
 
+/** Pixels per hour for the dynamic window (higher = wider spacing between gridlines). */
+const PX_PER_HOUR = 150;
+/**
+ * Width (px) of the right-side buttons in a RowCard (LIVE badge + ♡ + px-2 padding).
+ * Must match the right spacer added to the sticky header so gridlines align with labels.
+ */
+const RIGHT_BUTTONS_PX = 80;
+
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
+
+const formatEpgTime = (startTime: number, now: number): string => {
+	const diff = startTime - now;
+	if (diff <= 0) return "now";
+	if (diff < 3600) return `in ${Math.ceil(diff / 60)}m`;
+	if (diff < 7200) return `in ${Math.floor(diff / 3600)}h`;
+	const d = new Date(startTime * 1000);
+	const today = new Date(now * 1000);
+	const tomorrow = new Date(today);
+	tomorrow.setDate(today.getDate() + 1);
+	const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	if (d.toDateString() === today.toDateString()) return `today ${timeStr}`;
+	if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${timeStr}`;
+	return (
+		d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) +
+		` ${timeStr}`
+	);
+};
 
 export const ChannelList = () => {
 	const { channels, loading, toggleFavorite } = useChannels();
@@ -33,6 +60,8 @@ export const ChannelList = () => {
 
 	const [activeTab, setActiveTab] = useState<Tab>("live");
 	const [search, setSearch] = useState("");
+	// Debounced search — updated 250ms after user stops typing to avoid per-keystroke re-renders
+	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 	const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 	const [seriesModalData, setSeriesModalData] = useState<{
@@ -41,6 +70,52 @@ export const ChannelList = () => {
 	} | null>(null);
 	const [seriesLoading, setSeriesLoading] = useState(false);
 	const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
+
+	// EPG data: tvgId → EpgProgram[] (all programs in the fetch window)
+	const [epgMap, setEpgMap] = useState<Map<string, EpgProgram[]>>(new Map());
+	// EPG search: one result per channel (earliest matching program)
+	const [epgSearchResults, setEpgSearchResults] = useState<EpgSearchResult[]>([]);
+
+	// Container width → dynamic EPG window
+	const [containerWidth, setContainerWidth] = useState(0);
+	/** Root div ref — always in DOM; drives ResizeObserver for dynamic EPG window. */
+	const rootRef = useRef<HTMLDivElement>(null);
+	/** Virtualizer scroll ref — kept for TanStack Virtual scroll element. */
+	const parentRef = useRef<HTMLDivElement>(null);
+
+	// Measure container width with ResizeObserver on the root div (always in DOM,
+	// unlike parentRef which is only rendered in the virtualizer path).
+	useEffect(() => {
+		const el = rootRef.current;
+		if (!el) return;
+		const obs = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
+		obs.observe(el);
+		setContainerWidth(el.clientWidth);
+		return () => obs.disconnect();
+	}, []);
+
+	// Compute dynamic EPG display window: now line at 1/3 mark, 100–200 px per hour
+	const { windowStart, windowEnd } = useMemo(() => {
+		const now = Math.floor(Date.now() / 1000);
+		// containerWidth is content-box width (inside px-3 padding).
+		// Rows inside have no extra padding, so timeline = containerWidth minus the two fixed columns.
+		const effectiveWidth = containerWidth > 0 ? containerWidth : 400;
+		// rootRef measures the full component width; the scroll container inside has px-3 (12px)
+		// padding on each side, so subtract 24px to get the actual content width.
+		const timelinePx = Math.max(200, effectiveWidth - 24 - ROW_CARD_LEFT_WIDTH - RIGHT_BUTTONS_PX);
+		const totalHours = Math.max(3, timelinePx / PX_PER_HOUR);
+		const pastSec = Math.round((totalHours / 3) * 3600);
+		const futureSec = Math.round((totalHours * 2 / 3) * 3600);
+		return { windowStart: now - pastSec, windowEnd: now + futureSec };
+	}, [containerWidth]);
+
+	const windowTotal = windowEnd - windowStart;
+
+	// Debounce: update debouncedSearch 250ms after search changes
+	useEffect(() => {
+		const t = setTimeout(() => setDebouncedSearch(search), 250);
+		return () => clearTimeout(t);
+	}, [search]);
 
 	const byType = useMemo(() => {
 		const map: Record<"live" | "movie" | "series", Channel[]> = {
@@ -56,8 +131,6 @@ export const ChannelList = () => {
 		return map;
 	}, [channels]);
 
-	// For series: deduplicate to show-level (one entry per unique show title).
-	// Clear sources so clicking a show card always opens the SeriesDetailModal.
 	const seriesShows = useMemo(() => {
 		const seen = new Map<string, Channel>();
 		for (const ch of byType.series) {
@@ -107,23 +180,64 @@ export const ChannelList = () => {
 		setActiveTab(tab);
 		setSelectedCategory(null);
 		setSearch("");
+		setDebouncedSearch("");
 		setShowFavoritesOnly(false);
+		setEpgSearchResults([]);
 	};
 
+	// Use debouncedSearch for filtering — prevents per-keystroke re-renders of virtualizer
 	const filtered = useMemo(() => {
 		let result = activeChannels;
 		if (selectedCategory && activeTab !== "series" && activeTab !== "favorites") {
 			result = result.filter((ch) => ch.groupTitle === selectedCategory);
 		}
-		if (search.trim()) {
-			const lower = search.toLowerCase();
+		if (debouncedSearch.trim()) {
+			const lower = debouncedSearch.toLowerCase();
 			result = result.filter((ch) => ch.name.toLowerCase().includes(lower));
 		}
 		if (showFavoritesOnly && activeTab !== "favorites") {
 			result = result.filter((ch) => ch.isFavorite === true);
 		}
 		return result;
-	}, [activeChannels, selectedCategory, search, activeTab, showFavoritesOnly]);
+	}, [activeChannels, selectedCategory, debouncedSearch, activeTab, showFavoritesOnly]);
+
+	// Fetch EPG for all live channels: 2h past + 4h future = 6h window (generous for wider displays)
+	useEffect(() => {
+		if (activeTab !== "live" || channels.length === 0) return;
+		const now = Math.floor(Date.now() / 1000);
+		getEpgForLiveChannels(now - 7200, now + 14400)
+			.then((progs) => {
+				const map = new Map<string, EpgProgram[]>();
+				for (const p of progs) {
+					const list = map.get(p.channelId) ?? [];
+					list.push(p);
+					map.set(p.channelId, list);
+				}
+				setEpgMap(map);
+			})
+			.catch(() => {});
+	}, [activeTab, channels.length]);
+
+	// Debounced EPG programme search (300ms — backend round trip)
+	useEffect(() => {
+		if (!search.trim() || activeTab !== "live") {
+			setEpgSearchResults([]);
+			return;
+		}
+		const timer = setTimeout(() => {
+			const now = Math.floor(Date.now() / 1000);
+			searchEpgProgrammes(search.trim(), now)
+				.then(setEpgSearchResults)
+				.catch(() => {});
+		}, 300);
+		return () => clearTimeout(timer);
+	}, [search, activeTab]);
+
+	const getChannelPrograms = (ch: Channel): EpgProgram[] => {
+		const key = ch.tvgId ?? null;
+		if (!key) return [];
+		return epgMap.get(key) ?? [];
+	};
 
 	const handlePlay = useCallback(
 		async (channel: Channel) => {
@@ -131,7 +245,6 @@ export const ChannelList = () => {
 			if (currentTab === "series") {
 				const showName = channel.seriesTitle ?? showTitle(channel.name);
 				if (channel.url.startsWith("xtream://series/")) {
-					// Lazy-fetch episodes from Xtream API on demand
 					setSeriesLoading(true);
 					try {
 						const eps = await getXtreamSeriesEpisodes(channel.id);
@@ -142,7 +255,6 @@ export const ChannelList = () => {
 						setSeriesLoading(false);
 					}
 				} else {
-					// M3U: episodes already in local channel list
 					const eps = byType.series.filter(
 						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
 					);
@@ -151,7 +263,6 @@ export const ChannelList = () => {
 			} else if (currentTab === "movie" && channel.sources.length > 0) {
 				setSelectedMovie(channel);
 			} else if (currentTab === "favorites") {
-				// For favorites, dispatch based on content type
 				if (channel.contentType === "series") {
 					const showName = channel.seriesTitle ?? showTitle(channel.name);
 					if (channel.url.startsWith("xtream://series/")) {
@@ -186,6 +297,14 @@ export const ChannelList = () => {
 		[activeTab, byType.series, navigate]
 	);
 
+	const handleEpgResultPlay = useCallback(
+		(epgChannelId: string) => {
+			const ch = byType.live.find((c) => c.tvgId === epgChannelId);
+			if (ch) handlePlay(ch);
+		},
+		[byType.live, handlePlay]
+	);
+
 	const handleToggleFavorite = useCallback(
 		(channel: Channel) => {
 			toggleFavorite(channel.id);
@@ -207,7 +326,7 @@ export const ChannelList = () => {
 				if (movie) setSelectedMovie(movie);
 			} else {
 				const ch = byType.live.find((c) => c.id === entry.channelId);
-				if (!ch) return; // channel no longer available
+				if (!ch) return;
 				navigate("/player", {
 					state: { url: ch.url, channelName: entry.channelName, channel: ch },
 				});
@@ -216,7 +335,6 @@ export const ChannelList = () => {
 		[byType, navigate]
 	);
 
-	// Must be declared before any early returns to satisfy Rules of Hooks
 	const favoritesByType = useMemo(() => {
 		const favs = filtered;
 		return {
@@ -233,13 +351,22 @@ export const ChannelList = () => {
 			? 0
 			: Math.ceil(filtered.length / columnsPerRow);
 
-	const parentRef = useRef<HTMLDivElement>(null);
 	const virtualizer = useVirtualizer({
 		count: rowCount,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => (isGrid ? 145 : 52),
+		estimateSize: () => (isGrid ? 145 : 48),
 		overscan: 4,
 	});
+
+	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
+	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
+	const nowSec = Math.floor(Date.now() / 1000);
+
+	// Grid marks for sticky header and background gridlines (uses same window as ChannelCard)
+	const headerGridMarks = useMemo(
+		() => getGridMarks(windowStart, windowEnd),
+		[windowStart, windowEnd]
+	);
 
 	if (loading) {
 		return (
@@ -272,8 +399,12 @@ export const ChannelList = () => {
 					? "shows"
 					: "favorites";
 
+	// Pixel offset of the timeline column left edge within the virtualizer div.
+	// The virtualizer div already lives inside the px-3 padding of parentRef, so no extra 12px.
+	const timelineLeft = ROW_CARD_LEFT_WIDTH;
+
 	return (
-		<div className="flex flex-col h-full">
+		<div ref={rootRef} className="flex flex-col h-full">
 			{/* Tab bar */}
 			<div className="flex items-center gap-0 border-b border-border px-3 shrink-0">
 				{TABS.map(({ id, label, icon: Icon }) => {
@@ -315,7 +446,6 @@ export const ChannelList = () => {
 				})}
 				<div className="flex-1" />
 				{activeTab !== "history" && <SearchBar value={search} onChange={setSearch} />}
-				{/* Favorites-only filter toggle — not shown on the Favorites or History tab */}
 				{activeTab !== "favorites" && activeTab !== "history" && (
 					<button
 						onClick={() => setShowFavoritesOnly((v) => !v)}
@@ -332,7 +462,7 @@ export const ChannelList = () => {
 				)}
 			</div>
 
-			{/* Category filter — only for live and movies, not series, favorites, or history */}
+			{/* Category filter */}
 			{categories.length > 1 &&
 				activeTab !== "series" &&
 				activeTab !== "favorites" &&
@@ -346,8 +476,8 @@ export const ChannelList = () => {
 					</div>
 				)}
 
-			{/* Result count — not shown on History tab */}
-			{activeTab !== "history" && (
+			{/* Result count */}
+			{activeTab !== "history" && !isLiveSearch && (
 				<div className="shrink-0 px-3 pt-2 pb-1">
 					<span className="text-xs text-muted-foreground">
 						{filtered.length.toLocaleString()} {countLabel}
@@ -355,7 +485,48 @@ export const ChannelList = () => {
 				</div>
 			)}
 
-			{/* Series loading indicator */}
+			{/* Sticky time-axis header — shown any time we're on the Live tab */}
+			{activeTab === "live" && (
+				<div className="shrink-0 flex items-center px-3 pb-1 border-b border-border/15">
+					{/* Left spacer: matches ROW_CARD_LEFT_WIDTH in RowCard */}
+					<div style={{ width: `${ROW_CARD_LEFT_WIDTH}px` }} className="shrink-0" />
+					{/* Time label area: flex-1 matches the timeline flex-1 */}
+					<div className="flex-1 relative h-5">
+						{headerGridMarks.map((t) => {
+							const p = toPct(t, windowStart, windowTotal);
+							if (p < 2 || p > 98) return null;
+							const isHour = t % 3600 === 0;
+							return (
+								<span
+									key={t}
+									className={`absolute -translate-x-1/2 tabular-nums select-none ${
+										isHour
+											? "text-[9px] text-muted-foreground/75 font-medium"
+											: "text-[8px] text-muted-foreground/40"
+									}`}
+									style={{ left: `${p.toFixed(3)}%`, top: "4px" }}
+								>
+									{formatHHMM(t)}
+								</span>
+							);
+						})}
+						{/* "Now" arrow aligned with the red marker line */}
+						<span
+							className="absolute -translate-x-1/2 text-[9px] text-red-400/80 select-none"
+							style={{
+								left: `${toPct(nowSec, windowStart, windowTotal).toFixed(3)}%`,
+								top: "2px",
+							}}
+						>
+							▾
+						</span>
+					</div>
+					{/* Right spacer: matches RIGHT_BUTTONS_PX so percentages align with gridlines */}
+					<div style={{ width: `${RIGHT_BUTTONS_PX}px` }} className="shrink-0" />
+				</div>
+			)}
+
+			{/* Series loading overlay */}
 			{seriesLoading && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
 					<div className="flex items-center gap-3 bg-card rounded-2xl px-6 py-4 shadow-2xl">
@@ -365,7 +536,6 @@ export const ChannelList = () => {
 				</div>
 			)}
 
-			{/* Series detail modal */}
 			{seriesModalData && (
 				<SeriesDetailModal
 					showTitle={seriesModalData.showTitle}
@@ -390,7 +560,6 @@ export const ChannelList = () => {
 				/>
 			)}
 
-			{/* Movie info drawer */}
 			{selectedMovie && (
 				<MovieInfoDrawer
 					movie={selectedMovie}
@@ -430,6 +599,9 @@ export const ChannelList = () => {
 												onPlay={handlePlay}
 												variant="row"
 												onToggleFavorite={handleToggleFavorite}
+												epgPrograms={getChannelPrograms(ch)}
+												windowStart={windowStart}
+												windowEnd={windowEnd}
 											/>
 										))}
 									</div>
@@ -480,8 +652,111 @@ export const ChannelList = () => {
 						</div>
 					)}
 				</div>
+			) : isLiveSearch ? (
+				/* Search results: channel name matches + EPG programme matches */
+				<div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3 pt-2">
+					{filtered.length > 0 && (
+						<>
+							<p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">
+								Channels
+							</p>
+							<div className="flex flex-col mb-3 relative">
+								{/* Background gridlines — mirrors the virtualizer path */}
+								<div
+									className="absolute inset-0 pointer-events-none z-0"
+									style={{
+										left: `${ROW_CARD_LEFT_WIDTH}px`,
+										right: `${RIGHT_BUTTONS_PX}px`,
+									}}
+								>
+									{headerGridMarks.map((t) => (
+										<div
+											key={t}
+											className={`absolute top-0 bottom-0 w-px ${
+												t % 3600 === 0 ? "bg-border/30" : "bg-border/12"
+											}`}
+											style={{
+												left: `${toPct(t, windowStart, windowTotal).toFixed(3)}%`,
+											}}
+										/>
+									))}
+									<div
+										className="absolute top-0 bottom-0 w-px bg-red-400/20"
+										style={{
+											left: `${toPct(nowSec, windowStart, windowTotal).toFixed(3)}%`,
+										}}
+									/>
+								</div>
+								{filtered.slice(0, 80).map((ch) => (
+									<ChannelCard
+										key={ch.id}
+										channel={ch}
+										onPlay={handlePlay}
+										variant="row"
+										onToggleFavorite={handleToggleFavorite}
+										epgPrograms={getChannelPrograms(ch)}
+										windowStart={windowStart}
+										windowEnd={windowEnd}
+									/>
+								))}
+								{filtered.length > 80 && (
+									<p className="text-[10px] text-muted-foreground/50 px-2 py-1">
+										+{filtered.length - 80} more — narrow your search
+									</p>
+								)}
+							</div>
+						</>
+					)}
+
+					{epgSearchResults.length > 0 && (
+						<>
+							<p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">
+								On Now / Upcoming
+							</p>
+							<div className="flex flex-col">
+								{epgSearchResults.map((result, i) => (
+									<button
+										key={`${result.channelId}-${i}`}
+										onClick={() => handleEpgResultPlay(result.channelId)}
+										className="group flex items-center gap-3 w-full px-2 py-2 rounded-lg hover:bg-accent transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									>
+										<div className="h-8 w-8 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+											{result.channelLogoUrl ? (
+												<img
+													src={result.channelLogoUrl}
+													alt=""
+													className="h-full w-full object-contain"
+													loading="lazy"
+												/>
+											) : (
+												<Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
+											)}
+										</div>
+										<div className="flex-1 min-w-0">
+											<p className="text-sm leading-tight truncate">
+												{result.title}
+											</p>
+											<p className="text-[11px] text-muted-foreground truncate mt-0.5">
+												{result.channelName}
+											</p>
+										</div>
+										<span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+											{formatEpgTime(result.startTime, nowSec)}
+										</span>
+									</button>
+								))}
+							</div>
+						</>
+					)}
+
+					{filtered.length === 0 && epgSearchResults.length === 0 && (
+						<p className="text-sm text-muted-foreground text-center py-12">
+							No results for "{debouncedSearch}"
+						</p>
+					)}
+				</div>
 			) : (
-				/* Virtual list for non-favorites tabs */
+				/* Virtualised list — live/movie/series tabs */
 				<div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
 					{filtered.length === 0 && showFavoritesOnly ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
@@ -498,12 +773,40 @@ export const ChannelList = () => {
 								position: "relative",
 							}}
 						>
+							{/* Background gridlines spanning full virtual height — only on Live tab */}
+							{activeTab === "live" && (
+								<div
+									className="absolute top-0 bottom-0 pointer-events-none z-0"
+									style={{
+										left: `${timelineLeft}px`,
+										right: `${RIGHT_BUTTONS_PX}px`,
+									}}
+								>
+									{headerGridMarks.map((t) => (
+										<div
+											key={t}
+											className={`absolute top-0 bottom-0 w-px ${
+												t % 3600 === 0 ? "bg-border/30" : "bg-border/12"
+											}`}
+											style={{
+												left: `${toPct(t, windowStart, windowTotal).toFixed(3)}%`,
+											}}
+										/>
+									))}
+									{/* Full-height "now" line */}
+									<div
+										className="absolute top-0 bottom-0 w-px bg-red-400/20"
+										style={{
+											left: `${toPct(nowSec, windowStart, windowTotal).toFixed(3)}%`,
+										}}
+									/>
+								</div>
+							)}
+
+							{/* Virtual rows */}
 							{virtualizer.getVirtualItems().map((virtualRow) => {
 								const startIdx = virtualRow.index * columnsPerRow;
-								const rowChannels = filtered.slice(
-									startIdx,
-									startIdx + columnsPerRow
-								);
+								const rowChannels = filtered.slice(startIdx, startIdx + columnsPerRow);
 								return (
 									<div
 										key={virtualRow.key}
@@ -542,6 +845,9 @@ export const ChannelList = () => {
 														onPlay={handlePlay}
 														variant="row"
 														onToggleFavorite={handleToggleFavorite}
+														epgPrograms={getChannelPrograms(ch)}
+														windowStart={windowStart}
+														windowEnd={windowEnd}
 													/>
 												))}
 											</div>

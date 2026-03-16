@@ -56,6 +56,16 @@ export interface EpgProgram {
 	category?: string;
 }
 
+export interface EpgSearchResult {
+	channelId: string;
+	title: string;
+	description?: string;
+	startTime: number;
+	endTime: number;
+	channelName: string;
+	channelLogoUrl?: string;
+}
+
 export interface OmdbData {
 	title: string;
 	year?: string;

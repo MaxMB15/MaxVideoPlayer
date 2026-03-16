@@ -43,6 +43,17 @@ pub struct StoredEpgProgram {
     pub fetched_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredEpgProgramWithChannel {
+    pub channel_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub channel_name: String,
+    pub channel_logo: Option<String>,
+}
+
 pub struct CacheStore {
     conn: Connection,
 }
@@ -299,6 +310,15 @@ impl CacheStore {
     }
 
     fn save_channels_inner(&self, provider_id: &str, channels: &[Channel]) -> Result<(), CacheError> {
+        // Preserve favorites: collect IDs that were favorited before the wipe.
+        let mut fav_stmt = self.conn.prepare(
+            "SELECT id FROM channels WHERE provider_id = ?1 AND is_favorite = 1",
+        )?;
+        let favorites: std::collections::HashSet<String> = fav_stmt
+            .query_map(params![provider_id], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
         self.conn.execute("DELETE FROM channels WHERE provider_id = ?1", params![provider_id])?;
 
         let mut stmt = self.conn.prepare(
@@ -309,6 +329,8 @@ impl CacheStore {
         for ch in channels {
             let sources_json = serde_json::to_string(&ch.sources)
                 .unwrap_or_else(|_| "[]".to_string());
+            // Restore is_favorite for channels that were favorited before the refresh.
+            let is_fav = favorites.contains(&ch.id) || ch.is_favorite;
             stmt.execute(params![
                 ch.id,
                 provider_id,
@@ -318,7 +340,7 @@ impl CacheStore {
                 ch.group_title,
                 ch.tvg_id,
                 ch.tvg_name,
-                ch.is_favorite as i32,
+                is_fav as i32,
                 &ch.content_type,
                 sources_json,
                 ch.series_title,
@@ -544,6 +566,73 @@ impl CacheStore {
                 category: row.get(5)?,
                 provider_id: row.get(6)?,
                 fetched_at: row.get(7)?,
+            })
+        })?;
+        rows.collect::<SqlResult<Vec<_>>>().map_err(CacheError::Db)
+    }
+
+    /// Fetch all EPG programmes across all channels within a time range.
+    /// Used to bulk-load the 3-hour window for the live channel list.
+    pub fn get_epg_all_channels(
+        &self,
+        range_start: i64,
+        range_end: i64,
+    ) -> Result<Vec<StoredEpgProgram>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, title, description, start_time, end_time, category, provider_id, fetched_at
+             FROM epg_programmes
+             WHERE start_time < ?2 AND end_time > ?1
+             ORDER BY channel_id ASC, start_time ASC",
+        )?;
+        let rows = stmt.query_map(params![range_start, range_end], |row| {
+            Ok(StoredEpgProgram {
+                channel_id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                start_time: row.get(3)?,
+                end_time: row.get(4)?,
+                category: row.get(5)?,
+                provider_id: row.get(6)?,
+                fetched_at: row.get(7)?,
+            })
+        })?;
+        rows.collect::<SqlResult<Vec<_>>>().map_err(CacheError::Db)
+    }
+
+    /// Search EPG programmes by title/description, joining with channels for display info.
+    /// Only returns current and future programmes (end_time > range_start).
+    pub fn search_epg_programmes(
+        &self,
+        query: &str,
+        range_start: i64,
+    ) -> Result<Vec<StoredEpgProgramWithChannel>, CacheError> {
+        let pattern = format!("%{query}%");
+        let mut stmt = self.conn.prepare(
+            "SELECT e.channel_id, e.title, e.description, e.start_time, e.end_time,
+                    COALESCE(c.name, e.channel_id) AS channel_name,
+                    c.logo_url AS channel_logo
+             FROM (
+                 SELECT channel_id, MIN(start_time) AS min_start
+                 FROM epg_programmes
+                 WHERE (LOWER(title) LIKE LOWER(?1) OR LOWER(description) LIKE LOWER(?1))
+                   AND end_time > ?2
+                 GROUP BY channel_id
+             ) best
+             JOIN epg_programmes e ON e.channel_id = best.channel_id
+                                   AND e.start_time = best.min_start
+             LEFT JOIN channels c ON c.tvg_id = e.channel_id
+             ORDER BY e.start_time ASC
+             LIMIT 50",
+        )?;
+        let rows = stmt.query_map(params![pattern, range_start], |row| {
+            Ok(StoredEpgProgramWithChannel {
+                channel_id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                start_time: row.get(3)?,
+                end_time: row.get(4)?,
+                channel_name: row.get(5)?,
+                channel_logo: row.get(6)?,
             })
         })?;
         rows.collect::<SqlResult<Vec<_>>>().map_err(CacheError::Db)

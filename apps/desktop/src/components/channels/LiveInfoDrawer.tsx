@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { X, Tv2, Loader2 } from "lucide-react";
 import type { Channel, EpgProgram } from "@/lib/types";
 import { getEpgProgrammes } from "@/lib/tauri";
+import { EpgTimelineBar, WINDOW_PAST, WINDOW_FUTURE } from "./EpgTimelineBar";
 
 interface LiveInfoDrawerProps {
 	channel: Channel;
@@ -24,6 +25,7 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 	const [programmes, setProgrammes] = useState<EpgProgram[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+	const [selectedProg, setSelectedProg] = useState<EpgProgram | null>(null);
 	const currentRowRef = useRef<HTMLLIElement | null>(null);
 
 	useEffect(() => {
@@ -31,18 +33,21 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 		return () => cancelAnimationFrame(id);
 	}, []);
 
-	// Fetch today's schedule
+	// Fetch schedule: 12 hours before now through 12 hours ahead
 	useEffect(() => {
 		let cancelled = false;
-		const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-		const todayEnd = todayStart + 86400;
+		const nowSec = Math.floor(Date.now() / 1000);
+		const rangeStart = nowSec - 12 * 3600;
+		const rangeEnd = nowSec + 12 * 3600;
 		const channelId = channel.tvgId ?? channel.id;
 
 		setLoading(true);
-		getEpgProgrammes(channelId, todayStart, todayEnd)
+		getEpgProgrammes(channelId, rangeStart, rangeEnd)
 			.then((data) => {
 				if (!cancelled) {
 					setProgrammes(data);
+					const current = data.find((p) => p.startTime <= nowSec && p.endTime > nowSec);
+					setSelectedProg(current ?? null);
 					setLoading(false);
 				}
 			})
@@ -78,12 +83,6 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 		setTimeout(onClose, 300);
 	}, [onClose]);
 
-	const currentProgramme = programmes.find((p) => p.startTime <= now && p.endTime > now);
-	const progress = currentProgramme
-		? (now - currentProgramme.startTime) /
-			(currentProgramme.endTime - currentProgramme.startTime)
-		: 0;
-
 	return (
 		<div className="fixed inset-0 z-50">
 			{/* Backdrop */}
@@ -107,7 +106,6 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 
 				{/* Header row: logo + name + close */}
 				<div className="flex items-center gap-3 px-5 pt-2 pb-4 shrink-0">
-					{/* Logo */}
 					<div className="w-10 h-10 rounded-lg bg-secondary overflow-hidden shrink-0 flex items-center justify-center">
 						{channel.logoUrl ? (
 							<img
@@ -121,7 +119,6 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 						)}
 					</div>
 
-					{/* Channel name + live badge */}
 					<div className="flex flex-col justify-center gap-0.5 flex-1 min-w-0">
 						<div className="flex items-center gap-1.5">
 							<span className="flex items-center gap-1 text-[10px] font-medium text-red-400">
@@ -134,7 +131,6 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 						</p>
 					</div>
 
-					{/* Close button */}
 					<button
 						onClick={handleClose}
 						aria-label="Close"
@@ -146,56 +142,36 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 
 				<div className="border-t border-border mx-5 shrink-0" />
 
-				{/* NOW PLAYING section */}
-				{!loading && currentProgramme && (
-					<div className="px-5 py-4 shrink-0">
-						<p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-2">
-							Now Playing
-						</p>
-
-						{/* Progress bar */}
-						<div className="flex items-center gap-2 mb-2">
-							<div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-								<div
-									className="h-full bg-primary rounded-full transition-all duration-1000"
-									style={{
-										width: `${Math.min(100, progress * 100).toFixed(1)}%`,
-									}}
-								/>
-							</div>
-							<span className="text-[11px] text-muted-foreground whitespace-nowrap shrink-0">
-								{formatTime(currentProgramme.startTime)} →{" "}
-								{formatTime(currentProgramme.endTime)}
-								&ensp;(
-								{formatDuration(
-									currentProgramme.startTime,
-									currentProgramme.endTime
-								)}
-								)
-							</span>
-						</div>
-
-						{/* Title + description */}
-						<p className="text-sm font-semibold leading-tight mb-1">
-							{currentProgramme.title}
-						</p>
-						{currentProgramme.description && (
-							<p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-								{currentProgramme.description}
-							</p>
-						)}
+				{/* 3-hour timeline */}
+				{loading ? (
+					<div className="flex items-center justify-center py-8 shrink-0">
+						<Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
 					</div>
-				)}
+				) : programmes.length > 0 ? (
+					<div className="px-5 pt-4 pb-1 shrink-0">
+						<p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-2.5">
+							On Air
+						</p>
+						<EpgTimelineBar
+							programmes={programmes}
+							now={now}
+							windowStart={now - WINDOW_PAST}
+							windowEnd={now + WINDOW_FUTURE}
+							height="h-16"
+							showLabels={true}
+							selected={selectedProg}
+							onSelect={setSelectedProg}
+						/>
+					</div>
+				) : null}
 
-				{!loading && currentProgramme && (
-					<div className="border-t border-border mx-5 shrink-0" />
-				)}
+				{programmes.length > 0 && <div className="border-t border-border mx-5 mt-3 shrink-0" />}
 
-				{/* TODAY'S SCHEDULE section */}
+				{/* Schedule list */}
 				<div className="flex flex-col flex-1 min-h-0">
 					<div className="px-5 pt-4 pb-2 shrink-0">
 						<p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
-							Today's Schedule
+							Schedule
 						</p>
 					</div>
 
@@ -218,60 +194,78 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 							{programmes.map((prog, idx) => {
 								const isCurrent = prog.startTime <= now && prog.endTime > now;
 								const isPast = prog.endTime <= now;
+								const isSelected =
+									selectedProg?.startTime === prog.startTime &&
+									selectedProg?.channelId === prog.channelId;
 
 								return (
 									<li
 										key={`${prog.channelId}-${prog.startTime}-${idx}`}
 										ref={isCurrent ? currentRowRef : null}
-										className={`flex items-center gap-3 py-2.5 px-3 rounded-lg mb-0.5 transition-colors ${
-											isCurrent ? "bg-primary/10" : "hover:bg-secondary/40"
-										}`}
 									>
-										{/* Left accent bar */}
-										<div
-											className={`w-0.5 h-8 rounded-full shrink-0 ${
-												isCurrent
-													? "bg-primary"
-													: isPast
-														? "bg-border"
-														: "bg-border/50"
-											}`}
-										/>
-
-										{/* Time */}
-										<span
-											className={`text-xs tabular-nums shrink-0 w-12 ${
-												isPast && !isCurrent
-													? "text-muted-foreground/60"
-													: "text-muted-foreground"
+										<button
+											onClick={() => setSelectedProg(prog)}
+											className={`w-full flex items-center gap-3 py-2.5 px-3 rounded-lg mb-0.5 transition-colors text-left ${
+												isSelected
+													? "bg-primary/15"
+													: isCurrent
+														? "bg-primary/10 hover:bg-primary/15"
+														: "hover:bg-secondary/40"
 											}`}
 										>
-											{formatTime(prog.startTime)}
-										</span>
+											{/* Left accent bar */}
+											<div
+												className={`w-0.5 h-8 rounded-full shrink-0 ${
+													isSelected
+														? "bg-primary"
+														: isCurrent
+															? "bg-primary/70"
+															: isPast
+																? "bg-border"
+																: "bg-border/50"
+												}`}
+											/>
 
-										{/* Title */}
-										<span
-											className={`flex-1 text-sm leading-tight ${
-												isCurrent
-													? "font-semibold text-foreground"
-													: isPast
-														? "text-muted-foreground/70"
-														: "text-foreground"
-											}`}
-										>
-											{prog.title}
-										</span>
+											{/* Time */}
+											<span
+												className={`text-xs tabular-nums shrink-0 w-12 ${
+													isPast && !isCurrent
+														? "text-muted-foreground/60"
+														: "text-muted-foreground"
+												}`}
+											>
+												{formatTime(prog.startTime)}
+											</span>
 
-										{/* Badge */}
-										{isCurrent ? (
-											<span className="text-[10px] font-semibold text-primary shrink-0">
-												▶ now
+											{/* Duration */}
+											<span className="text-[10px] text-muted-foreground/50 shrink-0 tabular-nums w-14">
+												{formatDuration(prog.startTime, prog.endTime)}
 											</span>
-										) : isPast ? (
-											<span className="text-[10px] text-muted-foreground/50 shrink-0">
-												✓ past
+
+											{/* Title */}
+											<span
+												className={`flex-1 text-sm leading-tight ${
+													isCurrent || isSelected
+														? "font-semibold text-foreground"
+														: isPast
+															? "text-muted-foreground/70"
+															: "text-foreground"
+												}`}
+											>
+												{prog.title}
 											</span>
-										) : null}
+
+											{/* Badge */}
+											{isCurrent ? (
+												<span className="text-[10px] font-semibold text-primary shrink-0">
+													▶ now
+												</span>
+											) : isPast ? (
+												<span className="text-[10px] text-muted-foreground/50 shrink-0">
+													✓
+												</span>
+											) : null}
+										</button>
 									</li>
 								);
 							})}

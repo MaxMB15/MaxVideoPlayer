@@ -4,6 +4,7 @@ import type {
 	Channel,
 	Provider,
 	EpgProgram,
+	EpgSearchResult,
 	OmdbData,
 	MdbListData,
 	WatchHistoryEntry,
@@ -79,6 +80,16 @@ export const getEpgProgrammes = (
 	rangeStart: number,
 	rangeEnd: number
 ): Promise<EpgProgram[]> => invoke("get_epg_programmes", { channelId, rangeStart, rangeEnd });
+
+export const getEpgForLiveChannels = (
+	rangeStart: number,
+	rangeEnd: number
+): Promise<EpgProgram[]> => invoke("get_epg_for_live_channels", { rangeStart, rangeEnd });
+
+export const searchEpgProgrammes = (
+	query: string,
+	rangeStart: number
+): Promise<EpgSearchResult[]> => invoke("search_epg_programmes", { query, rangeStart });
 
 export const setEpgUrl = (providerId: string, epgUrl: string | null): Promise<void> =>
 	invoke("set_epg_url", { providerId, epgUrl });

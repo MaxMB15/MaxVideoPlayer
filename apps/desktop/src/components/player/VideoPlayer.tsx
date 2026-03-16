@@ -61,6 +61,8 @@ export const PlayerView = () => {
 	const [subtitlePos, setSubtitlePos] = useState({ x: 50, y: 88 });
 	const [subtitleDelay, setSubtitleDelay] = useState(0);
 	const [subtitleEditMode, setSubtitleEditMode] = useState(false);
+	const [autoplay, setAutoplay] = useState(true);
+
 	// Remembers which language + rank-within-language the user last picked so the
 	// same subtitle can be auto-selected when navigating to the next episode.
 	const [subtitlePreference, setSubtitlePreference] = useState<{
@@ -70,7 +72,9 @@ export const PlayerView = () => {
 	// Refs used by the auto-load effect to avoid stale closures.
 	const subtitlePreferenceRef = useRef(subtitlePreference);
 	subtitlePreferenceRef.current = subtitlePreference;
-	const shouldAutoLoadSubtitleRef = useRef(false);
+	// Incremented each time an episode navigation should trigger subtitle auto-load.
+	// Using state (not a ref) so the effect dependency is tracked by React.
+	const [autoLoadTrigger, setAutoLoadTrigger] = useState(0);
 
 	const navState = location.state as {
 		url?: string;
@@ -238,17 +242,15 @@ export const PlayerView = () => {
 	const subtitleEpisodeRef = useRef(subtitleEpisode);
 	subtitleEpisodeRef.current = subtitleEpisode;
 
-	// Auto-load: when activeImdbId becomes available after a playEpisode call,
-	// apply the stored subtitle preference for the new episode.
+	// Auto-load: fires when playEpisode increments autoLoadTrigger, then waits for
+	// activeImdbId to resolve. Using a trigger counter avoids the cancellation bug
+	// where setEnrichedMeta(null) → activeImdbId → null mid-flight would kill the search.
 	useEffect(() => {
-		if (!shouldAutoLoadSubtitleRef.current) return;
-		// activeImdbId may still be null while the metadata fetch is in-flight;
-		// we'll re-run when it resolves.
-		if (!activeImdbId) return;
+		if (autoLoadTrigger === 0) return; // no episode navigation yet
+		if (!activeImdbId) return;         // OMDB still in-flight; re-run when it resolves
 		const pref = subtitlePreferenceRef.current;
 		if (!pref) return;
 
-		shouldAutoLoadSubtitleRef.current = false;
 		let cancelled = false;
 
 		searchSubtitles(activeImdbId, subtitleSeasonRef.current, subtitleEpisodeRef.current)
@@ -273,7 +275,7 @@ export const PlayerView = () => {
 			cancelled = true;
 		};
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [activeChannel?.id, activeImdbId]);
+	}, [autoLoadTrigger, activeImdbId]);
 
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
@@ -346,8 +348,8 @@ export const PlayerView = () => {
 			setSelectedSubtitleEntry(null);
 			setSubtitleEditMode(false);
 			setSubtitleDelay(0);
-			// Signal the auto-load effect to apply the subtitle preference for this episode.
-			shouldAutoLoadSubtitleRef.current = true;
+			// Increment trigger so the auto-load effect fires for this episode.
+			setAutoLoadTrigger((t) => t + 1);
 		},
 		[mpv.load]
 	);
@@ -373,18 +375,44 @@ export const PlayerView = () => {
 		};
 	}, []);
 
+	const autoplayRef = useRef(autoplay);
+	autoplayRef.current = autoplay;
+
+	// Track the last position+duration seen while actively playing.
+	// MPV resets position/duration to 0 when a video ends or a new one loads,
+	// so we can't rely on mpvStateRef at the moment isPlaying goes false.
+	const lastPlayingStateRef = useRef({ position: 0, duration: 0 });
+	useEffect(() => {
+		if (mpv.state.isPlaying && mpv.state.duration > 0) {
+			lastPlayingStateRef.current = {
+				position: mpv.state.position,
+				duration: mpv.state.duration,
+			};
+		}
+	}, [mpv.state.isPlaying, mpv.state.position, mpv.state.duration]);
+
 	const prevIsPlayingRef = useRef(false);
 	useEffect(() => {
 		const wasPlaying = prevIsPlayingRef.current;
 		prevIsPlayingRef.current = mpv.state.isPlaying;
 
-		if (!wasPlaying || mpv.state.isPlaying || mpv.state.isPaused) return;
-		if (activeChannelRef.current?.contentType !== "series") return;
-		const { duration, position } = mpvStateRef.current;
-		if (duration <= 0 || position < duration - 5) return;
-		const next = nextEpisodeRef.current;
-		if (next) playEpisode(next);
-	}, [mpv.state.isPlaying, mpv.state.isPaused, playEpisode]);
+		// Only react to the transition: was playing → now not playing.
+		if (!wasPlaying || mpv.state.isPlaying) return;
+
+		// Distinguish EOF from a user pause: check if position was near the end.
+		// With keep-open=yes, EOF lands in isPaused=true (last frame frozen) — we can't
+		// use isPaused=false as the EOF signal anymore, so we use position proximity instead.
+		const { position, duration } = lastPlayingStateRef.current;
+		if (duration <= 0 || position < duration - 5) return; // mid-video pause — do nothing
+
+		// EOF reached. With autoplay on and a next episode available, advance.
+		if (autoplayRef.current && activeChannelRef.current?.contentType === "series") {
+			const next = nextEpisodeRef.current;
+			if (next) playEpisode(next);
+		}
+		// Otherwise (autoplay off, or movie, or last episode): keep-open=yes already holds
+		// MPV on the last frame with isPaused=true — controls remain visible, no action needed.
+	}, [mpv.state.isPlaying, playEpisode]);
 
 	// --- Controls visibility ---
 	useEffect(() => {
@@ -545,6 +573,8 @@ export const PlayerView = () => {
 					onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
 					onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
 					onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
+					autoplay={autoplay}
+					onAutoplayChange={setAutoplay}
 					hasSubtitles={selectedSubtitleId !== null}
 					onSubtitles={
 						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined

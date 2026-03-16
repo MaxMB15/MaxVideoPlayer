@@ -1,77 +1,131 @@
+import { memo } from "react";
 import { Play, Tv2, Heart } from "lucide-react";
-import type { Channel } from "@/lib/types";
+import type { Channel, EpgProgram } from "@/lib/types";
+import { EpgTimelineBar } from "./EpgTimelineBar";
+
+/** Width (px) of the left channel-info column in RowCard — must match spacer in ChannelList header. */
+export const ROW_CARD_LEFT_WIDTH = 180;
 
 interface ChannelCardProps {
 	channel: Channel;
 	onPlay: (channel: Channel) => void;
 	variant?: "row" | "poster";
 	onToggleFavorite?: (channel: Channel) => void;
+	/** Programs in the EPG display window for this channel. */
+	epgPrograms?: EpgProgram[];
+	/** Dynamic window start (Unix seconds). Falls back to now − 1h. */
+	windowStart?: number;
+	/** Dynamic window end (Unix seconds). Falls back to now + 2h. */
+	windowEnd?: number;
 }
 
-const RowCard = ({
+const RowCard = memo(function RowCard({
 	channel,
 	onPlay,
 	onToggleFavorite,
+	epgPrograms,
+	windowStart,
+	windowEnd,
 }: {
 	channel: Channel;
 	onPlay: (ch: Channel) => void;
 	onToggleFavorite?: (ch: Channel) => void;
-}) => (
-	<button
-		onClick={() => onPlay(channel)}
-		className="group flex items-center gap-3 w-full px-2 py-2 rounded-lg hover:bg-accent transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-	>
-		<div className="h-8 w-8 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
-			{channel.logoUrl ? (
-				<img
-					src={channel.logoUrl}
-					alt=""
-					className="h-full w-full object-contain"
-					loading="lazy"
-				/>
-			) : (
-				<Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
-			)}
-		</div>
-		<div className="flex-1 min-w-0">
-			<p className="text-sm leading-tight truncate">{channel.name}</p>
-			{channel.groupTitle && (
-				<p className="text-[11px] text-muted-foreground truncate mt-0.5">
-					{channel.groupTitle}
-				</p>
-			)}
-		</div>
-		<span className="flex items-center gap-1 text-[10px] font-medium text-red-400 shrink-0">
-			<span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-			LIVE
-		</span>
-		{onToggleFavorite && (
+	epgPrograms?: EpgProgram[];
+	windowStart?: number;
+	windowEnd?: number;
+}) {
+	const now = Math.floor(Date.now() / 1000);
+
+	return (
+		/* Outer wrapper is a div (not button) so nested buttons and div[role=button] inside
+		   EpgTimelineBar are valid HTML and no nesting warnings occur. */
+		<div
+			role="button"
+			tabIndex={0}
+			onClick={() => onPlay(channel)}
+			onKeyDown={(e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					onPlay(channel);
+				}
+			}}
+			className="group flex items-center w-full rounded-lg hover:bg-accent/60 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+		>
+			{/* Left: channel info — fixed width (must match ROW_CARD_LEFT_WIDTH) */}
 			<div
-				role="button"
-				tabIndex={0}
-				onClick={(e) => {
-					e.stopPropagation();
-					onToggleFavorite(channel);
-				}}
-				onKeyDown={(e) => {
-					if (e.key === "Enter" || e.key === " ") {
-						e.preventDefault();
-						e.stopPropagation();
-						onToggleFavorite(channel);
-					}
-				}}
-				className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
-				aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
+				className="flex items-center gap-2 px-2 py-1.5 shrink-0 min-w-0"
+				style={{ width: `${ROW_CARD_LEFT_WIDTH}px` }}
 			>
-				<Heart
-					className={`h-4 w-4 transition-colors ${
-						channel.isFavorite ? "fill-current text-red-500" : "text-muted-foreground"
-					}`}
-				/>
+				<div className="relative h-6 w-6 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+					{channel.logoUrl ? (
+						<img
+							src={channel.logoUrl}
+							alt=""
+							className="h-full w-full object-contain"
+							loading="lazy"
+						/>
+					) : (
+						<Tv2 className="h-3 w-3 text-muted-foreground" />
+					)}
+				</div>
+
+				<div className="min-w-0 flex-1">
+					<p className="text-xs leading-tight truncate">{channel.name}</p>
+					{channel.groupTitle && (
+						<p className="text-[10px] text-muted-foreground/70 truncate mt-0.5">
+							{channel.groupTitle}
+						</p>
+					)}
+				</div>
 			</div>
-		)}
-	</button>
-);
+
+			{/* Middle: EPG timeline — flex-1, takes the bulk of row width */}
+			<div className="flex-1 min-w-0 py-1.5">
+				{epgPrograms && epgPrograms.length > 0 ? (
+					<EpgTimelineBar
+						programmes={epgPrograms}
+						now={now}
+						windowStart={windowStart}
+						windowEnd={windowEnd}
+						height="h-9"
+					/>
+				) : (
+					<div className="h-9 rounded-md border border-border/15 flex items-center justify-center bg-secondary/10">
+						<span className="text-[8px] text-muted-foreground/25 select-none">
+							no epg
+						</span>
+					</div>
+				)}
+			</div>
+
+			{/* Right: LIVE badge + favourite */}
+			<div className="flex items-center gap-1 px-2 shrink-0">
+				<span className="flex items-center gap-0.5 text-[9px] font-semibold text-red-400 whitespace-nowrap">
+					<span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
+					LIVE
+				</span>
+
+				{onToggleFavorite && (
+					<button
+						tabIndex={0}
+						onClick={(e) => {
+							e.stopPropagation();
+							onToggleFavorite(channel);
+						}}
+						className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
+					>
+						<Heart
+							className={`h-3 w-3 transition-colors ${
+								channel.isFavorite ? "fill-current text-red-500" : "text-muted-foreground"
+							}`}
+						/>
+					</button>
+				)}
+			</div>
+		</div>
+	);
+});
 
 const PosterCard = ({
 	channel,
@@ -149,14 +203,25 @@ const PosterCard = ({
 	);
 };
 
-export const ChannelCard = ({
+export const ChannelCard = memo(function ChannelCard({
 	channel,
 	onPlay,
 	variant = "row",
 	onToggleFavorite,
-}: ChannelCardProps) =>
-	variant === "poster" ? (
+	epgPrograms,
+	windowStart,
+	windowEnd,
+}: ChannelCardProps) {
+	return variant === "poster" ? (
 		<PosterCard channel={channel} onPlay={onPlay} onToggleFavorite={onToggleFavorite} />
 	) : (
-		<RowCard channel={channel} onPlay={onPlay} onToggleFavorite={onToggleFavorite} />
+		<RowCard
+			channel={channel}
+			onPlay={onPlay}
+			onToggleFavorite={onToggleFavorite}
+			epgPrograms={epgPrograms}
+			windowStart={windowStart}
+			windowEnd={windowEnd}
+		/>
 	);
+});

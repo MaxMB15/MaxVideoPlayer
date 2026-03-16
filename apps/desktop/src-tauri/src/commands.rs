@@ -433,6 +433,72 @@ pub async fn set_epg_url(
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpgSearchResultDto {
+    pub channel_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub channel_name: String,
+    pub channel_logo_url: Option<String>,
+}
+
+/// Fetch all EPG programmes across all channels in a time range.
+/// Returns a flat list; the frontend groups by channelId to build per-channel strips.
+#[command]
+pub async fn get_epg_for_live_channels(
+    state: State<'_, AppState>,
+    range_start: i64,
+    range_end: i64,
+) -> Result<Vec<EpgProgramDto>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let progs = cache
+        .get_epg_all_channels(range_start, range_end)
+        .map_err(|e| e.to_string())?;
+    Ok(progs
+        .into_iter()
+        .map(|p| EpgProgramDto {
+            channel_id: p.channel_id,
+            title: p.title,
+            description: p.description,
+            start_time: p.start_time,
+            end_time: p.end_time,
+            category: p.category,
+        })
+        .collect())
+}
+
+/// Search EPG programme titles/descriptions, joining channel info for display.
+/// Only returns current and future programmes. Limited to 50 results.
+#[command]
+pub async fn search_epg_programmes(
+    state: State<'_, AppState>,
+    query: String,
+    range_start: i64,
+) -> Result<Vec<EpgSearchResultDto>, String> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let progs = cache
+        .search_epg_programmes(&query, range_start)
+        .map_err(|e| e.to_string())?;
+    Ok(progs
+        .into_iter()
+        .map(|p| EpgSearchResultDto {
+            channel_id: p.channel_id,
+            title: p.title,
+            description: p.description,
+            start_time: p.start_time,
+            end_time: p.end_time,
+            channel_name: p.channel_name,
+            channel_logo_url: p.channel_logo,
+        })
+        .collect())
+}
+
 // --- OMDB Commands ---
 
 const OMDB_STORE_FILE: &str = "settings.json";

@@ -486,6 +486,9 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
+        // Keep the last frame visible at EOF instead of going idle.
+        // This lets the frontend detect EOF via position proximity and show controls.
+        ("keep-open", "yes"),
     ]
 }
 
@@ -498,6 +501,7 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
+        ("keep-open", "yes"),
         // vo=gpu is the default; do NOT add --no-osc so native controls are visible.
     ]
 }

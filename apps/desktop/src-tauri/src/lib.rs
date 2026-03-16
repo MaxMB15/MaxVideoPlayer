@@ -33,6 +33,8 @@ pub fn run() {
             commands::get_xtream_series_episodes,
             commands::refresh_epg,
             commands::get_epg_programmes,
+            commands::get_epg_for_live_channels,
+            commands::search_epg_programmes,
             commands::set_epg_url,
             commands::detect_epg_url,
             commands::get_omdb_api_key,

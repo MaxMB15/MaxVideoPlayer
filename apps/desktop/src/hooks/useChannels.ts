@@ -16,6 +16,7 @@ import {
 	removeProvider as removeProviderApi,
 	getAllChannels,
 	refreshProvider as refreshProviderApi,
+	refreshEpg as refreshEpgApi,
 	updateProvider as updateProviderApi,
 	toggleFavorite as toggleFavoriteApi,
 } from "@/lib/tauri";
@@ -61,6 +62,13 @@ export const loadProviderSettings = (id: string): ProviderSettings => {
 export const saveProviderSettings = (id: string, settings: ProviderSettings) => {
 	localStorage.setItem(`provider-settings-${id}`, JSON.stringify(settings));
 };
+
+// EPG last-refresh timestamp stored separately (providers have no epg_last_updated field)
+const epgLastRefreshKey = (id: string) => `epg-last-refresh-${id}`;
+const getEpgLastRefresh = (id: string): number =>
+	parseInt(localStorage.getItem(epgLastRefreshKey(id)) ?? "0", 10);
+const setEpgLastRefresh = (id: string) =>
+	localStorage.setItem(epgLastRefreshKey(id), String(Date.now()));
 
 // --- Context ---
 
@@ -253,19 +261,32 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		refreshChannels();
 	}, [refreshProviders, refreshChannels]);
 
-	// Auto-refresh on startup: if provider is older than its interval, refresh immediately.
+	// Auto-refresh on startup: if provider/EPG is older than its interval, refresh immediately.
 	// Runs once after the first non-empty providers load.
 	useEffect(() => {
 		if (providers.length === 0 || startupDone.current) return;
 		startupDone.current = true;
 		const now = Date.now();
 		for (const p of providers) {
-			const { autoRefresh, refreshIntervalHours } = loadProviderSettings(p.id);
-			if (!autoRefresh) continue;
-			const intervalMs = refreshIntervalHours * 60 * 60 * 1000;
-			const lastMs = p.lastUpdated ? new Date(p.lastUpdated).getTime() : 0;
-			if (now - lastMs >= intervalMs) {
-				refreshProvider(p.id).catch(console.error);
+			const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
+				loadProviderSettings(p.id);
+
+			if (autoRefresh) {
+				const intervalMs = refreshIntervalHours * 60 * 60 * 1000;
+				const lastMs = p.lastUpdated ? new Date(p.lastUpdated).getTime() : 0;
+				if (now - lastMs >= intervalMs) {
+					refreshProvider(p.id).catch(console.error);
+				}
+			}
+
+			if (epgAutoRefresh && p.epgUrl) {
+				const intervalMs = epgRefreshIntervalHours * 60 * 60 * 1000;
+				const lastMs = getEpgLastRefresh(p.id);
+				if (now - lastMs >= intervalMs) {
+					refreshEpgApi(p.id)
+						.then(() => setEpgLastRefresh(p.id))
+						.catch(console.error);
+				}
 			}
 		}
 	}, [providers, refreshProvider]);
@@ -275,10 +296,26 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		if (providers.length === 0) return;
 		const timers: ReturnType<typeof setInterval>[] = [];
 		for (const p of providers) {
-			const { autoRefresh, refreshIntervalHours } = loadProviderSettings(p.id);
-			if (!autoRefresh) continue;
-			const ms = refreshIntervalHours * 60 * 60 * 1000;
-			timers.push(setInterval(() => refreshProvider(p.id).catch(console.error), ms));
+			const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
+				loadProviderSettings(p.id);
+
+			if (autoRefresh) {
+				const ms = refreshIntervalHours * 60 * 60 * 1000;
+				timers.push(setInterval(() => refreshProvider(p.id).catch(console.error), ms));
+			}
+
+			if (epgAutoRefresh && p.epgUrl) {
+				const ms = epgRefreshIntervalHours * 60 * 60 * 1000;
+				timers.push(
+					setInterval(
+						() =>
+							refreshEpgApi(p.id)
+								.then(() => setEpgLastRefresh(p.id))
+								.catch(console.error),
+						ms
+					)
+				);
+			}
 		}
 		return () => timers.forEach(clearInterval);
 	}, [providers, refreshProvider]);

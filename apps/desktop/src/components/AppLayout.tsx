@@ -4,12 +4,11 @@ import { cn } from "@/lib/utils";
 import { useEffect } from "react";
 import { mpvSetVisible } from "@/lib/tauri";
 import { useFullscreen } from "@/lib/fullscreen-context";
-import { Tv, List, CalendarDays, FolderOpen, Settings as SettingsIcon } from "lucide-react";
+import { Tv, List, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 
 const navItems = [
 	{ to: "/", label: "Channels", icon: Tv },
 	{ to: "/player", label: "Player", icon: List },
-	{ to: "/guide", label: "Guide", icon: CalendarDays },
 	{ to: "/playlists", label: "Playlists", icon: FolderOpen },
 	{ to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
