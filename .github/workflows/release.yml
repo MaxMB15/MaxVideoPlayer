@@ -47,6 +47,16 @@ jobs:
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
 
+      - name: Check signing key
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "ERROR: TAURI_SIGNING_PRIVATE_KEY is empty or not set"
+          else
+            echo "OK: TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY})"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
