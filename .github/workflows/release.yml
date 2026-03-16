@@ -9,6 +9,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_HOME: /Users/runner/.cargo
   CARGO_INCREMENTAL: 0
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   release-macos:
@@ -47,25 +49,10 @@ jobs:
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
 
-      - name: Test signing key
-        run: |
-          echo "test" > /tmp/sign_test.txt
-          npx tauri signer sign \
-            -k "$TAURI_SIGNING_PRIVATE_KEY" \
-            -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-            /tmp/sign_test.txt
-          echo "Signing test passed"
-        working-directory: apps/desktop
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
