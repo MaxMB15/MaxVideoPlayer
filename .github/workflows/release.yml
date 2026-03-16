@@ -62,9 +62,14 @@ jobs:
           import base64, os, sys
 
           key = os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "")
+          print(f"[signing] Key length: {len(key)}")
+          print(f"[signing] Has actual newlines: {'yes' if chr(10) in key else 'no'}")
+          print(f"[signing] Has literal \\n: {'yes' if '\\\\n' in key else 'no'}")
+          print(f"[signing] Starts with 'untrusted': {'yes' if key.lstrip().startswith('untrusted') else 'no'}")
+
           if not key.strip():
-              print("No signing key set — skipping.")
-              sys.exit(0)
+              print("[signing] ERROR: no signing key set.")
+              sys.exit(1)
 
           # Normalize literal \n (two chars) to actual newlines
           key = key.replace("\\n", "\n")
@@ -72,7 +77,7 @@ jobs:
           if "untrusted comment:" in key:
               # Already raw minisign format
               final_key = key
-              print("Key is raw minisign format.")
+              print("[signing] Detected raw minisign format.")
           else:
               # Try base64 decode with validate=True so whitespace is rejected
               # rather than silently ignored (avoids false-positive decodes)
@@ -80,12 +85,12 @@ jobs:
                   decoded = base64.b64decode(key.strip(), validate=True).decode("utf-8")
                   if "untrusted comment:" in decoded:
                       final_key = decoded
-                      print("Key was base64-encoded — decoded for build.")
+                      print("[signing] Key was base64-encoded — decoded successfully.")
                   else:
-                      print("ERROR: key decoded but is not raw minisign format.")
+                      print("[signing] ERROR: decoded key is not raw minisign format.")
                       sys.exit(1)
               except Exception as e:
-                  print(f"ERROR: cannot decode key: {e}")
+                  print(f"[signing] ERROR: cannot decode key: {e}")
                   sys.exit(1)
 
           # Always write the normalized raw key to GITHUB_ENV so Tauri gets proper newlines
@@ -93,7 +98,7 @@ jobs:
               f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
               f.write(final_key.rstrip("\n") + "\n")
               f.write("__ENDKEY__\n")
-          print("Key written to GITHUB_ENV.")
+          print("[signing] Key written to GITHUB_ENV.")
           EOF
 
       - name: Build and publish release
