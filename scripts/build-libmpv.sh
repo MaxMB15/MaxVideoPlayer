@@ -29,9 +29,11 @@ case "$PLATFORM" in
 
     # Clone mpv source (shallow, latest)
     MPV_SRC="$LIBS_DIR/mpv-src"
+    # Pin to a stable release to avoid bleeding-edge dependency bumps (e.g. libplacebo >=7.360.1)
+    MPV_TAG="v0.40.0"
     if [[ ! -d "$MPV_SRC/.git" ]]; then
-      echo "    Cloning mpv source..."
-      git clone https://github.com/mpv-player/mpv.git --depth=1 "$MPV_SRC"
+      echo "    Cloning mpv source (${MPV_TAG})..."
+      git clone https://github.com/mpv-player/mpv.git --depth=1 --branch "$MPV_TAG" "$MPV_SRC"
     else
       echo "    mpv source already present, skipping clone."
     fi
@@ -45,7 +47,6 @@ case "$PLATFORM" in
       -Dlibmpv=true \
       -Dgl=enabled \
       -Dvulkan=disabled \
-      -Dlibplacebo=disabled \
       -Dcocoa=enabled
 
     echo "    Building libmpv dylib only (this takes a few minutes)..."
