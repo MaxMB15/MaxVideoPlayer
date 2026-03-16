@@ -49,6 +49,21 @@ jobs:
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
 
+      - name: Prepare signing key
+        run: |
+          # Tauri CLI expects the raw minisign format, not base64-encoded.
+          # Decode if needed so both secret formats work.
+          if echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d 2>/dev/null | grep -q "untrusted comment:"; then
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__"
+              echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d
+              echo "__ENDKEY__"
+            } >> "$GITHUB_ENV"
+            echo "Key was base64-encoded — decoded for build."
+          else
+            echo "Key is already in raw format."
+          fi
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
