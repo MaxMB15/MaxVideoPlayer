@@ -51,9 +51,13 @@ jobs:
 
       - name: Prepare signing key
         run: |
-          # Tauri CLI expects the raw minisign format, not base64-encoded.
-          # Use Python for reliable base64 detection and decoding (avoids macOS
-          # base64 -d edge cases with multiline input and partial valid sequences).
+          # Tauri CLI requires the raw minisign format (starting with "untrusted comment:").
+          # The secret may be stored as:
+          #   (a) base64-encoded raw key, or
+          #   (b) raw key with actual newlines, or
+          #   (c) raw key with escaped \n (two chars) instead of real newlines.
+          # We normalize to raw format and always write to GITHUB_ENV so the key
+          # is guaranteed to have proper newlines when Tauri reads it.
           python3 - << 'EOF'
           import base64, os, sys
 
@@ -62,18 +66,34 @@ jobs:
               print("No signing key set — skipping.")
               sys.exit(0)
 
-          try:
-              decoded = base64.b64decode(key.strip()).decode("utf-8")
-              if "untrusted comment:" in decoded:
-                  with open(os.environ["GITHUB_ENV"], "a") as f:
-                      f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
-                      f.write(decoded.rstrip("\n") + "\n")
-                      f.write("__ENDKEY__\n")
-                  print("Key was base64-encoded — decoded for build.")
-              else:
-                  print("Key decoded but is not raw minisign format — using as-is.")
-          except Exception:
-              print("Key is already in raw minisign format.")
+          # Normalize literal \n (two chars) to actual newlines
+          key = key.replace("\\n", "\n")
+
+          if "untrusted comment:" in key:
+              # Already raw minisign format
+              final_key = key
+              print("Key is raw minisign format.")
+          else:
+              # Try base64 decode with validate=True so whitespace is rejected
+              # rather than silently ignored (avoids false-positive decodes)
+              try:
+                  decoded = base64.b64decode(key.strip(), validate=True).decode("utf-8")
+                  if "untrusted comment:" in decoded:
+                      final_key = decoded
+                      print("Key was base64-encoded — decoded for build.")
+                  else:
+                      print("ERROR: key decoded but is not raw minisign format.")
+                      sys.exit(1)
+              except Exception as e:
+                  print(f"ERROR: cannot decode key: {e}")
+                  sys.exit(1)
+
+          # Always write the normalized raw key to GITHUB_ENV so Tauri gets proper newlines
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
+              f.write(final_key.rstrip("\n") + "\n")
+              f.write("__ENDKEY__\n")
+          print("Key written to GITHUB_ENV.")
           EOF
 
       - name: Build and publish release

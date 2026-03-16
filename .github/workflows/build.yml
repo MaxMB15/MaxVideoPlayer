@@ -47,7 +47,9 @@ jobs:
         run: npm run build:desktop
 
       - name: Build Tauri app (macOS)
-        run: bash -c 'cd apps/desktop && npx tauri build'
+        # Override createUpdaterArtifacts=false so Tauri doesn't require a signing key in CI.
+        # The updater artifact + signature is only needed in the release workflow.
+        run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
