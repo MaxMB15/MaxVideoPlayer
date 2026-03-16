@@ -44,7 +44,8 @@ case "$PLATFORM" in
       --wipe \
       -Dlibmpv=true \
       -Dgl=enabled \
-      -Dvulkan=auto \
+      -Dvulkan=disabled \
+      -Dlibplacebo=disabled \
       -Dcocoa=enabled
 
     echo "    Building libmpv dylib only (this takes a few minutes)..."
