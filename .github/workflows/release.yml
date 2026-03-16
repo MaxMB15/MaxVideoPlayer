@@ -62,10 +62,7 @@ jobs:
           import base64, os, sys
 
           key = os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "")
-          print(f"[signing] Key length: {len(key)}")
-          print(f"[signing] Has actual newlines: {'yes' if chr(10) in key else 'no'}")
-          print(f"[signing] Has literal \\n: {'yes' if '\\\\n' in key else 'no'}")
-          print(f"[signing] Starts with 'untrusted': {'yes' if key.lstrip().startswith('untrusted') else 'no'}")
+          print(f"[signing] Key length: {len(key)}, has newlines: {'yes' if chr(10) in key else 'no'}")
 
           if not key.strip():
               print("[signing] ERROR: no signing key set.")
@@ -74,26 +71,34 @@ jobs:
           # Normalize literal \n (two chars) to actual newlines
           key = key.replace("\\n", "\n")
 
-          if "untrusted comment:" in key:
-              # Already raw minisign format
-              final_key = key
-              print("[signing] Detected raw minisign format.")
-          else:
-              # Try base64 decode with validate=True so whitespace is rejected
-              # rather than silently ignored (avoids false-positive decodes)
+          def try_b64(s):
               try:
-                  decoded = base64.b64decode(key.strip(), validate=True).decode("utf-8")
+                  return base64.b64decode(s.strip(), validate=True).decode("utf-8")
+              except Exception:
+                  return None
+
+          if "untrusted comment:" in key:
+              final_key = key
+              print("[signing] Raw minisign key detected.")
+          else:
+              # Try up to 2 levels of base64 decoding to handle both
+              # single-encoded and accidentally double-encoded secrets.
+              current = key
+              final_key = None
+              for depth in range(1, 3):
+                  decoded = try_b64(current)
+                  if decoded is None:
+                      print(f"[signing] ERROR: base64 decode failed at depth {depth}.")
+                      sys.exit(1)
                   if "untrusted comment:" in decoded:
                       final_key = decoded
-                      print("[signing] Key was base64-encoded — decoded successfully.")
-                  else:
-                      print("[signing] ERROR: decoded key is not raw minisign format.")
-                      sys.exit(1)
-              except Exception as e:
-                  print(f"[signing] ERROR: cannot decode key: {e}")
+                      print(f"[signing] Key decoded at depth {depth}.")
+                      break
+                  current = decoded
+              if final_key is None:
+                  print("[signing] ERROR: key is not a valid minisign private key.")
                   sys.exit(1)
 
-          # Always write the normalized raw key to GITHUB_ENV so Tauri gets proper newlines
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
               f.write(final_key.rstrip("\n") + "\n")
