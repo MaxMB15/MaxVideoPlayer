@@ -32,6 +32,14 @@
 			"csp": null
 		}
 	},
+	"plugins": {
+		"updater": {
+			"pubkey": "REPLACE_WITH_OUTPUT_OF_npx_tauri_signer_generate",
+			"endpoints": [
+				"https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/latest.json"
+			]
+		}
+	},
 	"bundle": {
 		"active": true,
 		"targets": "all",

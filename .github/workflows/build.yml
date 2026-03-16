@@ -53,8 +53,9 @@ jobs:
         with:
           name: MaxVideoPlayer-macOS
           path: |
-            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app
+          if-no-files-found: error
 
   # ── Android / Fire Stick — not yet implemented ─────────────────────────
   build-android:

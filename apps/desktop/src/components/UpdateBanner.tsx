@@ -1,0 +1,59 @@
+import { Download, X, RefreshCw } from "lucide-react";
+import type { UpdateState } from "@/hooks/useUpdateChecker";
+
+interface UpdateBannerProps {
+	state: UpdateState;
+}
+
+export function UpdateBanner({ state }: UpdateBannerProps) {
+	const { update, installing, progress, dismiss, install } = state;
+	if (!update) return null;
+
+	return (
+		<div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 shadow-2xl max-w-sm">
+			<div className="flex-1 min-w-0">
+				<p className="text-sm font-semibold leading-tight">
+					Update available — v{update.version}
+				</p>
+				{installing ? (
+					<p className="text-xs text-muted-foreground mt-0.5">
+						{progress !== null ? `Downloading… ${progress}%` : "Installing…"}
+					</p>
+				) : (
+					<p className="text-xs text-muted-foreground mt-0.5 truncate">
+						{update.body ?? "A new version is ready to install."}
+					</p>
+				)}
+				{installing && progress !== null && (
+					<div className="mt-1.5 h-1 w-full rounded-full bg-secondary overflow-hidden">
+						<div
+							className="h-full bg-primary transition-all duration-200"
+							style={{ width: `${progress}%` }}
+						/>
+					</div>
+				)}
+			</div>
+
+			{installing ? (
+				<RefreshCw className="h-4 w-4 text-muted-foreground animate-spin shrink-0" />
+			) : (
+				<>
+					<button
+						onClick={install}
+						className="flex items-center gap-1.5 text-xs font-semibold bg-primary text-primary-foreground px-3 py-1.5 rounded-lg hover:bg-primary/90 transition-colors shrink-0"
+					>
+						<Download className="h-3 w-3" />
+						Install
+					</button>
+					<button
+						onClick={dismiss}
+						aria-label="Dismiss update"
+						className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+					>
+						<X className="h-4 w-4" />
+					</button>
+				</>
+			)}
+		</div>
+	);
+}

@@ -1,5 +1,8 @@
 # MaxVideoPlayer
 
+[![Build & Bundle](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/MaxMB15/MaxVideoPlayer/build.yml?branch=main&label=tests&job=test)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/MaxMB15/MaxVideoPlayer?include_prereleases&label=release)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
 A cross-platform IPTV player built with **Tauri v2**, **React**, and **libmpv**. The Rust core (`mvp-core`) handles M3U/Xtream/EPG parsing and SQLite caching across all targets. A custom `tauri-plugin-mpv` embeds libmpv directly into the native window using `NSOpenGLView` on macOS, giving hardware-accelerated playback for virtually any IPTV protocol (HLS, RTMP, RTSP, TS, etc.).
@@ -79,6 +82,31 @@ cd apps/desktop && cargo tauri build
 ```
 
 `bundle-libmpv.sh` runs automatically as `beforeBundleCommand` and uses `dylibbundler` to embed libmpv and its dependencies into the `.app`.
+
+## Auto-Updates
+
+MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/updater) to check for new releases on startup. When an update is found, a dismissible banner appears with a one-click install.
+
+### Setting up signing (required for production)
+
+1. Generate a signing keypair:
+   ```bash
+   cd apps/desktop && npx tauri signer generate -w ~/.tauri/maxvideoplayer.key
+   ```
+2. Copy the **public key** output into `apps/desktop/src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
+3. Add the **private key** and optional password as GitHub repository secrets:
+   - `TAURI_SIGNING_PRIVATE_KEY` — contents of `~/.tauri/maxvideoplayer.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — password (leave empty if none)
+
+### Releasing a new version
+
+```bash
+# Bump the version in tauri.conf.json and Cargo.toml, then:
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The `release.yml` workflow runs automatically, builds a signed `.dmg`, creates a draft GitHub Release, and uploads `latest.json` — which the updater endpoint points to.
 
 ## Features
 

@@ -16,6 +16,8 @@ tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-os = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 mvp-core = { path = "../../../crates/core" }
 tauri-plugin-mpv = { path = "../../../crates/tauri-plugin-mpv" }
 chrono = { version = "0.4", features = ["serde"] }
