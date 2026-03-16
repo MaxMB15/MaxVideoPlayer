@@ -106,6 +106,13 @@ jobs:
           print("[signing] Key written to GITHUB_ENV.")
           EOF
 
+      - name: Wake display for DMG bundling
+        # bundle_dmg.sh uses osascript/Finder for DMG window styling.
+        # On CI the display may be idle; wake it so Finder is responsive.
+        run: |
+          caffeinate -u -t 1
+          sleep 2
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -120,3 +127,4 @@ jobs:
           prerelease: false
           updaterJsonPath: latest.json
           updaterJsonKeepUniversal: false
+          args: --verbose
