@@ -21,8 +21,11 @@ export function useUpdateChecker(): UpdateState {
 		// Check for updates on mount, silently ignore errors (offline, etc.)
 		setChecking(true);
 		check()
-			.then((result) => setUpdate(result ?? null))
-			.catch(() => {})
+			.then((result) => {
+				console.log("[updater] result:", result);
+				setUpdate(result ?? null);
+			})
+			.catch((err) => console.warn("[updater] error:", err))
 			.finally(() => setChecking(false));
 	}, []);
 
