@@ -125,25 +125,22 @@ jobs:
           tar czf MaxVideoPlayer.app.tar.gz MaxVideoPlayer.app
           cd -
 
-          # tauri signer sign cannot parse raw minisign keys from the env var
-          # (it tries base64 decode and fails). Write the key to a temp file
-          # and pass it with -k so Tauri reads it as a raw file instead.
-          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/skey.key
-          chmod 600 /tmp/skey.key
+          # tauri signer sign -k always base64-decodes its argument (no raw-format
+          # detection). Re-encode the raw key as base64 so Tauri can decode it.
+          B64_KEY=$(python3 -c "import base64,os; print(base64.b64encode(os.environ['TAURI_SIGNING_PRIVATE_KEY'].encode()).decode())")
           if [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
             cd apps/desktop && npx tauri signer sign \
-              -k /tmp/skey.key \
+              -k "$B64_KEY" \
               -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
               "../../$UPDATER"
             cd -
           else
             cd apps/desktop && npx tauri signer sign \
-              -k /tmp/skey.key \
+              -k "$B64_KEY" \
               --no-password \
               "../../$UPDATER"
             cd -
           fi
-          rm -f /tmp/skey.key
 
           # Build latest.json for the auto-updater endpoint
           SIG=$(cat "${UPDATER}.sig")
