@@ -49,64 +49,17 @@ jobs:
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
 
-      - name: Build Tauri app
-        run: npm run tauri -- build
-        working-directory: apps/desktop
-
-      - name: Sign updater bundle
-        run: |
-          npx tauri signer sign \
-            -k "$TAURI_SIGNING_PRIVATE_KEY" \
-            -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-            ../../target/release/bundle/macos/MaxVideoPlayer.app.tar.gz
-          echo "Signed: $(ls ../../target/release/bundle/macos/*.sig)"
-        working-directory: apps/desktop
-
-      - name: Generate latest.json and publish release
-        run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"
-
-          python3 - <<PYEOF
-import json, datetime
-
-version = "$VERSION"
-tag = "$TAG"
-
-sig = open("target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig").read()
-
-data = {
-  "version": version,
-  "notes": "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details.",
-  "pub_date": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": sig,
-      "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/{tag}/MaxVideoPlayer_aarch64.app.tar.gz"
-    }
-  }
-}
-
-with open("latest.json", "w") as f:
-    json.dump(data, f, indent=2)
-
-print("Generated latest.json")
-print(json.dumps(data, indent=2))
-PYEOF
-
-          # Rename artifacts to include arch suffix (matches download URL above)
-          cp target/release/bundle/macos/MaxVideoPlayer.app.tar.gz \
-             target/release/bundle/macos/MaxVideoPlayer_aarch64.app.tar.gz
-          cp target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig \
-             target/release/bundle/macos/MaxVideoPlayer_aarch64.app.tar.gz.sig
-
-          gh release create "$TAG" \
-            --title "MaxVideoPlayer $TAG" \
-            --notes "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details." \
-            --draft \
-            "target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg" \
-            "target/release/bundle/macos/MaxVideoPlayer_aarch64.app.tar.gz" \
-            "target/release/bundle/macos/MaxVideoPlayer_aarch64.app.tar.gz.sig" \
-            "latest.json"
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "MaxVideoPlayer ${{ github.ref_name }}"
+          releaseBody: |
+            See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details.
+          releaseDraft: true
+          prerelease: false
+          updaterJsonPath: latest.json
+          updaterJsonKeepUniversal: false
