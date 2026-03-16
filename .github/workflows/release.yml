@@ -52,17 +52,29 @@ jobs:
       - name: Prepare signing key
         run: |
           # Tauri CLI expects the raw minisign format, not base64-encoded.
-          # Decode if needed so both secret formats work.
-          if echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d 2>/dev/null | grep -q "untrusted comment:"; then
-            {
-              echo "TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__"
-              echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d
-              echo "__ENDKEY__"
-            } >> "$GITHUB_ENV"
-            echo "Key was base64-encoded — decoded for build."
-          else
-            echo "Key is already in raw format."
-          fi
+          # Use Python for reliable base64 detection and decoding (avoids macOS
+          # base64 -d edge cases with multiline input and partial valid sequences).
+          python3 - << 'EOF'
+          import base64, os, sys
+
+          key = os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "")
+          if not key.strip():
+              print("No signing key set — skipping.")
+              sys.exit(0)
+
+          try:
+              decoded = base64.b64decode(key.strip()).decode("utf-8")
+              if "untrusted comment:" in decoded:
+                  with open(os.environ["GITHUB_ENV"], "a") as f:
+                      f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
+                      f.write(decoded.rstrip("\n") + "\n")
+                      f.write("__ENDKEY__\n")
+                  print("Key was base64-encoded — decoded for build.")
+              else:
+                  print("Key decoded but is not raw minisign format — using as-is.")
+          except Exception:
+              print("Key is already in raw minisign format.")
+          EOF
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0

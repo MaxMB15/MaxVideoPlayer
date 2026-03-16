@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TAURI_CONF="$REPO_ROOT/apps/desktop/src-tauri/tauri.conf.json"
 CARGO_TOML="$REPO_ROOT/apps/desktop/src-tauri/Cargo.toml"
+SETTINGS_TSX="$REPO_ROOT/apps/desktop/src/components/settings/Settings.tsx"
 
 # ── Read current version from tauri.conf.json ────────────────────────────────
 CURRENT=$(python3 -c "import json,sys; print(json.load(open('$TAURI_CONF'))['version'])")
@@ -84,9 +85,16 @@ with open(path, "w") as f:
 print("  Updated Cargo.toml")
 PYEOF
 
+# ── Update Settings.tsx version string ───────────────────────────────────────
+sed -i.bak \
+  "s/MaxVideoPlayer v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/MaxVideoPlayer v$NEW/" \
+  "$SETTINGS_TSX"
+rm -f "${SETTINGS_TSX}.bak"
+echo "  Updated Settings.tsx"
+
 # ── Commit ───────────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"
-git add "$TAURI_CONF" "$CARGO_TOML"
+git add "$TAURI_CONF" "$CARGO_TOML" "$SETTINGS_TSX"
 git commit -m "chore: bump version to $NEW"
 echo "  Committed version bump"
 

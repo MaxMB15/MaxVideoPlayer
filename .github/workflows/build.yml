@@ -48,8 +48,6 @@ jobs:
 
       - name: Build Tauri app (macOS)
         run: bash -c 'cd apps/desktop && npx tauri build'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4

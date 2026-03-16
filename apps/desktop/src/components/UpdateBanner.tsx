@@ -10,7 +10,7 @@ export function UpdateBanner({ state }: UpdateBannerProps) {
 	if (!update) return null;
 
 	return (
-		<div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 shadow-2xl max-w-sm">
+		<div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border border-l-4 border-l-primary rounded-xl px-4 py-3 shadow-2xl max-w-sm">
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-semibold leading-tight">
 					Update available — v{update.version}
