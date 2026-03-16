@@ -38,6 +38,20 @@ case "$PLATFORM" in
       echo "    mpv source already present, skipping clone."
     fi
 
+    # Patch: mpv 0.40.0 uses FF_PROFILE_* macros removed in ffmpeg 8.x.
+    # Replace with the AV_PROFILE_* equivalents (available since ffmpeg 5.0).
+    DEMUX_MKV="$MPV_SRC/demux/demux_mkv.c"
+    if grep -q 'FF_PROFILE_ARIB' "$DEMUX_MKV" 2>/dev/null; then
+      echo "    Patching demux_mkv.c: FF_PROFILE_* -> AV_PROFILE_* ..."
+      # macOS sed requires an explicit backup extension with -i; use '' for in-place
+      sed -i.bak \
+        -e 's/FF_PROFILE_ARIB_PROFILE_A/AV_PROFILE_ARIB_PROFILE_A/g' \
+        -e 's/FF_PROFILE_ARIB_PROFILE_C/AV_PROFILE_ARIB_PROFILE_C/g' \
+        -e 's/FF_PROFILE_UNKNOWN/AV_PROFILE_UNKNOWN/g' \
+        "$DEMUX_MKV"
+      rm -f "${DEMUX_MKV}.bak"
+    fi
+
     # Build
     BUILD_DIR="$MPV_SRC/build-macos"
     echo "    Running meson setup..."
