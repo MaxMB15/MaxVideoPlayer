@@ -53,6 +53,16 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for sig files
+        if: always()
+        run: |
+          echo "=== .sig files ==="
+          find target/release/bundle -name "*.sig" 2>/dev/null || echo "none"
+          echo "=== latest.json ==="
+          find target/release/bundle -name "latest.json" 2>/dev/null || echo "none"
+          echo "=== all bundle files ==="
+          find target/release/bundle -maxdepth 3 -type f 2>/dev/null
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
