@@ -50,7 +50,9 @@ Homebrew's `mpv` formula is Vulkan-only. The embedded renderer requires OpenGL, 
 
 ```bash
 # Install build dependencies
-brew install meson ninja pkg-config ffmpeg libass dylibbundler
+# Note: ffmpeg@7 required — mpv 0.40.0 uses APIs removed in ffmpeg 8.x
+brew install meson ninja pkg-config ffmpeg@7 libass dylibbundler
+export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH"
 
 # Build libmpv from source (~3 min first run)
 ./scripts/build-libmpv.sh macos
