@@ -1,0 +1,53 @@
+import { X } from "lucide-react";
+import bmcQr from "@/assets/bmc-qr.png";
+
+interface DonationPopupProps {
+	onDismiss: () => void;
+}
+
+export function DonationPopup({ onDismiss }: DonationPopupProps) {
+	return (
+		<div className="fixed bottom-4 right-4 z-50 flex flex-col gap-3 bg-card border border-border border-l-4 border-l-primary rounded-xl px-4 py-3 shadow-2xl w-60">
+			<div className="flex items-start justify-between gap-2">
+				<p className="text-sm font-semibold leading-tight">Enjoying MaxVideoPlayer?</p>
+				<button
+					onClick={onDismiss}
+					aria-label="Dismiss donation prompt"
+					className="text-muted-foreground hover:text-foreground transition-colors shrink-0 mt-0.5"
+				>
+					<X className="h-4 w-4" />
+				</button>
+			</div>
+
+			<a
+				href="https://buymeacoffee.com/MaxMB15"
+				target="_blank"
+				rel="noreferrer"
+				className="block rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+				aria-label="Donate via Buy Me a Coffee (QR code)"
+			>
+				<img
+					src={bmcQr}
+					alt="Scan to donate"
+					className="w-full h-auto"
+				/>
+			</a>
+
+			<a
+				href="https://buymeacoffee.com/MaxMB15"
+				target="_blank"
+				rel="noreferrer"
+				className="text-center text-xs font-semibold bg-[#5F7FFF] text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
+			>
+				Support the project
+			</a>
+
+			<p className="text-[10px] text-muted-foreground text-center">
+				Free &amp; open source forever ·{" "}
+				<button onClick={onDismiss} className="underline hover:text-foreground">
+					dismiss
+				</button>
+			</p>
+		</div>
+	);
+}
