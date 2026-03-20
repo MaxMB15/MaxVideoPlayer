@@ -303,6 +303,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 			}
 		};
 
+		tick(); // fire immediately on mount
 		const id = setInterval(tick, 60_000);
 		return () => clearInterval(id);
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps — intentionally stable
