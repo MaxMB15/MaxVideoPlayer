@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import bmcQr from "@/assets/bmc-qr.png";
+import { openUrl } from "@/lib/openUrl";
 
 interface DonationPopupProps {
 	onDismiss: () => void;
@@ -19,11 +20,10 @@ export function DonationPopup({ onDismiss }: DonationPopupProps) {
 				</button>
 			</div>
 
-			<a
-				href="https://buymeacoffee.com/MaxMB15"
-				target="_blank"
-				rel="noreferrer"
-				className="block rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+			<button
+				type="button"
+				onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+				className="rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
 				aria-label="Donate via Buy Me a Coffee (QR code)"
 			>
 				<img
@@ -31,16 +31,15 @@ export function DonationPopup({ onDismiss }: DonationPopupProps) {
 					alt="Scan to donate"
 					className="w-full h-auto"
 				/>
-			</a>
+			</button>
 
-			<a
-				href="https://buymeacoffee.com/MaxMB15"
-				target="_blank"
-				rel="noreferrer"
+			<button
+				type="button"
+				onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
 				className="text-center text-xs font-semibold bg-[#5F7FFF] text-white px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
 			>
 				Support the project
-			</a>
+			</button>
 
 			<p className="text-[10px] text-muted-foreground text-center">
 				Free &amp; open source forever ·{" "}

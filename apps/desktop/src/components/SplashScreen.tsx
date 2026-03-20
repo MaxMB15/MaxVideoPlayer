@@ -1,8 +1,11 @@
-import { Download, RefreshCw } from "lucide-react";
+import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useState } from "react";
+import { openUrl } from "@/lib/openUrl";
+
+const BMC_URL = "https://buymeacoffee.com/MaxMB15";
 
 interface SplashScreenProps {
 	splash: SplashScreenState;
@@ -64,114 +67,117 @@ function LeftPanel({ steps, allDone, progress, update, hasProviders, onDismiss }
 	};
 
 	return (
-		<div className="flex-1 flex flex-col items-center justify-center gap-6 px-10 border-r border-border">
-			{/* Logo */}
-			<div className="flex items-center gap-3 self-start">
-				<div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shrink-0">
-					<svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-						<polygon points="5,3 19,12 5,21" />
-					</svg>
+		<div className="flex-1 flex flex-col items-center justify-center gap-10 px-16 border-r border-border">
+			{/* Logo + branding */}
+			<div className="flex flex-col items-center gap-4 text-center">
+				<div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground shadow-lg">
+					<Play className="w-7 h-7 fill-current" />
 				</div>
 				<div>
-					<p className="text-base font-bold leading-tight">MaxVideoPlayer</p>
-					<p className="text-xs text-muted-foreground">Open Source IPTV Player</p>
+					<h1 className="text-2xl font-bold tracking-tight">MaxVideoPlayer</h1>
+					<p className="text-sm text-muted-foreground mt-0.5">Open Source IPTV Player</p>
 				</div>
 			</div>
 
-			{/* Welcome text (no providers) or progress (has providers) */}
-			{!hasProviders ? (
-				<div className="self-start space-y-1">
-					<p className="text-sm font-semibold">Welcome to MaxVideoPlayer</p>
-					<p className="text-xs text-muted-foreground">
-						Add a playlist in the Playlists tab to get started.
-					</p>
-				</div>
-			) : (
-				<>
-					{/* Progress bar */}
-					<div className="w-full">
-						<div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
-							<div
-								className="h-full bg-primary rounded-full transition-all duration-300"
-								style={{ width: `${Math.round(progress * 100)}%` }}
-							/>
-						</div>
+			{/* Content area */}
+			<div className="w-full max-w-sm flex flex-col gap-6">
+				{!hasProviders ? (
+					<div className="text-center space-y-2">
+						<p className="text-base font-semibold">Welcome to MaxVideoPlayer</p>
+						<p className="text-sm text-muted-foreground leading-relaxed">
+							Add a playlist in the Playlists tab to get started.
+						</p>
 					</div>
+				) : (
+					<>
+						{/* Progress bar */}
+						<div className="space-y-3">
+							<div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+								<div
+									className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+									style={{ width: `${Math.round(progress * 100)}%` }}
+								/>
+							</div>
+						</div>
 
-					{/* Step list */}
-					<div className="w-full space-y-2">
+						{/* Step list */}
+						<div className="space-y-3">
+							{steps.map((step) => (
+								<StepRow key={step.id} step={step} />
+							))}
+						</div>
+					</>
+				)}
+
+				{/* No-providers: show update step */}
+				{!hasProviders && steps.length > 0 && (
+					<div className="space-y-3">
 						{steps.map((step) => (
 							<StepRow key={step.id} step={step} />
 						))}
 					</div>
-				</>
-			)}
+				)}
 
-			{/* No-providers: single update step */}
-			{!hasProviders && steps.length > 0 && (
-				<div className="w-full space-y-2">
-					{steps.map((step) => (
-						<StepRow key={step.id} step={step} />
-					))}
-				</div>
-			)}
+				{/* Update card */}
+				{allDone && update && (
+					<div className="rounded-xl bg-primary/10 border border-primary/25 px-5 py-4 space-y-1.5">
+						<p className="text-sm font-semibold text-primary">
+							Update available — v{update.version}
+						</p>
+						<p className="text-xs text-muted-foreground leading-relaxed">
+							{update.body ?? "A new version is ready to install."}
+						</p>
+						{installing && installProgress !== null && (
+							<div className="mt-2 h-1 w-full rounded-full bg-secondary overflow-hidden">
+								<div
+									className="h-full bg-primary transition-all duration-200"
+									style={{ width: `${installProgress}%` }}
+								/>
+							</div>
+						)}
+					</div>
+				)}
 
-			{/* Update card */}
-			{allDone && update && (
-				<div className="w-full rounded-xl bg-primary/10 border border-primary/25 px-4 py-3 space-y-1">
-					<p className="text-sm font-semibold text-primary">
-						Update available — v{update.version}
-					</p>
-					<p className="text-xs text-muted-foreground">
-						{update.body ?? "A new version is ready to install."}
-					</p>
-					{installing && installProgress !== null && (
-						<div className="mt-1 h-1 w-full rounded-full bg-secondary overflow-hidden">
-							<div
-								className="h-full bg-primary transition-all duration-200"
-								style={{ width: `${installProgress}%` }}
-							/>
-						</div>
+				{/* Action row */}
+				<div className="flex items-center justify-center gap-3 pt-2">
+					{allDone && update ? (
+						<>
+							<button
+								type="button"
+								onClick={handleInstall}
+								disabled={installing}
+								className="flex items-center gap-2 text-sm font-semibold bg-primary text-primary-foreground px-5 py-2.5 rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60"
+							>
+								{installing ? (
+									<RefreshCw className="h-4 w-4 animate-spin" />
+								) : (
+									<Download className="h-4 w-4" />
+								)}
+								{installing
+									? installProgress !== null
+										? `Downloading… ${installProgress}%`
+										: "Installing…"
+									: "Install Update"}
+							</button>
+							<button
+								type="button"
+								onClick={onDismiss}
+								className="text-sm text-muted-foreground underline hover:text-foreground transition-colors"
+							>
+								Skip for now →
+							</button>
+						</>
+					) : (
+						<button
+							type="button"
+							onClick={onDismiss}
+							disabled={!allDone}
+							className="text-sm font-semibold bg-primary text-primary-foreground px-6 py-2.5 rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+							Get Started →
+						</button>
 					)}
 				</div>
-			)}
-
-			{/* Action row */}
-			<div className="flex items-center gap-3 self-start">
-				{allDone && update ? (
-					<>
-						<button
-							onClick={handleInstall}
-							disabled={installing}
-							className="flex items-center gap-1.5 text-sm font-semibold bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60"
-						>
-							{installing ? (
-								<RefreshCw className="h-4 w-4 animate-spin" />
-							) : (
-								<Download className="h-4 w-4" />
-							)}
-							{installing
-								? installProgress !== null
-									? `Downloading… ${installProgress}%`
-									: "Installing…"
-								: "Install Update"}
-						</button>
-						<button
-							onClick={onDismiss}
-							className="text-sm text-muted-foreground underline hover:text-foreground transition-colors"
-						>
-							Skip for now →
-						</button>
-					</>
-				) : (
-					<button
-						onClick={onDismiss}
-						disabled={!allDone}
-						className="text-sm font-semibold bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-					>
-						Get Started →
-					</button>
-				)}
 			</div>
 		</div>
 	);
@@ -181,7 +187,7 @@ function LeftPanel({ steps, allDone, progress, update, hasProviders, onDismiss }
 
 function StepRow({ step }: { step: SplashStep }) {
 	return (
-		<div className="flex items-center gap-2.5 text-xs">
+		<div className="flex items-center gap-3 text-sm">
 			<StepIcon status={step.status} />
 			<span
 				className={
@@ -201,46 +207,86 @@ function StepRow({ step }: { step: SplashStep }) {
 function StepIcon({ status }: { status: StepStatus }) {
 	if (status === "done") {
 		return (
-			<span className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center shrink-0">
-				<svg viewBox="0 0 12 12" fill="none" className="w-2.5 h-2.5">
+			<span className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center shrink-0">
+				<svg viewBox="0 0 12 12" fill="none" className="w-3 h-3">
 					<path d="M2 6l3 3 5-5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
 				</svg>
 			</span>
 		);
 	}
 	if (status === "active") {
-		return (
-			<RefreshCw className="w-4 h-4 text-primary animate-spin shrink-0" />
-		);
+		return <RefreshCw className="w-5 h-5 text-primary animate-spin shrink-0" />;
 	}
-	return (
-		<span className="w-4 h-4 rounded-full border border-border shrink-0" />
-	);
+	return <span className="w-5 h-5 rounded-full border-2 border-border shrink-0" />;
 }
 
-// ── Right panel ───────────────────────────────────────────────────────────
+// ── Right panel (BMC widget-inspired) ─────────────────────────────────────
 
 function RightPanel() {
+	const [amount, setAmount] = useState(5);
+	const [custom, setCustom] = useState("");
+
+	const effectiveAmount = custom !== "" ? parseInt(custom) || amount : amount;
+
+	const handleSupport = () => {
+		openUrl(BMC_URL);
+	};
+
 	return (
-		<div className="w-52 flex flex-col items-center justify-center gap-4 px-6 bg-card">
-			<span className="text-4xl" role="img" aria-label="coffee">☕</span>
-			<div className="text-center space-y-1">
-				<p className="text-sm font-semibold">Support free &amp; open source software</p>
-				<p className="text-xs text-muted-foreground">
-					MaxVideoPlayer is free forever. If it saves you money, consider buying me a coffee.
-				</p>
+		<div className="w-80 flex flex-col items-stretch justify-center px-8 bg-card border-l border-border">
+			{/* Header */}
+			<div className="flex flex-col items-center gap-2 mb-6 text-center">
+				<span className="text-4xl">☕</span>
+				<h2 className="text-lg font-bold">Support Max</h2>
 			</div>
-			<a
-				href="https://buymeacoffee.com/MaxMB15"
-				target="_blank"
-				rel="noreferrer"
-				className="w-full text-center text-sm font-semibold bg-[#5F7FFF] text-white px-4 py-2 rounded-lg hover:opacity-90 transition-opacity"
+
+			{/* Amount input row */}
+			<div className="flex items-center gap-2 bg-secondary rounded-xl px-3 py-2.5 mb-3">
+				<span className="text-muted-foreground font-medium text-sm">$</span>
+				<input
+					type="number"
+					min="1"
+					value={custom !== "" ? custom : amount}
+					onChange={(e) => {
+						setCustom(e.target.value);
+					}}
+					placeholder="Enter amount"
+					className="flex-1 bg-transparent text-sm outline-none min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+				/>
+				{[10, 25, 50].map((n) => (
+					<button
+						key={n}
+						type="button"
+						onClick={() => { setCustom(""); setAmount(n); }}
+						className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
+							effectiveAmount === n && custom === ""
+								? "bg-background text-foreground shadow-sm"
+								: "text-muted-foreground hover:text-foreground"
+						}`}
+					>
+						+{n}
+					</button>
+				))}
+			</div>
+
+			{/* Support button */}
+			<button
+				type="button"
+				onClick={handleSupport}
+				className="w-full bg-[#5F7FFF] hover:bg-[#4a6cf0] text-white font-semibold py-3 rounded-xl transition-colors text-sm mt-1"
 			>
-				Buy me a coffee
-			</a>
-			<p className="text-[10px] text-muted-foreground text-center">
-				No account needed · takes 2 seconds
-			</p>
+				Support
+			</button>
+
+			{/* Footer */}
+			<button
+				type="button"
+				onClick={handleSupport}
+				className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+			>
+				<span>☕</span>
+				<span>buymeacoffee.com/MaxMB15</span>
+			</button>
 		</div>
 	);
 }
