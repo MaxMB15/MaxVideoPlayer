@@ -3,11 +3,12 @@ import type { UpdateState } from "@/hooks/useUpdateChecker";
 
 interface UpdateBannerProps {
 	state: UpdateState;
+	hidden?: boolean;
 }
 
-export function UpdateBanner({ state }: UpdateBannerProps) {
+export function UpdateBanner({ state, hidden }: UpdateBannerProps) {
 	const { update, installing, progress, dismiss, install } = state;
-	if (!update) return null;
+	if (!update || hidden) return null;
 
 	return (
 		<div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border border-l-4 border-l-primary rounded-xl px-4 py-3 shadow-2xl max-w-sm">
