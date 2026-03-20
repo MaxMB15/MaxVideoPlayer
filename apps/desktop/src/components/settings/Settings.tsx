@@ -35,10 +35,12 @@ type HistoryStatus = "idle" | "cleared";
 
 function DonationReset() {
 	const [reset, setReset] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 	const handleReset = () => {
 		localStorage.removeItem("donation-last-shown");
 		setReset(true);
-		setTimeout(() => setReset(false), 2000);
+		timerRef.current = setTimeout(() => setReset(false), 2000);
 	};
 	return (
 		<Button size="sm" variant="secondary" onClick={handleReset} disabled={reset}>

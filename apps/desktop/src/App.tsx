@@ -7,7 +7,7 @@ import { Settings } from "./components/settings/Settings";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { SplashScreen } from "./components/SplashScreen";
 import { DonationPopup } from "./components/DonationPopup";
-import { ChannelsContext, useChannelsProvider } from "./hooks/useChannels";
+import { ChannelsContext, useChannels, useChannelsProvider } from "./hooks/useChannels";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { useSplashScreen } from "./hooks/useSplashScreen";
 import { useDonationPrompt } from "./hooks/useDonationPrompt";
@@ -32,7 +32,13 @@ interface AppRoutesProps {
 }
 
 function AppRoutes({ updateState }: AppRoutesProps) {
-	const splash = useSplashScreen();
+	const { refreshProviders } = useChannels();
+	const splash = useSplashScreen({
+		// After splash finishes any playlist/EPG refreshes, sync ChannelsContext so
+		// polling in useChannels reads fresh lastUpdated timestamps (avoids re-triggering
+		// the same refresh 60s later due to stale state).
+		onComplete: () => { refreshProviders().catch(() => {}); },
+	});
 
 	const donation = useDonationPrompt({ enabled: splash.dismissed });
 

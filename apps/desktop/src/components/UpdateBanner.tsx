@@ -12,7 +12,10 @@ export function UpdateBanner({ state, hidden }: UpdateBannerProps) {
 	const [visible, setVisible] = useState(false);
 
 	useEffect(() => {
-		if (!update || hidden) return;
+		if (!update || hidden) {
+			setVisible(false);
+			return;
+		}
 		const id = requestAnimationFrame(() => setVisible(true));
 		return () => cancelAnimationFrame(id);
 	}, [update, hidden]);
