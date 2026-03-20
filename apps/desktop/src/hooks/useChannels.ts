@@ -286,8 +286,12 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		const tick = () => {
 			const now = Date.now();
 			for (const p of providersRef.current) {
-				const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
-					loadProviderSettings(p.id);
+				const {
+					autoRefresh,
+					refreshIntervalHours,
+					epgAutoRefresh,
+					epgRefreshIntervalHours,
+				} = loadProviderSettings(p.id);
 
 				if (autoRefresh) {
 					const lastMs = parseDateMs(p.lastUpdated);
@@ -299,7 +303,8 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 				if (epgAutoRefresh && p.epgUrl) {
 					const lastMs = getEpgLastRefresh(p.id);
 					if (now - lastMs >= epgRefreshIntervalHours * 60 * 60 * 1000) {
-						refreshEpgApiRef.current(p.id)
+						refreshEpgApiRef
+							.current(p.id)
 							.then(() => setEpgLastRefresh(p.id))
 							.catch(console.error);
 					}
@@ -310,7 +315,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		tick(); // fire immediately on mount
 		const id = setInterval(tick, 60_000);
 		return () => clearInterval(id);
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps — intentionally stable
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	return {
 		channels,

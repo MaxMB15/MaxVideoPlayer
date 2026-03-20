@@ -54,7 +54,7 @@ export const SeriesDetailModal = ({
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
 	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
 	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
-		prefetchedMdbListData ?? null,
+		prefetchedMdbListData ?? null
 	);
 
 	const firstEp = episodes[0];
@@ -118,7 +118,7 @@ export const SeriesDetailModal = ({
 	const currentEpisodes = useMemo(
 		() =>
 			selectedSeason !== null ? (seasons.find(([s]) => s === selectedSeason)?.[1] ?? []) : [],
-		[seasons, selectedSeason],
+		[seasons, selectedSeason]
 	);
 
 	const handleSeasonClick = (season: number) => {

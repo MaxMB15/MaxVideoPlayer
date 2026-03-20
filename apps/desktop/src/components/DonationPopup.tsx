@@ -7,7 +7,7 @@ interface DonationPopupProps {
 	onDismiss: () => void;
 }
 
-export function DonationPopup({ onDismiss }: DonationPopupProps) {
+export const DonationPopup = ({ onDismiss }: DonationPopupProps) => {
 	const [visible, setVisible] = useState(false);
 	useEffect(() => {
 		const id = requestAnimationFrame(() => setVisible(true));
@@ -37,11 +37,7 @@ export function DonationPopup({ onDismiss }: DonationPopupProps) {
 				className="rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
 				aria-label="Donate via Buy Me a Coffee (QR code)"
 			>
-				<img
-					src={bmcQr}
-					alt="Scan to donate"
-					className="w-full h-auto"
-				/>
+				<img src={bmcQr} alt="Scan to donate" className="w-full h-auto" />
 			</button>
 
 			<button
@@ -60,4 +56,4 @@ export function DonationPopup({ onDismiss }: DonationPopupProps) {
 			</p>
 		</div>
 	);
-}
+};

@@ -2,7 +2,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { refreshProvider, refreshEpg } from "@/lib/tauri";
-import { loadProviderSettings, getEpgLastRefresh, setEpgLastRefresh, useChannels } from "@/hooks/useChannels";
+import {
+	loadProviderSettings,
+	getEpgLastRefresh,
+	setEpgLastRefresh,
+	useChannels,
+} from "@/hooks/useChannels";
 import { parseDateMs } from "@/lib/date";
 
 export type StepStatus = "pending" | "active" | "done";
@@ -29,7 +34,7 @@ interface UseSplashScreenOptions {
 	onComplete?: () => void;
 }
 
-export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScreenState {
+export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScreenState => {
 	const { onComplete } = options;
 	const onCompleteRef = useRef(onComplete);
 	useEffect(() => {
@@ -73,7 +78,7 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 			);
 		};
 
-		async function run() {
+		const run = async () => {
 			const hasAnyProviders = providers.length > 0;
 			setHasProviders(hasAnyProviders);
 
@@ -86,8 +91,12 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 			const epgRefreshIds: string[] = [];
 
 			for (const p of providers) {
-				const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
-					loadProviderSettings(p.id);
+				const {
+					autoRefresh,
+					refreshIntervalHours,
+					epgAutoRefresh,
+					epgRefreshIntervalHours,
+				} = loadProviderSettings(p.id);
 
 				if (autoRefresh) {
 					const lastMs = parseDateMs(p.lastUpdated);
@@ -156,16 +165,16 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 
 			setAllDone(true);
 			onCompleteRef.current?.();
-		}
+		};
 
 		run();
 		return () => {
 			cancelled = true;
 		};
-	}, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps — providers captured when initialized flips
+	}, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const progress =
 		steps.length === 0 ? 0 : steps.filter((s) => s.status === "done").length / steps.length;
 
 	return { steps, allDone, progress, update, dismissed, hasProviders, dismiss };
-}
+};

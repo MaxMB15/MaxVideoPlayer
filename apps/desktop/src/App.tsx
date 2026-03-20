@@ -31,13 +31,15 @@ interface AppRoutesProps {
 	updateState: ReturnType<typeof useUpdateChecker>;
 }
 
-function AppRoutes({ updateState }: AppRoutesProps) {
+const AppRoutes = ({ updateState }: AppRoutesProps) => {
 	const { refreshProviders } = useChannels();
 	const splash = useSplashScreen({
 		// After splash finishes any playlist/EPG refreshes, sync ChannelsContext so
 		// polling in useChannels reads fresh lastUpdated timestamps (avoids re-triggering
 		// the same refresh 60s later due to stale state).
-		onComplete: () => { refreshProviders().catch(() => {}); },
+		onComplete: () => {
+			refreshProviders().catch(() => {});
+		},
 	});
 
 	const donation = useDonationPrompt({ enabled: splash.dismissed });
@@ -61,4 +63,4 @@ function AppRoutes({ updateState }: AppRoutesProps) {
 			)}
 		</>
 	);
-}
+};

@@ -117,7 +117,13 @@ describe("useSplashScreen", () => {
 
 	it("calls refreshEpg when epgAutoRefresh=true, epgUrl set, and interval elapsed", async () => {
 		mockUseChannels.mockReturnValue({
-			providers: [{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" }],
+			providers: [
+				{
+					id: "p1",
+					lastUpdated: new Date().toISOString(),
+					epgUrl: "http://epg.example.com/guide.xml",
+				},
+			],
 			initialized: true,
 		} as never);
 		mockLoadProviderSettings.mockReturnValue({
@@ -137,7 +143,13 @@ describe("useSplashScreen", () => {
 
 	it("does not call refreshEpg when epgAutoRefresh=true but interval not elapsed", async () => {
 		mockUseChannels.mockReturnValue({
-			providers: [{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" }],
+			providers: [
+				{
+					id: "p1",
+					lastUpdated: new Date().toISOString(),
+					epgUrl: "http://epg.example.com/guide.xml",
+				},
+			],
 			initialized: true,
 		} as never);
 		mockLoadProviderSettings.mockReturnValue({

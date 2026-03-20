@@ -7,7 +7,7 @@ interface UpdateBannerProps {
 	hidden?: boolean;
 }
 
-export function UpdateBanner({ state, hidden }: UpdateBannerProps) {
+export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 	const { update, installing, progress, dismiss, install } = state;
 	const [visible, setVisible] = useState(false);
 
@@ -73,4 +73,4 @@ export function UpdateBanner({ state, hidden }: UpdateBannerProps) {
 			)}
 		</div>
 	);
-}
+};

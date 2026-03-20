@@ -131,7 +131,7 @@ export interface SubtitleSearchResult {
 
 export interface SubtitleCue {
 	start: number; // seconds
-	end: number;   // seconds
+	end: number; // seconds
 	text: string;
 }
 
