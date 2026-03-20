@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_mpv::init())
         .invoke_handler(tauri::generate_handler![
             commands::load_m3u_playlist,
