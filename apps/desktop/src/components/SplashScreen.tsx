@@ -224,9 +224,6 @@ function StepIcon({ status }: { status: StepStatus }) {
 
 function RightPanel() {
 	const [amount, setAmount] = useState(5);
-	const [custom, setCustom] = useState("");
-
-	const effectiveAmount = custom !== "" ? parseInt(custom) || amount : amount;
 
 	const handleSupport = () => {
 		openUrl(BMC_URL);
@@ -246,23 +243,16 @@ function RightPanel() {
 				<input
 					type="number"
 					min="1"
-					value={custom !== "" ? custom : amount}
-					onChange={(e) => {
-						setCustom(e.target.value);
-					}}
-					placeholder="Enter amount"
+					value={amount}
+					onChange={(e) => setAmount(Math.max(1, parseInt(e.target.value) || 1))}
 					className="flex-1 bg-transparent text-sm outline-none min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 				/>
 				{[10, 25, 50].map((n) => (
 					<button
 						key={n}
 						type="button"
-						onClick={() => { setCustom(""); setAmount(n); }}
-						className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
-							effectiveAmount === n && custom === ""
-								? "bg-background text-foreground shadow-sm"
-								: "text-muted-foreground hover:text-foreground"
-						}`}
+						onClick={() => setAmount((prev) => prev + n)}
+						className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors text-muted-foreground hover:text-foreground hover:bg-background"
 					>
 						+{n}
 					</button>

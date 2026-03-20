@@ -575,8 +575,8 @@ export const Settings = () => {
 					<CardHeader>
 						<CardTitle className="text-base">Support</CardTitle>
 					</CardHeader>
-					<CardContent className="space-y-3">
-						<p className="text-sm text-muted-foreground">
+					<CardContent className="flex flex-col items-center gap-3 py-4">
+						<p className="text-sm text-muted-foreground text-center">
 							MaxVideoPlayer is free and open source. If you find it useful,
 							consider supporting development.
 						</p>
@@ -591,7 +591,7 @@ export const Settings = () => {
 						<button
 							type="button"
 							onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
-							className="inline-flex text-sm font-semibold bg-[#5F7FFF] text-white px-4 py-2 rounded-lg hover:opacity-90 transition-opacity"
+							className="text-sm font-semibold bg-[#5F7FFF] text-white px-5 py-2 rounded-lg hover:opacity-90 transition-opacity"
 						>
 							Buy me a coffee
 						</button>

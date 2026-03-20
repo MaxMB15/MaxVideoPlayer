@@ -4,8 +4,6 @@ import { useSplashScreen } from "./useSplashScreen";
 
 // Mock Tauri API calls
 vi.mock("@/lib/tauri", () => ({
-	getProviders: vi.fn(),
-	getAllChannels: vi.fn(),
 	refreshProvider: vi.fn(),
 	refreshEpg: vi.fn(),
 }));
@@ -15,6 +13,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 }));
 
 vi.mock("./useChannels", () => ({
+	useChannels: vi.fn(),
 	loadProviderSettings: vi.fn(),
 	getEpgLastRefresh: vi.fn(),
 	setEpgLastRefresh: vi.fn(),
@@ -24,8 +23,7 @@ import * as tauri from "@/lib/tauri";
 import { check } from "@tauri-apps/plugin-updater";
 import * as channelsHook from "./useChannels";
 
-const mockGetProviders = vi.mocked(tauri.getProviders);
-const mockGetAllChannels = vi.mocked(tauri.getAllChannels);
+const mockUseChannels = vi.mocked(channelsHook.useChannels);
 const mockRefreshProvider = vi.mocked(tauri.refreshProvider);
 const mockRefreshEpg = vi.mocked(tauri.refreshEpg);
 const mockCheck = vi.mocked(check);
@@ -35,8 +33,11 @@ const mockGetEpgLastRefresh = vi.mocked(channelsHook.getEpgLastRefresh);
 describe("useSplashScreen", () => {
 	beforeEach(() => {
 		sessionStorage.clear();
-		mockGetProviders.mockResolvedValue([]);
-		mockGetAllChannels.mockResolvedValue([]);
+		// Default: no providers, already initialized
+		mockUseChannels.mockReturnValue({
+			providers: [],
+			initialized: true,
+		} as never);
 		mockCheck.mockResolvedValue(null);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: false,
@@ -51,10 +52,14 @@ describe("useSplashScreen", () => {
 		vi.clearAllMocks();
 	});
 
-	it("starts with dismissed=false and no steps when session is fresh", () => {
+	it("starts with dismissed=false and 4 steps when session is fresh", async () => {
 		const { result } = renderHook(() => useSplashScreen());
+		// Steps are initialized immediately (all 4 visible from the first render)
+		expect(result.current.steps).toHaveLength(4);
 		expect(result.current.dismissed).toBe(false);
-		expect(result.current.allDone).toBe(false);
+		// Wait for async completion
+		await waitFor(() => expect(result.current.allDone).toBe(true));
+		expect(result.current.steps.every((s) => s.status === "done")).toBe(true);
 	});
 
 	it("marks dismissed immediately if session key is already set", () => {
@@ -74,9 +79,10 @@ describe("useSplashScreen", () => {
 	});
 
 	it("does not call refreshProvider when autoRefresh is false", async () => {
-		mockGetProviders.mockResolvedValue([
-			{ id: "p1", lastUpdated: new Date(0).toISOString(), epgUrl: null } as never,
-		]);
+		mockUseChannels.mockReturnValue({
+			providers: [{ id: "p1", lastUpdated: new Date(0).toISOString(), epgUrl: null }],
+			initialized: true,
+		} as never);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: false,
 			refreshIntervalHours: 24,
@@ -91,9 +97,10 @@ describe("useSplashScreen", () => {
 	});
 
 	it("calls refreshProvider when autoRefresh=true and interval elapsed", async () => {
-		mockGetProviders.mockResolvedValue([
-			{ id: "p1", lastUpdated: new Date(0).toISOString(), epgUrl: null } as never,
-		]);
+		mockUseChannels.mockReturnValue({
+			providers: [{ id: "p1", lastUpdated: new Date(0).toISOString(), epgUrl: null }],
+			initialized: true,
+		} as never);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: true,
 			refreshIntervalHours: 24,
@@ -109,9 +116,10 @@ describe("useSplashScreen", () => {
 	});
 
 	it("calls refreshEpg when epgAutoRefresh=true, epgUrl set, and interval elapsed", async () => {
-		mockGetProviders.mockResolvedValue([
-			{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" } as never,
-		]);
+		mockUseChannels.mockReturnValue({
+			providers: [{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" }],
+			initialized: true,
+		} as never);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: false,
 			refreshIntervalHours: 24,
@@ -128,9 +136,10 @@ describe("useSplashScreen", () => {
 	});
 
 	it("does not call refreshEpg when epgAutoRefresh=true but interval not elapsed", async () => {
-		mockGetProviders.mockResolvedValue([
-			{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" } as never,
-		]);
+		mockUseChannels.mockReturnValue({
+			providers: [{ id: "p1", lastUpdated: new Date().toISOString(), epgUrl: "http://epg.example.com/guide.xml" }],
+			initialized: true,
+		} as never);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: false,
 			refreshIntervalHours: 24,

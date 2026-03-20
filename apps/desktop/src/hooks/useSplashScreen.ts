@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { getProviders, getAllChannels, refreshProvider, refreshEpg } from "@/lib/tauri";
-import { loadProviderSettings, getEpgLastRefresh, setEpgLastRefresh } from "@/hooks/useChannels";
+import { refreshProvider, refreshEpg } from "@/lib/tauri";
+import { loadProviderSettings, getEpgLastRefresh, setEpgLastRefresh, useChannels } from "@/hooks/useChannels";
 import { parseDateMs } from "@/lib/date";
 
 export type StepStatus = "pending" | "active" | "done";
@@ -38,7 +38,19 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 
 	const alreadyShownRef = useRef(sessionStorage.getItem(SESSION_KEY) === "true");
 
-	const [steps, setSteps] = useState<SplashStep[]>([]);
+	// Consume providers from ChannelsContext (already loaded on mount — no extra Tauri calls)
+	const { providers, initialized } = useChannels();
+
+	// Initialize all 4 steps immediately so they're visible from the first render
+	const [steps, setSteps] = useState<SplashStep[]>(() => {
+		if (alreadyShownRef.current) return [];
+		return [
+			{ id: "providers", label: "Loading providers & channels", status: "active" },
+			{ id: "playlists", label: "Checking playlists…", status: "pending" },
+			{ id: "epg", label: "Checking EPG…", status: "pending" },
+			{ id: "updates", label: "Checking for updates", status: "pending" },
+		];
+	});
 	const [allDone, setAllDone] = useState(alreadyShownRef.current);
 	const [update, setUpdate] = useState<Update | null>(null);
 	const [dismissed, setDismissed] = useState(alreadyShownRef.current);
@@ -49,30 +61,26 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 		setDismissed(true);
 	}, []);
 
+	// Run once ChannelsContext has finished its initial provider fetch
 	useEffect(() => {
-		if (alreadyShownRef.current) return;
+		if (alreadyShownRef.current || !initialized) return;
 
 		let cancelled = false;
 
+		const setStepStatus = (id: string, status: StepStatus, label?: string) => {
+			setSteps((prev) =>
+				prev.map((s) => (s.id === id ? { ...s, status, ...(label ? { label } : {}) } : s))
+			);
+		};
+
 		async function run() {
-			// Step 1: Load providers and channels
-			setSteps([{ id: "providers", label: "Loading providers & channels", status: "active" }]);
-
-			let providers: Awaited<ReturnType<typeof getProviders>> = [];
-			try {
-				const [providersResult] = await Promise.allSettled([getProviders(), getAllChannels()]);
-				if (providersResult.status === "fulfilled") {
-					providers = providersResult.value;
-				}
-			} catch {
-				// Treat as no providers on error
-			}
-			if (cancelled) return;
-
 			const hasAnyProviders = providers.length > 0;
 			setHasProviders(hasAnyProviders);
 
-			// Determine which optional steps are needed
+			// Step 1 complete — providers came from ChannelsContext, no extra fetch needed
+			setStepStatus("providers", "done", "Providers & channels loaded");
+
+			// Determine which providers need refresh
 			const now = Date.now();
 			const providerRefreshIds: string[] = [];
 			const epgRefreshIds: string[] = [];
@@ -96,38 +104,23 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 				}
 			}
 
-			// Build full step list now that we know which steps are needed
-			const builtSteps: SplashStep[] = [
-				{ id: "providers", label: "Providers & channels loaded", status: "done" },
-				...(providerRefreshIds.length > 0
-					? [{ id: "playlists", label: "Refreshing playlists", status: "pending" as StepStatus }]
-					: []),
-				...(epgRefreshIds.length > 0
-					? [{ id: "epg", label: "Refreshing EPG", status: "pending" as StepStatus }]
-					: []),
-				{ id: "updates", label: "Checking for updates", status: "pending" },
-			];
-			setSteps(builtSteps);
-
-			const setProgress = (id: string, status: StepStatus, label?: string) => {
-				setSteps((prev) =>
-					prev.map((s) =>
-						s.id === id ? { ...s, status, ...(label ? { label } : {}) } : s
-					)
-				);
-			};
-
-			// Step 2: Refresh playlists
+			// Step 2: Refresh playlists (always shown; mark done immediately if nothing to do)
+			setStepStatus("playlists", "active", "Refreshing playlists…");
 			if (providerRefreshIds.length > 0) {
-				setProgress("playlists", "active");
 				await Promise.allSettled(providerRefreshIds.map((id) => refreshProvider(id)));
 				if (cancelled) return;
-				setProgress("playlists", "done", "Playlists refreshed");
+				setStepStatus("playlists", "done", "Playlists refreshed");
+			} else {
+				setStepStatus(
+					"playlists",
+					"done",
+					hasAnyProviders ? "Playlists up to date" : "No playlists configured"
+				);
 			}
 
-			// Step 3: Refresh EPG
+			// Step 3: Refresh EPG (always shown; mark done immediately if nothing to do)
+			setStepStatus("epg", "active", "Checking EPG…");
 			if (epgRefreshIds.length > 0) {
-				setProgress("epg", "active");
 				await Promise.allSettled(
 					epgRefreshIds.map((id) =>
 						refreshEpg(id)
@@ -136,11 +129,17 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 					)
 				);
 				if (cancelled) return;
-				setProgress("epg", "done", "EPG refreshed");
+				setStepStatus("epg", "done", "EPG refreshed");
+			} else {
+				setStepStatus(
+					"epg",
+					"done",
+					hasAnyProviders ? "EPG up to date" : "No EPG configured"
+				);
 			}
 
 			// Step 4: Check for updates
-			setProgress("updates", "active");
+			setStepStatus("updates", "active");
 			let foundUpdate: Update | null = null;
 			try {
 				foundUpdate = (await check()) ?? null;
@@ -150,9 +149,9 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 			if (cancelled) return;
 			if (foundUpdate) {
 				setUpdate(foundUpdate);
-				setProgress("updates", "done", `Update available — v${foundUpdate.version}`);
+				setStepStatus("updates", "done", `Update available — v${foundUpdate.version}`);
 			} else {
-				setProgress("updates", "done", "Up to date");
+				setStepStatus("updates", "done", "Up to date");
 			}
 
 			setAllDone(true);
@@ -163,7 +162,7 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps — providers captured when initialized flips
 
 	const progress =
 		steps.length === 0 ? 0 : steps.filter((s) => s.status === "done").length / steps.length;

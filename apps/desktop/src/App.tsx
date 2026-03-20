@@ -20,31 +20,19 @@ export default function App() {
 	return (
 		<ChannelsContext.Provider value={channelsValue}>
 			<FullscreenProvider>
-				<AppRoutes
-					channelsRefresh={channelsValue.refreshProviders}
-					channelsRefreshAll={channelsValue.refreshChannels}
-					updateState={updateState}
-				/>
+				<AppRoutes updateState={updateState} />
 			</FullscreenProvider>
 		</ChannelsContext.Provider>
 	);
 }
 
-// Inner component so useSplashScreen can access ChannelsContext via useChannels if needed.
+// Inner component so useSplashScreen can access ChannelsContext via useChannels.
 interface AppRoutesProps {
-	channelsRefresh: () => Promise<void>;
-	channelsRefreshAll: () => Promise<void>;
 	updateState: ReturnType<typeof useUpdateChecker>;
 }
 
-function AppRoutes({ channelsRefresh, channelsRefreshAll, updateState }: AppRoutesProps) {
-	const splash = useSplashScreen({
-		onComplete: () => {
-			// Re-sync channels state after splash loading (playlist/EPG refresh)
-			channelsRefresh().catch(() => {});
-			channelsRefreshAll().catch(() => {});
-		},
-	});
+function AppRoutes({ updateState }: AppRoutesProps) {
+	const splash = useSplashScreen();
 
 	const donation = useDonationPrompt({ enabled: splash.dismissed });
 

@@ -77,6 +77,7 @@ interface ChannelsContextValue {
 	channels: Channel[];
 	categories: Category[];
 	providers: Provider[];
+	initialized: boolean;
 	loading: boolean;
 	error: string | null;
 	loadM3u: (name: string, url: string) => Promise<void>;
@@ -102,6 +103,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 	const [channels, setChannels] = useState<Channel[]>([]);
 	const [categories, setCategories] = useState<Category[]>([]);
 	const [providers, setProviders] = useState<Provider[]>([]);
+	const [initialized, setInitialized] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const channelIndex = useMemo(() => {
@@ -139,6 +141,8 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 			setProviders(await getProviders());
 		} catch (e) {
 			setError(String(e));
+		} finally {
+			setInitialized(true);
 		}
 	}, []);
 
@@ -312,6 +316,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		channels,
 		categories,
 		providers,
+		initialized,
 		loading,
 		error,
 		loadM3u,
