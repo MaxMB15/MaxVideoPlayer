@@ -124,7 +124,7 @@ echo "  Updated Settings.tsx"
 
 # ── Commit ───────────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"
-git add "$TAURI_CONF" "$CARGO_TOML" "$SETTINGS_TSX"
+git add "$TAURI_CONF" "$CARGO_TOML" "$SETTINGS_TSX" Cargo.lock
 git commit -m "chore: bump version to $NEW"
 echo "  Committed version bump"
 
