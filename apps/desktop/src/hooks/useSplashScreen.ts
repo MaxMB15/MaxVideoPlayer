@@ -60,7 +60,10 @@ export function useSplashScreen(options: UseSplashScreenOptions = {}): SplashScr
 
 			let providers: Awaited<ReturnType<typeof getProviders>> = [];
 			try {
-				[providers] = await Promise.all([getProviders(), getAllChannels()]);
+				const [providersResult] = await Promise.allSettled([getProviders(), getAllChannels()]);
+				if (providersResult.status === "fulfilled") {
+					providers = providersResult.value;
+				}
 			} catch {
 				// Treat as no providers on error
 			}
