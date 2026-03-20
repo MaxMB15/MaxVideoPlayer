@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { Update } from "@tauri-apps/plugin-updater";
