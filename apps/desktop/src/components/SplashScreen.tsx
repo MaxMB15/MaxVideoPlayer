@@ -12,7 +12,7 @@ interface SplashScreenProps {
 	splash: SplashScreenState;
 }
 
-export function SplashScreen({ splash }: SplashScreenProps) {
+export const SplashScreen = ({ splash }: SplashScreenProps) => {
 	const { steps, allDone, progress, update, hasProviders, dismiss } = splash;
 
 	return (
@@ -41,7 +41,7 @@ interface LeftPanelProps {
 	onDismiss: () => void;
 }
 
-function LeftPanel({ steps, allDone, progress, update, hasProviders, onDismiss }: LeftPanelProps) {
+const LeftPanel = ({ steps, allDone, progress, update, hasProviders, onDismiss }: LeftPanelProps) => {
 	const [installing, setInstalling] = useState(false);
 	const [installProgress, setInstallProgress] = useState<number | null>(null);
 
@@ -186,7 +186,7 @@ function LeftPanel({ steps, allDone, progress, update, hasProviders, onDismiss }
 
 // ── Step row ──────────────────────────────────────────────────────────────
 
-function StepRow({ step }: { step: SplashStep }) {
+const StepRow = ({ step }: { step: SplashStep }) => {
 	return (
 		<div className="flex items-center gap-3 text-sm">
 			<StepIcon status={step.status} />
@@ -205,12 +205,18 @@ function StepRow({ step }: { step: SplashStep }) {
 	);
 }
 
-function StepIcon({ status }: { status: StepStatus }) {
+const StepIcon = ({ status }: { status: StepStatus }) => {
 	if (status === "done") {
 		return (
 			<span className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center shrink-0">
 				<svg viewBox="0 0 12 12" fill="none" className="w-3 h-3">
-					<path d="M2 6l3 3 5-5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+					<path
+						d="M2 6l3 3 5-5"
+						stroke="white"
+						strokeWidth="1.5"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
 				</svg>
 			</span>
 		);
@@ -223,7 +229,7 @@ function StepIcon({ status }: { status: StepStatus }) {
 
 // ── Right panel ───────────────────────────────────────────────────────────
 
-function RightPanel() {
+const RightPanel = () => {
 	return (
 		<div className="w-80 flex flex-col items-center justify-center gap-5 px-8 bg-card border-l border-border">
 			{/* Header */}

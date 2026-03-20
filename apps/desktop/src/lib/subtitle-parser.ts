@@ -1,7 +1,7 @@
 import type { SubtitleCue } from "./types";
 
 /** Parse "HH:MM:SS,mmm" or "HH:MM:SS.mmm" into seconds. */
-function parseTimestamp(ts: string): number {
+const parseTimestamp = (ts: string): number => {
 	const clean = ts.trim().replace(",", ".");
 	const parts = clean.split(":");
 	if (parts.length !== 3) return 0;
@@ -10,12 +10,12 @@ function parseTimestamp(ts: string): number {
 }
 
 /** Strip SRT/HTML tags (<i>, <b>, <font ...>, etc.) from subtitle text. */
-function stripTags(text: string): string {
+const stripTags = (text: string): string => {
 	return text.replace(/<[^>]+>/g, "").trim();
 }
 
 /** Parse SRT file content into an array of SubtitleCue objects. */
-export function parseSrt(content: string): SubtitleCue[] {
+export const parseSrt = (content: string): SubtitleCue[] => {
 	const cues: SubtitleCue[] = [];
 	// Normalise line endings and split into blocks
 	const blocks = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split(/\n\n+/);

@@ -33,10 +33,15 @@ type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved";
 type HistoryStatus = "idle" | "cleared";
 
-function DonationReset() {
+const DonationReset = () => {
 	const [reset, setReset] = useState(false);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+	useEffect(
+		() => () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		},
+		[]
+	);
 	const handleReset = () => {
 		localStorage.removeItem("donation-last-shown");
 		setReset(true);
@@ -472,9 +477,7 @@ export const Settings = () => {
 									<div className="flex items-center gap-2">
 										<div className="relative flex-1">
 											<Input
-												type={
-													openSubtitlesKeyVisible ? "text" : "password"
-												}
+												type={openSubtitlesKeyVisible ? "text" : "password"}
 												placeholder="Enter API key…"
 												value={openSubtitlesKey}
 												onChange={(e) => {
@@ -599,8 +602,8 @@ export const Settings = () => {
 					</CardHeader>
 					<CardContent className="space-y-3">
 						<p className="text-sm text-muted-foreground">
-							MaxVideoPlayer is free and open source. If you find it useful,
-							consider supporting development.
+							MaxVideoPlayer is free and open source. If you find it useful, consider
+							supporting development.
 						</p>
 						<div className="flex items-center gap-4">
 							<button
@@ -609,7 +612,11 @@ export const Settings = () => {
 								className="w-32 shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
 								aria-label="Donate via Buy Me a Coffee"
 							>
-								<img src={bmcQr} alt="Buy me a coffee QR code" className="w-full h-auto" />
+								<img
+									src={bmcQr}
+									alt="Buy me a coffee QR code"
+									className="w-full h-auto"
+								/>
 							</button>
 							<button
 								type="button"
