@@ -29,6 +29,16 @@ export function useUpdateChecker(): UpdateState {
 			.finally(() => setChecking(false));
 	}, []);
 
+	// Re-check every 2 hours while the app is open
+	useEffect(() => {
+		const id = setInterval(() => {
+			check()
+				.then((result) => setUpdate(result ?? null))
+				.catch(() => {});
+		}, 2 * 60 * 60 * 1000);
+		return () => clearInterval(id);
+	}, []);
+
 	const dismiss = useCallback(() => setUpdate(null), []);
 
 	const install = useCallback(async () => {

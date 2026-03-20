@@ -1,16 +1,33 @@
+import { useEffect, useState } from "react";
 import { Download, X, RefreshCw } from "lucide-react";
 import type { UpdateState } from "@/hooks/useUpdateChecker";
 
 interface UpdateBannerProps {
 	state: UpdateState;
+	hidden?: boolean;
 }
 
-export function UpdateBanner({ state }: UpdateBannerProps) {
+export function UpdateBanner({ state, hidden }: UpdateBannerProps) {
 	const { update, installing, progress, dismiss, install } = state;
-	if (!update) return null;
+	const [visible, setVisible] = useState(false);
+
+	useEffect(() => {
+		if (!update || hidden) {
+			setVisible(false);
+			return;
+		}
+		const id = requestAnimationFrame(() => setVisible(true));
+		return () => cancelAnimationFrame(id);
+	}, [update, hidden]);
+
+	if (!update || hidden) return null;
 
 	return (
-		<div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border border-l-4 border-l-primary rounded-xl px-4 py-3 shadow-2xl max-w-sm">
+		<div
+			className={`fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3 shadow-2xl max-w-sm transition-all duration-300 ease-out ${
+				visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+			}`}
+		>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-semibold leading-tight">
 					Update available — v{update.version}
