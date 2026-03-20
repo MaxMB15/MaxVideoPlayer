@@ -640,7 +640,7 @@ export const Settings = () => {
 						<CardTitle className="text-base">About</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.0</p>
+						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.1</p>
 						<p className="text-xs text-muted-foreground mt-1">
 							Built with Tauri v2, React, and libmpv
 						</p>
