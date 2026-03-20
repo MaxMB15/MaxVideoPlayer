@@ -2,8 +2,8 @@ import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { useState } from "react";
 import { openUrl } from "@/lib/openUrl";
+import bmcQr from "@/assets/bmc-qr.png";
 
 const BMC_URL = "https://buymeacoffee.com/MaxMB15";
 
@@ -220,62 +220,35 @@ function StepIcon({ status }: { status: StepStatus }) {
 	return <span className="w-5 h-5 rounded-full border-2 border-border shrink-0" />;
 }
 
-// ── Right panel (BMC widget-inspired) ─────────────────────────────────────
+// ── Right panel ───────────────────────────────────────────────────────────
 
 function RightPanel() {
-	const [amount, setAmount] = useState(5);
-
-	const handleSupport = () => {
-		openUrl(BMC_URL);
-	};
-
 	return (
-		<div className="w-80 flex flex-col items-stretch justify-center px-8 bg-card border-l border-border">
+		<div className="w-80 flex flex-col items-center justify-center gap-5 px-8 bg-card border-l border-border">
 			{/* Header */}
-			<div className="flex flex-col items-center gap-2 mb-6 text-center">
+			<div className="flex flex-col items-center gap-2 text-center">
 				<span className="text-4xl">☕</span>
-				<h2 className="text-lg font-bold">Support Max</h2>
+				<h2 className="text-lg font-bold">Support free & open source software</h2>
+				<p className="text-xs text-muted-foreground">No account needed · takes 2 seconds</p>
 			</div>
 
-			{/* Amount input row */}
-			<div className="flex items-center gap-2 bg-secondary rounded-xl px-3 py-2.5 mb-3">
-				<span className="text-muted-foreground font-medium text-sm">$</span>
-				<input
-					type="number"
-					min="1"
-					value={amount}
-					onChange={(e) => setAmount(Math.max(1, parseInt(e.target.value) || 1))}
-					className="flex-1 bg-transparent text-sm outline-none min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-				/>
-				{[10, 25, 50].map((n) => (
-					<button
-						key={n}
-						type="button"
-						onClick={() => setAmount((prev) => prev + n)}
-						className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors text-muted-foreground hover:text-foreground hover:bg-background"
-					>
-						+{n}
-					</button>
-				))}
-			</div>
+			{/* QR code */}
+			<button
+				type="button"
+				onClick={() => openUrl(BMC_URL)}
+				className="w-40 rounded-xl overflow-hidden border border-border hover:border-primary transition-colors"
+				aria-label="Scan to donate via Buy Me a Coffee"
+			>
+				<img src={bmcQr} alt="Buy Me a Coffee QR code" className="w-full h-auto" />
+			</button>
 
 			{/* Support button */}
 			<button
 				type="button"
-				onClick={handleSupport}
-				className="w-full bg-[#5F7FFF] hover:bg-[#4a6cf0] text-white font-semibold py-3 rounded-xl transition-colors text-sm mt-1"
+				onClick={() => openUrl(BMC_URL)}
+				className="w-full bg-[#5F7FFF] hover:bg-[#4a6cf0] text-white font-semibold py-3 rounded-xl transition-colors text-sm"
 			>
-				Support
-			</button>
-
-			{/* Footer */}
-			<button
-				type="button"
-				onClick={handleSupport}
-				className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-			>
-				<span>☕</span>
-				<span>buymeacoffee.com/MaxMB15</span>
+				Buy me a coffee
 			</button>
 		</div>
 	);
