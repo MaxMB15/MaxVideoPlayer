@@ -8,6 +8,7 @@ import {
 	useRef,
 } from "react";
 import type { Channel, Category, Provider } from "@/lib/types";
+import { parseDateMs } from "@/lib/date";
 import {
 	loadM3uPlaylist,
 	loadM3uFile as loadM3uFileApi,
@@ -65,9 +66,9 @@ export const saveProviderSettings = (id: string, settings: ProviderSettings) => 
 
 // EPG last-refresh timestamp stored separately (providers have no epg_last_updated field)
 const epgLastRefreshKey = (id: string) => `epg-last-refresh-${id}`;
-const getEpgLastRefresh = (id: string): number =>
+export const getEpgLastRefresh = (id: string): number =>
 	parseInt(localStorage.getItem(epgLastRefreshKey(id)) ?? "0", 10);
-const setEpgLastRefresh = (id: string) =>
+export const setEpgLastRefresh = (id: string) =>
 	localStorage.setItem(epgLastRefreshKey(id), String(Date.now()));
 
 // --- Context ---
@@ -76,6 +77,7 @@ interface ChannelsContextValue {
 	channels: Channel[];
 	categories: Category[];
 	providers: Provider[];
+	initialized: boolean;
 	loading: boolean;
 	error: string | null;
 	loadM3u: (name: string, url: string) => Promise<void>;
@@ -101,10 +103,9 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 	const [channels, setChannels] = useState<Channel[]>([]);
 	const [categories, setCategories] = useState<Category[]>([]);
 	const [providers, setProviders] = useState<Provider[]>([]);
+	const [initialized, setInitialized] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const startupDone = useRef(false);
-
 	const channelIndex = useMemo(() => {
 		const m = new Map<string, number>();
 		channels.forEach((ch, i) => m.set(ch.id, i));
@@ -140,6 +141,8 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 			setProviders(await getProviders());
 		} catch (e) {
 			setError(String(e));
+		} finally {
+			setInitialized(true);
 		}
 	}, []);
 
@@ -261,69 +264,64 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		refreshChannels();
 	}, [refreshProviders, refreshChannels]);
 
-	// Auto-refresh on startup: if provider/EPG is older than its interval, refresh immediately.
-	// Runs once after the first non-empty providers load.
+	// Keep providers ref current so interval can read it without re-registering
+	const providersRef = useRef<Provider[]>([]);
 	useEffect(() => {
-		if (providers.length === 0 || startupDone.current) return;
-		startupDone.current = true;
-		const now = Date.now();
-		for (const p of providers) {
-			const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
-				loadProviderSettings(p.id);
+		providersRef.current = providers;
+	}, [providers]);
 
-			if (autoRefresh) {
-				const intervalMs = refreshIntervalHours * 60 * 60 * 1000;
-				const lastMs = p.lastUpdated ? new Date(p.lastUpdated).getTime() : 0;
-				if (now - lastMs >= intervalMs) {
-					refreshProvider(p.id).catch(console.error);
+	const refreshProviderRef = useRef(refreshProvider);
+	useEffect(() => {
+		refreshProviderRef.current = refreshProvider;
+	}, [refreshProvider]);
+
+	const refreshEpgApiRef = useRef(refreshEpgApi);
+	useEffect(() => {
+		refreshEpgApiRef.current = refreshEpgApi;
+	}, [refreshEpgApi]);
+
+	// Poll every 60s to check if any provider/EPG is due for refresh.
+	// Using a ref-based approach avoids resetting timers on every providers update.
+	useEffect(() => {
+		const tick = () => {
+			const now = Date.now();
+			for (const p of providersRef.current) {
+				const {
+					autoRefresh,
+					refreshIntervalHours,
+					epgAutoRefresh,
+					epgRefreshIntervalHours,
+				} = loadProviderSettings(p.id);
+
+				if (autoRefresh) {
+					const lastMs = parseDateMs(p.lastUpdated);
+					if (now - lastMs >= refreshIntervalHours * 60 * 60 * 1000) {
+						refreshProviderRef.current(p.id).catch(console.error);
+					}
+				}
+
+				if (epgAutoRefresh && p.epgUrl) {
+					const lastMs = getEpgLastRefresh(p.id);
+					if (now - lastMs >= epgRefreshIntervalHours * 60 * 60 * 1000) {
+						refreshEpgApiRef
+							.current(p.id)
+							.then(() => setEpgLastRefresh(p.id))
+							.catch(console.error);
+					}
 				}
 			}
+		};
 
-			if (epgAutoRefresh && p.epgUrl) {
-				const intervalMs = epgRefreshIntervalHours * 60 * 60 * 1000;
-				const lastMs = getEpgLastRefresh(p.id);
-				if (now - lastMs >= intervalMs) {
-					refreshEpgApi(p.id)
-						.then(() => setEpgLastRefresh(p.id))
-						.catch(console.error);
-				}
-			}
-		}
-	}, [providers, refreshProvider]);
-
-	// Auto-refresh on interval: keep ticking while the app is open.
-	useEffect(() => {
-		if (providers.length === 0) return;
-		const timers: ReturnType<typeof setInterval>[] = [];
-		for (const p of providers) {
-			const { autoRefresh, refreshIntervalHours, epgAutoRefresh, epgRefreshIntervalHours } =
-				loadProviderSettings(p.id);
-
-			if (autoRefresh) {
-				const ms = refreshIntervalHours * 60 * 60 * 1000;
-				timers.push(setInterval(() => refreshProvider(p.id).catch(console.error), ms));
-			}
-
-			if (epgAutoRefresh && p.epgUrl) {
-				const ms = epgRefreshIntervalHours * 60 * 60 * 1000;
-				timers.push(
-					setInterval(
-						() =>
-							refreshEpgApi(p.id)
-								.then(() => setEpgLastRefresh(p.id))
-								.catch(console.error),
-						ms
-					)
-				);
-			}
-		}
-		return () => timers.forEach(clearInterval);
-	}, [providers, refreshProvider]);
+		tick(); // fire immediately on mount
+		const id = setInterval(tick, 60_000);
+		return () => clearInterval(id);
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	return {
 		channels,
 		categories,
 		providers,
+		initialized,
 		loading,
 		error,
 		loadM3u,

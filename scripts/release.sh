@@ -6,6 +6,36 @@ TAURI_CONF="$REPO_ROOT/apps/desktop/src-tauri/tauri.conf.json"
 CARGO_TOML="$REPO_ROOT/apps/desktop/src-tauri/Cargo.toml"
 SETTINGS_TSX="$REPO_ROOT/apps/desktop/src/components/settings/Settings.tsx"
 
+# ── Git-flow branch guard ─────────────────────────────────────────────────────
+cd "$REPO_ROOT"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  echo ""
+  echo "  ERROR: release.sh must be run from the 'main' branch."
+  echo "  You are on: $CURRENT_BRANCH"
+  echo ""
+  echo "  Git-flow release process:"
+  echo "    1. Merge dev → main via PR"
+  echo "    2. git checkout main && git pull origin main"
+  echo "    3. Run this script"
+  echo ""
+  exit 1
+fi
+
+# Ensure main is up-to-date with origin
+echo ""
+echo "  Fetching origin/main…"
+git fetch origin main --quiet
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+if [[ "$LOCAL" != "$REMOTE" ]]; then
+  echo ""
+  echo "  ERROR: local main is not up-to-date with origin/main."
+  echo "  Run: git pull origin main"
+  echo ""
+  exit 1
+fi
+
 # ── Read current version from tauri.conf.json ────────────────────────────────
 CURRENT=$(python3 -c "import json,sys; print(json.load(open('$TAURI_CONF'))['version'])")
 MAJOR=$(echo "$CURRENT" | cut -d. -f1)
@@ -102,22 +132,47 @@ echo "  Committed version bump"
 git tag "v$NEW"
 echo "  Created tag v$NEW"
 
-# ── Push ─────────────────────────────────────────────────────────────────────
+# ── Push main + tag (triggers release workflow) ───────────────────────────────
 echo ""
-read -rp "  Push commit and tag to origin now? [y/N]: " PUSH
+read -rp "  Push main and tag to origin now? [y/N]: " PUSH
 case "$PUSH" in
   [yY])
-    git push origin HEAD
+    git push origin main
     git push origin "v$NEW"
     echo ""
-    echo "  Done! Release workflow triggered for v$NEW."
+    echo "  ✓ Release workflow triggered for v$NEW."
     echo "  Watch progress at: https://github.com/MaxMB15/MaxVideoPlayer/actions"
     echo "  Draft release will appear at: https://github.com/MaxMB15/MaxVideoPlayer/releases"
     ;;
   *)
     echo ""
     echo "  Not pushed. When ready, run:"
-    echo "    git push origin HEAD && git push origin v$NEW"
+    echo "    git push origin main && git push origin v$NEW"
+    echo ""
+    exit 0
+    ;;
+esac
+
+# ── Merge version bump back to dev (git-flow requirement) ────────────────────
+echo ""
+echo "  Git-flow requires the version bump to be reflected in dev."
+read -rp "  Merge main → dev now? [y/N]: " MERGE_DEV
+case "$MERGE_DEV" in
+  [yY])
+    git checkout dev
+    git pull origin dev --quiet
+    git merge --no-ff main -m "chore: merge main into dev after v$NEW release"
+    git push origin dev
+    git checkout main
+    echo ""
+    echo "  ✓ Version bump merged back to dev."
+    ;;
+  *)
+    echo ""
+    echo "  Skipped. Remember to merge main → dev manually:"
+    echo "    git checkout dev && git pull origin dev"
+    echo "    git merge --no-ff main -m 'chore: merge main into dev after v$NEW release'"
+    echo "    git push origin dev"
     ;;
 esac
 

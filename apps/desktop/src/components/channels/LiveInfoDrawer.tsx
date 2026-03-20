@@ -165,7 +165,9 @@ export const LiveInfoDrawer = ({ channel, onClose }: LiveInfoDrawerProps) => {
 					</div>
 				) : null}
 
-				{programmes.length > 0 && <div className="border-t border-border mx-5 mt-3 shrink-0" />}
+				{programmes.length > 0 && (
+					<div className="border-t border-border mx-5 mt-3 shrink-0" />
+				)}
 
 				{/* Schedule list */}
 				<div className="flex flex-col flex-1 min-h-0">

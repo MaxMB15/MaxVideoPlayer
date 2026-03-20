@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { openUrl } from "@/lib/openUrl";
+import bmcQr from "@/assets/bmc-qr.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +32,33 @@ import {
 type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved";
 type HistoryStatus = "idle" | "cleared";
+
+const DonationReset = () => {
+	const [reset, setReset] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		},
+		[]
+	);
+	const handleReset = () => {
+		localStorage.removeItem("donation-last-shown");
+		setReset(true);
+		timerRef.current = setTimeout(() => setReset(false), 2000);
+	};
+	return (
+		<Button size="sm" variant="secondary" onClick={handleReset} disabled={reset}>
+			{reset ? (
+				<span className="flex items-center gap-1 text-green-500">
+					<CheckCircle className="h-4 w-4" /> Reset
+				</span>
+			) : (
+				"Reset donation reminder"
+			)}
+		</Button>
+	);
+};
 
 export const Settings = () => {
 	const { platform, layoutMode } = usePlatform();
@@ -448,9 +477,7 @@ export const Settings = () => {
 									<div className="flex items-center gap-2">
 										<div className="relative flex-1">
 											<Input
-												type={
-													openSubtitlesKeyVisible ? "text" : "password"
-												}
+												type={openSubtitlesKeyVisible ? "text" : "password"}
 												placeholder="Enter API key…"
 												value={openSubtitlesKey}
 												onChange={(e) => {
@@ -571,10 +598,49 @@ export const Settings = () => {
 
 				<Card>
 					<CardHeader>
+						<CardTitle className="text-base">Support</CardTitle>
+					</CardHeader>
+					<CardContent className="space-y-3">
+						<p className="text-sm text-muted-foreground">
+							MaxVideoPlayer is free and open source. If you find it useful, consider
+							supporting development.
+						</p>
+						<div className="flex items-center gap-4">
+							<button
+								type="button"
+								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+								className="w-32 shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+								aria-label="Donate via Buy Me a Coffee"
+							>
+								<img
+									src={bmcQr}
+									alt="Buy me a coffee QR code"
+									className="w-full h-auto"
+								/>
+							</button>
+							<button
+								type="button"
+								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+								className="text-sm font-semibold bg-[#5F7FFF] text-white px-5 py-2 rounded-lg hover:opacity-90 transition-opacity"
+							>
+								Buy me a coffee
+							</button>
+						</div>
+						<div className="pt-1 border-t border-border">
+							<p className="text-xs text-muted-foreground mb-2">
+								Reset the donation reminder to show it again.
+							</p>
+							<DonationReset />
+						</div>
+					</CardContent>
+				</Card>
+
+				<Card>
+					<CardHeader>
 						<CardTitle className="text-base">About</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.2.2</p>
+						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.0</p>
 						<p className="text-xs text-muted-foreground mt-1">
 							Built with Tauri v2, React, and libmpv
 						</p>

@@ -11,7 +11,7 @@ export interface UpdateState {
 	install: () => void;
 }
 
-export function useUpdateChecker(): UpdateState {
+export const useUpdateChecker = (): UpdateState => {
 	const [update, setUpdate] = useState<Update | null>(null);
 	const [checking, setChecking] = useState(false);
 	const [installing, setInstalling] = useState(false);
@@ -27,6 +27,19 @@ export function useUpdateChecker(): UpdateState {
 			})
 			.catch((err) => console.warn("[updater] error:", err))
 			.finally(() => setChecking(false));
+	}, []);
+
+	// Re-check every 2 hours while the app is open
+	useEffect(() => {
+		const id = setInterval(
+			() => {
+				check()
+					.then((result) => setUpdate(result ?? null))
+					.catch(() => {});
+			},
+			2 * 60 * 60 * 1000
+		);
+		return () => clearInterval(id);
 	}, []);
 
 	const dismiss = useCallback(() => setUpdate(null), []);
@@ -55,4 +68,4 @@ export function useUpdateChecker(): UpdateState {
 	}, [update]);
 
 	return { update, checking, installing, progress, dismiss, install };
-}
+};

@@ -139,7 +139,8 @@ export const SubtitlePicker = ({
 			setSelectedFileId(entry.fileId);
 			// Compute rank within this language group for auto-selection on next episode.
 			const langGroup = grouped.find((g) => g.lang === entry.languageCode);
-			const rankInLanguage = langGroup?.entries.findIndex((e) => e.fileId === entry.fileId) ?? 0;
+			const rankInLanguage =
+				langGroup?.entries.findIndex((e) => e.fileId === entry.fileId) ?? 0;
 			onSubtitleSelected?.(entry.fileId, cues, entry, rankInLanguage);
 			onClose();
 		} catch (e) {
@@ -179,9 +180,7 @@ export const SubtitlePicker = ({
 	const startHold = (direction: 1 | -1) => {
 		holdDirectionRef.current = direction;
 		holdStartRef.current = Date.now();
-		onDelayChange?.(
-			Math.round((subtitleDelay + direction * getDelayStep(0)) * 10) / 10
-		);
+		onDelayChange?.(Math.round((subtitleDelay + direction * getDelayStep(0)) * 10) / 10);
 		scheduleNextStep();
 	};
 
@@ -199,10 +198,7 @@ export const SubtitlePicker = ({
 	// ─── Render ─────────────────────────────────────────────────────────────
 	return (
 		// Outer wrapper anchors both panels; pickerRef covers the whole area for click-outside.
-		<div
-			ref={pickerRef}
-			className="absolute bottom-20 right-4 z-50 flex items-end gap-2"
-		>
+		<div ref={pickerRef} className="absolute bottom-20 right-4 z-50 flex items-end gap-2">
 			{/* ── Settings panel (floats to the left of the list) ── */}
 			{showSettings && (
 				<div className={cn(panelClass, "w-64 max-h-[60vh] overflow-y-auto")}>
@@ -240,7 +236,9 @@ export const SubtitlePicker = ({
 								<span className="text-[10px] text-white/40">Size</span>
 								<div className="flex items-center gap-2">
 									<button
-										onClick={() => onFontSizeChange?.(Math.max(12, subtitleFontSize - 2))}
+										onClick={() =>
+											onFontSizeChange?.(Math.max(12, subtitleFontSize - 2))
+										}
 										className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-xs font-bold"
 									>
 										A−
@@ -249,7 +247,9 @@ export const SubtitlePicker = ({
 										{subtitleFontSize}px
 									</span>
 									<button
-										onClick={() => onFontSizeChange?.(Math.min(40, subtitleFontSize + 2))}
+										onClick={() =>
+											onFontSizeChange?.(Math.min(40, subtitleFontSize + 2))
+										}
 										className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-sm font-bold"
 									>
 										A+
@@ -299,7 +299,8 @@ export const SubtitlePicker = ({
 								Position
 							</div>
 							<p className="text-[10px] text-white/40 leading-relaxed">
-								Drag the subtitle text on screen, or use ↑ ↓ ← → arrow keys to reposition.
+								Drag the subtitle text on screen, or use ↑ ↓ ← → arrow keys to
+								reposition.
 							</p>
 						</div>
 					</div>
@@ -357,7 +358,8 @@ export const SubtitlePicker = ({
 								<div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-xs">
 									<Check className="h-3 w-3 shrink-0 text-blue-400" />
 									<span className="truncate text-white font-medium">
-										{currentSelectedEntry.releaseName ?? `Subtitle ${currentSelectedEntry.fileId}`}
+										{currentSelectedEntry.releaseName ??
+											`Subtitle ${currentSelectedEntry.fileId}`}
 									</span>
 									<span className="text-white/30 shrink-0 ml-auto">
 										{currentSelectedEntry.languageCode}
@@ -405,7 +407,9 @@ export const SubtitlePicker = ({
 										<span className="truncate">
 											{entry.releaseName ?? `Subtitle ${entry.fileId}`}
 										</span>
-										<span className="text-white/30 shrink-0">.{entry.format}</span>
+										<span className="text-white/30 shrink-0">
+											.{entry.format}
+										</span>
 									</button>
 								))}
 							</div>

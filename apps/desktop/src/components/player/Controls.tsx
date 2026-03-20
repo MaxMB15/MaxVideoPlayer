@@ -124,7 +124,6 @@ export const Controls = ({
 
 				{onInfo && <div className="w-px h-4 bg-white/20 mx-0.5 shrink-0" />}
 
-
 				{/* Playback controls */}
 				{state.isPaused || !state.isPlaying ? (
 					<Button
@@ -208,27 +207,46 @@ export const Controls = ({
 				)}
 
 				{/* Autoplay toggle — only shown for series (when episode nav is available) */}
-				{onAutoplayChange !== undefined && (onPrevEpisode !== undefined || onNextEpisode !== undefined) && (
-					<button
-						onClick={() => onAutoplayChange(!autoplay)}
-						aria-label={autoplay ? "Autoplay on" : "Autoplay off"}
-						className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-white/10 transition-colors"
-					>
-						<span className={cn("text-[10px] font-medium uppercase tracking-wide", autoplay ? "text-white/70" : "text-white/30")}>
-							Auto
-						</span>
-						{/* Pill toggle */}
-						<div className={cn("relative w-7 h-3.5 rounded-full transition-colors duration-200", autoplay ? "bg-blue-500" : "bg-white/20")}>
-							<div className={cn("absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform duration-200", autoplay ? "translate-x-[14px]" : "translate-x-0.5")} />
-						</div>
-					</button>
-				)}
+				{onAutoplayChange !== undefined &&
+					(onPrevEpisode !== undefined || onNextEpisode !== undefined) && (
+						<button
+							onClick={() => onAutoplayChange(!autoplay)}
+							aria-label={autoplay ? "Autoplay on" : "Autoplay off"}
+							className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-white/10 transition-colors"
+						>
+							<span
+								className={cn(
+									"text-[10px] font-medium uppercase tracking-wide",
+									autoplay ? "text-white/70" : "text-white/30"
+								)}
+							>
+								Auto
+							</span>
+							{/* Pill toggle */}
+							<div
+								className={cn(
+									"relative w-7 h-3.5 rounded-full transition-colors duration-200",
+									autoplay ? "bg-blue-500" : "bg-white/20"
+								)}
+							>
+								<div
+									className={cn(
+										"absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform duration-200",
+										autoplay ? "translate-x-[14px]" : "translate-x-0.5"
+									)}
+								/>
+							</div>
+						</button>
+					)}
 
 				{onSubtitles && (
 					<Button
 						variant="ghost"
 						size="icon"
-						className={cn("text-white hover:bg-white/20", hasSubtitles && "text-blue-400")}
+						className={cn(
+							"text-white hover:bg-white/20",
+							hasSubtitles && "text-blue-400"
+						)}
 						onClick={onSubtitles}
 						aria-label="Subtitles"
 					>

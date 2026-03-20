@@ -26,7 +26,7 @@ export const MovieInfoDrawer = ({
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
 	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
 	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
-		prefetchedMdbListData ?? null,
+		prefetchedMdbListData ?? null
 	);
 
 	useEffect(() => {
