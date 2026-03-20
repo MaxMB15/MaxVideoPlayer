@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import bmcQr from "@/assets/bmc-qr.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -566,6 +567,35 @@ export const Settings = () => {
 								<p className="text-xs text-destructive">{historyError}</p>
 							)}
 						</div>
+					</CardContent>
+				</Card>
+
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-base">Support</CardTitle>
+					</CardHeader>
+					<CardContent className="space-y-3">
+						<p className="text-sm text-muted-foreground">
+							MaxVideoPlayer is free and open source. If you find it useful,
+							consider supporting development.
+						</p>
+						<a
+							href="https://buymeacoffee.com/MaxMB15"
+							target="_blank"
+							rel="noreferrer"
+							className="block w-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+							aria-label="Donate via Buy Me a Coffee"
+						>
+							<img src={bmcQr} alt="Buy me a coffee QR code" className="w-full h-auto" />
+						</a>
+						<a
+							href="https://buymeacoffee.com/MaxMB15"
+							target="_blank"
+							rel="noreferrer"
+							className="inline-flex text-sm font-semibold bg-[#5F7FFF] text-white px-4 py-2 rounded-lg hover:opacity-90 transition-opacity"
+						>
+							Buy me a coffee
+						</a>
 					</CardContent>
 				</Card>
 
