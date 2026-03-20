@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { PlayerView } from "./components/player/VideoPlayer";
@@ -49,24 +48,6 @@ function AppRoutes({ channelsRefresh, channelsRefreshAll, updateState }: AppRout
 
 	const donation = useDonationPrompt({ enabled: splash.dismissed });
 
-	// Inject BMC floating widget script once splash is dismissed
-	useEffect(() => {
-		if (!splash.dismissed) return;
-		if (document.querySelector('script[data-name="BMC-Widget"]')) return;
-		const script = document.createElement("script");
-		script.setAttribute("data-name", "BMC-Widget");
-		script.setAttribute("data-cfasync", "false");
-		script.src = "https://cdnjs.buymeacoffee.com/1.0.0/widget.prod.min.js";
-		script.setAttribute("data-id", "MaxMB15");
-		script.setAttribute("data-description", "Support me on Buy me a coffee!");
-		script.setAttribute("data-message", "");
-		script.setAttribute("data-color", "#5F7FFF");
-		script.setAttribute("data-position", "Right");
-		script.setAttribute("data-x_margin", "18");
-		script.setAttribute("data-y_margin", "18");
-		document.body.appendChild(script);
-	}, [splash.dismissed]);
-
 	return (
 		<>
 			{!splash.dismissed && <SplashScreen splash={splash} />}
@@ -81,7 +62,7 @@ function AppRoutes({ channelsRefresh, channelsRefreshAll, updateState }: AppRout
 			</Routes>
 
 			<UpdateBanner state={updateState} hidden={!splash.dismissed} />
-			{donation.shouldShow && (
+			{donation.shouldShow && !updateState.update && (
 				<DonationPopup onDismiss={donation.dismiss} />
 			)}
 		</>
