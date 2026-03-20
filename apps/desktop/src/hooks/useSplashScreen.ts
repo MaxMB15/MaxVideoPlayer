@@ -165,7 +165,7 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 
 			setAllDone(true);
 			onCompleteRef.current?.();
-		}
+		};
 
 		run();
 		return () => {
@@ -177,4 +177,4 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 		steps.length === 0 ? 0 : steps.filter((s) => s.status === "done").length / steps.length;
 
 	return { steps, allDone, progress, update, dismissed, hasProviders, dismiss };
-}
+};

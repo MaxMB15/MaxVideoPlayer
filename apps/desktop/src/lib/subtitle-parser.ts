@@ -7,12 +7,12 @@ const parseTimestamp = (ts: string): number => {
 	if (parts.length !== 3) return 0;
 	const [h, m, s] = parts.map(Number);
 	return h * 3600 + m * 60 + s;
-}
+};
 
 /** Strip SRT/HTML tags (<i>, <b>, <font ...>, etc.) from subtitle text. */
 const stripTags = (text: string): string => {
 	return text.replace(/<[^>]+>/g, "").trim();
-}
+};
 
 /** Parse SRT file content into an array of SubtitleCue objects. */
 export const parseSrt = (content: string): SubtitleCue[] => {
@@ -47,4 +47,4 @@ export const parseSrt = (content: string): SubtitleCue[] => {
 	}
 
 	return cues;
-}
+};

@@ -73,4 +73,4 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 			)}
 		</div>
 	);
-}
+};

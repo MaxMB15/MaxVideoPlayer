@@ -47,7 +47,10 @@ export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 				<span className="text-[11px] font-semibold bg-red-500/15 text-red-500 px-2 py-0.5 rounded-full">
 					🍅 {rtCritic}%
 					{rtCriticCount && (
-						<span className="font-normal opacity-70"> · {formatVotes(rtCriticCount)}</span>
+						<span className="font-normal opacity-70">
+							{" "}
+							· {formatVotes(rtCriticCount)}
+						</span>
 					)}
 				</span>
 			)}
@@ -60,7 +63,10 @@ export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
 				<span className="text-[11px] font-semibold bg-orange-500/15 text-orange-500 px-2 py-0.5 rounded-full">
 					🍿 {rtAudience}%
 					{rtAudienceCount && (
-						<span className="font-normal opacity-70"> · {formatVotes(rtAudienceCount)}</span>
+						<span className="font-normal opacity-70">
+							{" "}
+							· {formatVotes(rtAudienceCount)}
+						</span>
 					)}
 				</span>
 			)}

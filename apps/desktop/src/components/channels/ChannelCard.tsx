@@ -113,11 +113,15 @@ const RowCard = memo(function RowCard({
 							onToggleFavorite(channel);
 						}}
 						className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-						aria-label={channel.isFavorite ? "Remove from favorites" : "Add to favorites"}
+						aria-label={
+							channel.isFavorite ? "Remove from favorites" : "Add to favorites"
+						}
 					>
 						<Heart
 							className={`h-3 w-3 transition-colors ${
-								channel.isFavorite ? "fill-current text-red-500" : "text-muted-foreground"
+								channel.isFavorite
+									? "fill-current text-red-500"
+									: "text-muted-foreground"
 							}`}
 						/>
 					</button>

@@ -49,9 +49,7 @@ export const EpgTimelineBar = ({
 	const nowPct = pct(now);
 	const gridMarks = getGridMarks(windowStart, windowEnd);
 
-	const visible = programmes.filter(
-		(p) => p.endTime > windowStart && p.startTime < windowEnd,
-	);
+	const visible = programmes.filter((p) => p.endTime > windowStart && p.startTime < windowEnd);
 
 	return (
 		<div className="w-full">
@@ -122,7 +120,9 @@ export const EpgTimelineBar = ({
 							className={[
 								"absolute top-0 bottom-0 border-r border-white/8 z-[1] overflow-hidden",
 								"before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-white/18 before:pointer-events-none",
-								onSelect ? "cursor-pointer transition-all duration-100" : "cursor-default",
+								onSelect
+									? "cursor-pointer transition-all duration-100"
+									: "cursor-default",
 							].join(" ")}
 							style={{
 								left: `${left.toFixed(3)}%`,
@@ -132,14 +132,16 @@ export const EpgTimelineBar = ({
 							onMouseEnter={
 								onSelect
 									? (e) => {
-											(e.currentTarget as HTMLDivElement).style.background = hoverBg;
+											(e.currentTarget as HTMLDivElement).style.background =
+												hoverBg;
 										}
 									: undefined
 							}
 							onMouseLeave={
 								onSelect
 									? (e) => {
-											(e.currentTarget as HTMLDivElement).style.background = bg;
+											(e.currentTarget as HTMLDivElement).style.background =
+												bg;
 										}
 									: undefined
 							}

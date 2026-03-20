@@ -13,7 +13,13 @@ import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { usePlatform } from "@/hooks/usePlatform";
 import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
-import type { Channel, Category, EpgProgram, EpgSearchResult, WatchHistoryEntry } from "@/lib/types";
+import type {
+	Channel,
+	Category,
+	EpgProgram,
+	EpgSearchResult,
+	WatchHistoryEntry,
+} from "@/lib/types";
 
 type Tab = "live" | "movie" | "series" | "favorites" | "history";
 
@@ -102,10 +108,13 @@ export const ChannelList = () => {
 		const effectiveWidth = containerWidth > 0 ? containerWidth : 400;
 		// rootRef measures the full component width; the scroll container inside has px-3 (12px)
 		// padding on each side, so subtract 24px to get the actual content width.
-		const timelinePx = Math.max(200, effectiveWidth - 24 - ROW_CARD_LEFT_WIDTH - RIGHT_BUTTONS_PX);
+		const timelinePx = Math.max(
+			200,
+			effectiveWidth - 24 - ROW_CARD_LEFT_WIDTH - RIGHT_BUTTONS_PX
+		);
 		const totalHours = Math.max(3, timelinePx / PX_PER_HOUR);
 		const pastSec = Math.round((totalHours / 3) * 3600);
-		const futureSec = Math.round((totalHours * 2 / 3) * 3600);
+		const futureSec = Math.round(((totalHours * 2) / 3) * 3600);
 		return { windowStart: now - pastSec, windowEnd: now + futureSec };
 	}, [containerWidth]);
 
@@ -806,7 +815,10 @@ export const ChannelList = () => {
 							{/* Virtual rows */}
 							{virtualizer.getVirtualItems().map((virtualRow) => {
 								const startIdx = virtualRow.index * columnsPerRow;
-								const rowChannels = filtered.slice(startIdx, startIdx + columnsPerRow);
+								const rowChannels = filtered.slice(
+									startIdx,
+									startIdx + columnsPerRow
+								);
 								return (
 									<div
 										key={virtualRow.key}

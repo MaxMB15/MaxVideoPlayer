@@ -28,7 +28,7 @@ export const SplashScreen = ({ splash }: SplashScreenProps) => {
 			<RightPanel />
 		</div>
 	);
-}
+};
 
 // ── Left panel ──────────────────────────────────────────────────────────────
 
@@ -41,7 +41,14 @@ interface LeftPanelProps {
 	onDismiss: () => void;
 }
 
-const LeftPanel = ({ steps, allDone, progress, update, hasProviders, onDismiss }: LeftPanelProps) => {
+const LeftPanel = ({
+	steps,
+	allDone,
+	progress,
+	update,
+	hasProviders,
+	onDismiss,
+}: LeftPanelProps) => {
 	const [installing, setInstalling] = useState(false);
 	const [installProgress, setInstallProgress] = useState<number | null>(null);
 
@@ -182,7 +189,7 @@ const LeftPanel = ({ steps, allDone, progress, update, hasProviders, onDismiss }
 			</div>
 		</div>
 	);
-}
+};
 
 // ── Step row ──────────────────────────────────────────────────────────────
 
@@ -203,7 +210,7 @@ const StepRow = ({ step }: { step: SplashStep }) => {
 			</span>
 		</div>
 	);
-}
+};
 
 const StepIcon = ({ status }: { status: StepStatus }) => {
 	if (status === "done") {
@@ -225,7 +232,7 @@ const StepIcon = ({ status }: { status: StepStatus }) => {
 		return <RefreshCw className="w-5 h-5 text-primary animate-spin shrink-0" />;
 	}
 	return <span className="w-5 h-5 rounded-full border-2 border-border shrink-0" />;
-}
+};
 
 // ── Right panel ───────────────────────────────────────────────────────────
 
@@ -259,4 +266,4 @@ const RightPanel = () => {
 			</button>
 		</div>
 	);
-}
+};

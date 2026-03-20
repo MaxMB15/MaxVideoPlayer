@@ -113,15 +113,14 @@ export const fetchOmdbData = (
 
 export const getMdbListApiKey = (): Promise<string | null> => invoke("get_mdblist_api_key");
 
-export const setMdbListApiKey = (key: string): Promise<void> => invoke("set_mdblist_api_key", { key });
+export const setMdbListApiKey = (key: string): Promise<void> =>
+	invoke("set_mdblist_api_key", { key });
 
 export const testMdbListApiKey = (key: string): Promise<boolean> =>
 	invoke("test_mdblist_api_key", { key });
 
-export const fetchMdbListData = (
-	imdbId: string,
-	mediaType: string
-): Promise<MdbListData | null> => invoke("fetch_mdblist_data", { imdbId, mediaType });
+export const fetchMdbListData = (imdbId: string, mediaType: string): Promise<MdbListData | null> =>
+	invoke("fetch_mdblist_data", { imdbId, mediaType });
 
 // --- OpenSubtitles Commands ---
 
@@ -138,8 +137,7 @@ export const searchSubtitles = (
 	imdbId: string,
 	season?: number,
 	episode?: number
-): Promise<SubtitleSearchResult | null> =>
-	invoke("search_subtitles", { imdbId, season, episode });
+): Promise<SubtitleSearchResult | null> => invoke("search_subtitles", { imdbId, season, episode });
 
 export const downloadSubtitle = (fileId: number): Promise<string> =>
 	invoke("download_subtitle", { fileId });

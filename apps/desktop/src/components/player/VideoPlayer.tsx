@@ -9,7 +9,18 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
-import { mpvSetBounds, recordPlayStart, recordPlayEnd, fetchOmdbData, fetchMdbListData, searchSubtitles, downloadSubtitle, readSubtitleFile, mpvSubAdd, mpvSubRemove } from "@/lib/tauri";
+import {
+	mpvSetBounds,
+	recordPlayStart,
+	recordPlayEnd,
+	fetchOmdbData,
+	fetchMdbListData,
+	searchSubtitles,
+	downloadSubtitle,
+	readSubtitleFile,
+	mpvSubAdd,
+	mpvSubRemove,
+} from "@/lib/tauri";
 import { parseSrt } from "@/lib/subtitle-parser";
 import type { Channel, OmdbData, MdbListData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -247,7 +258,7 @@ export const PlayerView = () => {
 	// where setEnrichedMeta(null) → activeImdbId → null mid-flight would kill the search.
 	useEffect(() => {
 		if (autoLoadTrigger === 0) return; // no episode navigation yet
-		if (!activeImdbId) return;         // OMDB still in-flight; re-run when it resolves
+		if (!activeImdbId) return; // OMDB still in-flight; re-run when it resolves
 		const pref = subtitlePreferenceRef.current;
 		if (!pref) return;
 
@@ -256,7 +267,9 @@ export const PlayerView = () => {
 		searchSubtitles(activeImdbId, subtitleSeasonRef.current, subtitleEpisodeRef.current)
 			.then(async (result) => {
 				if (cancelled) return;
-				const langEntries = (result?.entries ?? []).filter((e) => e.languageCode === pref.languageCode);
+				const langEntries = (result?.entries ?? []).filter(
+					(e) => e.languageCode === pref.languageCode
+				);
 				if (langEntries.length === 0) return; // preferred language not available — keep none
 				const entry = langEntries[Math.min(pref.rankInLanguage, langEntries.length - 1)];
 				await mpvSubRemove(-1).catch(() => {});
@@ -274,7 +287,7 @@ export const PlayerView = () => {
 		return () => {
 			cancelled = true;
 		};
-	// eslint-disable-next-line react-hooks/exhaustive-deps
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [autoLoadTrigger, activeImdbId]);
 
 	const handleSelectChannel = useCallback(
@@ -484,7 +497,15 @@ export const PlayerView = () => {
 			}
 			setShowControls(true);
 		},
-		[mpv, isFullscreen, showInfoDrawer, showChannelOsd, navigate, setFullscreen, subtitleEditMode]
+		[
+			mpv,
+			isFullscreen,
+			showInfoDrawer,
+			showChannelOsd,
+			navigate,
+			setFullscreen,
+			subtitleEditMode,
+		]
 	);
 
 	const handleStop = useCallback(() => {
@@ -603,7 +624,10 @@ export const PlayerView = () => {
 						setSubtitleCues(cues ?? []);
 						setSelectedSubtitleEntry(entry ?? null);
 						if (entry && rankInLanguage !== undefined) {
-							setSubtitlePreference({ languageCode: entry.languageCode, rankInLanguage });
+							setSubtitlePreference({
+								languageCode: entry.languageCode,
+								rankInLanguage,
+							});
 						} else {
 							// User clicked None — clear preference so next episode gets no subtitle.
 							setSubtitlePreference(null);
@@ -618,7 +642,9 @@ export const PlayerView = () => {
 					onFontFamilyChange={setSubtitleFontFamily}
 					onDelayChange={(d) => {
 						setSubtitleDelay(d);
-						import("@/lib/tauri").then(({ mpvSetSubDelay }) => mpvSetSubDelay(d).catch(() => {}));
+						import("@/lib/tauri").then(({ mpvSetSubDelay }) =>
+							mpvSetSubDelay(d).catch(() => {})
+						);
 					}}
 					onSettingsModeChange={(active) => setSubtitleEditMode(active)}
 				/>

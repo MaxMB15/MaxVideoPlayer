@@ -63,4 +63,4 @@ const AppRoutes = ({ updateState }: AppRoutesProps) => {
 			)}
 		</>
 	);
-}
+};

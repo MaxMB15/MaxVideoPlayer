@@ -17,7 +17,7 @@ const shouldShowNow = (): boolean => {
 	if (!stored) return true;
 	const lastShown = parseInt(stored, 10);
 	return isNaN(lastShown) ? true : Date.now() - lastShown >= THIRTY_DAYS_MS;
-}
+};
 
 export const useDonationPrompt = ({ enabled }: UseDonationPromptOptions): DonationPromptState => {
 	const [shouldShow, setShouldShow] = useState(false);
@@ -33,4 +33,4 @@ export const useDonationPrompt = ({ enabled }: UseDonationPromptOptions): Donati
 	}, []);
 
 	return { shouldShow, dismiss };
-}
+};

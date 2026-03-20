@@ -68,4 +68,4 @@ export const useUpdateChecker = (): UpdateState => {
 	}, [update]);
 
 	return { update, checking, installing, progress, dismiss, install };
-}
+};

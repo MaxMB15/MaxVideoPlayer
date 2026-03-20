@@ -5,4 +5,4 @@ export const openUrl = async (url: string): Promise<void> => {
 	} catch {
 		window.open(url, "_blank");
 	}
-}
+};

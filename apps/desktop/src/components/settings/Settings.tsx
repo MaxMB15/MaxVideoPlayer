@@ -58,7 +58,7 @@ const DonationReset = () => {
 			)}
 		</Button>
 	);
-}
+};
 
 export const Settings = () => {
 	const { platform, layoutMode } = usePlatform();
