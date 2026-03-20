@@ -600,15 +600,15 @@ export const Settings = () => {
 							MaxVideoPlayer is free and open source. If you find it useful,
 							consider supporting development.
 						</p>
-						<button
-							type="button"
-							onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
-							className="w-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-							aria-label="Donate via Buy Me a Coffee"
-						>
-							<img src={bmcQr} alt="Buy me a coffee QR code" className="w-full h-auto" />
-						</button>
-						<div className="flex justify-center">
+						<div className="flex items-center gap-4">
+							<button
+								type="button"
+								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+								className="w-32 shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+								aria-label="Donate via Buy Me a Coffee"
+							>
+								<img src={bmcQr} alt="Buy me a coffee QR code" className="w-full h-auto" />
+							</button>
 							<button
 								type="button"
 								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
