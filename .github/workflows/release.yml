@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_HOME: /Users/runner/.cargo
   CARGO_INCREMENTAL: 0
   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -15,6 +14,8 @@ env:
 jobs:
   release-macos:
     runs-on: macos-latest
+    env:
+      CARGO_HOME: /Users/runner/.cargo
     permissions:
       contents: write
 
@@ -182,3 +183,129 @@ jobs:
             "${UPDATER}#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz" \
             "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig" \
             "latest.json"
+
+  release-linux:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_HOME: /home/runner/.cargo
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        run: rm -f package-lock.json && npm install
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libmpv-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            libegl-dev libssl-dev pkg-config librsvg2-dev \
+            patchelf rpm
+
+      - name: Prepare signing key
+        run: |
+          python3 - << 'EOF'
+          import base64, os, sys
+          key = os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "")
+          if not key.strip():
+              print("[signing] ERROR: no signing key set.")
+              sys.exit(1)
+          key = key.replace("\\n", "\n")
+          def try_b64(s):
+              try: return base64.b64decode(s.strip(), validate=True).decode("utf-8")
+              except Exception: return None
+          if "untrusted comment:" in key:
+              final_key = key
+          else:
+              current = key
+              final_key = None
+              for depth in range(1, 3):
+                  decoded = try_b64(current)
+                  if decoded is None:
+                      print(f"[signing] ERROR: base64 decode failed at depth {depth}.")
+                      sys.exit(1)
+                  if "untrusted comment:" in decoded:
+                      final_key = decoded
+                      break
+                  current = decoded
+              if final_key is None:
+                  print("[signing] ERROR: key is not a valid minisign private key.")
+                  sys.exit(1)
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("TAURI_SIGNING_PRIVATE_KEY<<__ENDKEY__\n")
+              f.write(final_key.rstrip("\n") + "\n")
+              f.write("__ENDKEY__\n")
+          print("[signing] Key written to GITHUB_ENV.")
+          EOF
+
+      - name: Build Tauri app
+        run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Create updater artifacts
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          BUNDLE_DIR="target/release/bundle"
+          APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" | head -1)
+
+          if [[ -n "$APPIMAGE" ]]; then
+            UPDATER="$BUNDLE_DIR/MaxVideoPlayer_linux.tar.gz"
+            tar czf "$UPDATER" -C "$(dirname "$APPIMAGE")" "$(basename "$APPIMAGE")"
+
+            B64_KEY=$(python3 -c "import base64,os; print(base64.b64encode(os.environ['TAURI_SIGNING_PRIVATE_KEY'].encode()).decode())")
+            if [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
+              cd apps/desktop && npx tauri signer sign -k "$B64_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "../../$UPDATER"
+              cd -
+            else
+              cd apps/desktop && npx tauri signer sign -k "$B64_KEY" --no-password "../../$UPDATER"
+              cd -
+            fi
+          fi
+
+      - name: Publish to GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$VERSION"
+          BUNDLE_DIR="target/release/bundle"
+
+          # Collect all Linux artifacts
+          ARTIFACTS=()
+          for deb in "$BUNDLE_DIR"/deb/*.deb; do
+            [[ -f "$deb" ]] && ARTIFACTS+=("$deb")
+          done
+          for rpm in "$BUNDLE_DIR"/rpm/*.rpm; do
+            [[ -f "$rpm" ]] && ARTIFACTS+=("$rpm")
+          done
+          for appimage in "$BUNDLE_DIR"/appimage/*.AppImage; do
+            [[ -f "$appimage" ]] && ARTIFACTS+=("$appimage")
+          done
+
+          # Upload to existing draft release (created by macOS job)
+          for artifact in "${ARTIFACTS[@]}"; do
+            gh release upload "v${VERSION}" "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber || true
+          done
