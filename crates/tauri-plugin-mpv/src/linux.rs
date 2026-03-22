@@ -83,6 +83,7 @@ pub struct LinuxGlRenderer {
     x11_display: Option<*mut c_void>,
     x11_child_window: u64,
     x11_parent_window: u64,
+    x11_colormap: u64,
     xlib: Option<x11_dl::xlib::Xlib>,
     /// Whether we opened the X11 display ourselves and must close it on drop.
     owns_display: bool,
@@ -189,12 +190,9 @@ impl LinuxGlRenderer {
         egl.get_config_attrib(egl_display, config, egl::NATIVE_VISUAL_ID, &mut native_visual_id)
             .map_err(|e| format!("eglGetConfigAttrib(NATIVE_VISUAL_ID): {:?}", e))?;
 
-        let screen = unsafe { (xlib.XDefaultScreen)(x_display) };
-        let _ = screen; // used implicitly via XDefaultScreen side-effects
-
         // Create a child window within the parent (Tauri) window using the visual
         // that matches the EGL config's NATIVE_VISUAL_ID to avoid EGL_BAD_MATCH.
-        let child_window = unsafe {
+        let (child_window, x11_colormap) = unsafe {
             // Find the X11 visual matching the EGL config's native visual ID.
             let mut vi_template: x11_dl::xlib::XVisualInfo = std::mem::zeroed();
             vi_template.visualid = native_visual_id as u64;
@@ -273,7 +271,7 @@ impl LinuxGlRenderer {
 
             (xlib.XFlush)(x_display);
 
-            child
+            (child, colormap)
         };
 
         // --- EGL surface on the child window ---
@@ -302,6 +300,7 @@ impl LinuxGlRenderer {
             x11_display: Some(x11_display_ptr),
             x11_child_window: child_window,
             x11_parent_window: parent_window,
+            x11_colormap,
             xlib: Some(xlib),
             owns_display,
             valid: Arc::new(AtomicBool::new(true)),
@@ -417,14 +416,6 @@ impl PlatformRenderer for LinuxGlRenderer {
 
         let egl = egl_instance();
 
-        // Make context current so mpv_render_context_free() can clean up GL resources.
-        let _ = egl.make_current(
-            self.egl_display,
-            Some(self.egl_surface),
-            Some(self.egl_surface),
-            Some(self.egl_context),
-        );
-
         // Drop the RenderContext on the GLib main thread, blocking until all already-queued
         // idle callbacks have drained.  This prevents the use-after-free race where a callback
         // queued before valid was cleared dereferences inner_ptr after the Box is gone.
@@ -441,12 +432,14 @@ impl PlatformRenderer for LinuxGlRenderer {
                 let _ = tx.send(());
             });
             // Block until the GLib main thread has actually dropped the render context.
-            let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+            if rx.recv_timeout(std::time::Duration::from_secs(2)).is_err() {
+                tracing::warn!("[Linux renderer] detach: timed out waiting for GLib idle drain — possible main-thread call");
+            }
         }
 
         // Clean up EGL resources, guarding against double-free.
-        let _ = egl.make_current(self.egl_display, None, None, None);
         if self.egl_display != egl::NO_DISPLAY {
+            let _ = egl.make_current(self.egl_display, None, None, None);
             if self.egl_surface != egl::NO_SURFACE {
                 let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
                 self.egl_surface = egl::NO_SURFACE;
@@ -455,17 +448,25 @@ impl PlatformRenderer for LinuxGlRenderer {
                 let _ = egl.destroy_context(self.egl_display, self.egl_context);
                 self.egl_context = egl::NO_CONTEXT;
             }
+            let _ = egl.terminate(self.egl_display);
+            self.egl_display = egl::NO_DISPLAY;
         }
 
-        // Destroy X11 child window
+        // Destroy X11 child window and free colormap
         if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
             if self.x11_child_window != 0 {
                 unsafe {
                     (xlib.XDestroyWindow)(x_display, self.x11_child_window);
-                    (xlib.XFlush)(x_display);
                 }
             }
+            if self.x11_colormap != 0 {
+                unsafe {
+                    (xlib.XFreeColormap)(x_display, self.x11_colormap);
+                }
+                self.x11_colormap = 0;
+            }
+            unsafe { (xlib.XFlush)(x_display) };
             // Close the display connection if we opened it ourselves (XCB path).
             if self.owns_display {
                 unsafe { (xlib.XCloseDisplay)(x_display) };
