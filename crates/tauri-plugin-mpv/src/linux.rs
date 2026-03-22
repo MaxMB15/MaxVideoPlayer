@@ -84,6 +84,8 @@ pub struct LinuxGlRenderer {
     x11_child_window: u64,
     x11_parent_window: u64,
     xlib: Option<x11_dl::xlib::Xlib>,
+    /// Whether we opened the X11 display ourselves and must close it on drop.
+    owns_display: bool,
     valid: Arc<AtomicBool>,
     /// Heap-stable render state. Box address is captured in the update callback.
     render_inner: Option<Box<RenderInner>>,
@@ -188,13 +190,39 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("eglGetConfigAttrib(NATIVE_VISUAL_ID): {:?}", e))?;
 
         let screen = unsafe { (xlib.XDefaultScreen)(x_display) };
+        let _ = screen; // used implicitly via XDefaultScreen side-effects
 
-        // Create a child window within the parent (Tauri) window
+        // Create a child window within the parent (Tauri) window using the visual
+        // that matches the EGL config's NATIVE_VISUAL_ID to avoid EGL_BAD_MATCH.
         let child_window = unsafe {
-            let root = (xlib.XRootWindow)(x_display, screen);
-            let black = (xlib.XBlackPixel)(x_display, screen);
+            // Find the X11 visual matching the EGL config's native visual ID.
+            let mut vi_template: x11_dl::xlib::XVisualInfo = std::mem::zeroed();
+            vi_template.visualid = native_visual_id as u64;
+            let mut nitems: i32 = 0;
+            let vi_ptr = (xlib.XGetVisualInfo)(
+                x_display,
+                x11_dl::xlib::VisualIDMask,
+                &mut vi_template,
+                &mut nitems,
+            );
+            if vi_ptr.is_null() || nitems < 1 {
+                return Err(format!(
+                    "XGetVisualInfo failed for visual ID {}",
+                    native_visual_id
+                ));
+            }
+            let vi = *vi_ptr;
+            (xlib.XFree)(vi_ptr as *mut c_void);
 
-            // Get parent geometry to size child window to fill it initially
+            // Create a colormap for the matched visual.
+            let colormap = (xlib.XCreateColormap)(
+                x_display,
+                parent_window,
+                vi.visual,
+                0, // AllocNone
+            );
+
+            // Get parent geometry to size child window to fill it initially.
             let mut root_ret: u64 = 0;
             let mut x_ret: i32 = 0;
             let mut y_ret: i32 = 0;
@@ -211,18 +239,29 @@ impl LinuxGlRenderer {
                 &mut border_ret, &mut depth_ret,
             );
 
-            let child = (xlib.XCreateSimpleWindow)(
+            // Set up window attributes with the correct colormap and background pixel.
+            // CWBackPixel=0x0002, CWBorderPixel=0x0008, CWEventMask=0x0800, CWColormap=0x2000
+            let mut attrs: x11_dl::xlib::XSetWindowAttributes = std::mem::zeroed();
+            attrs.colormap = colormap;
+            attrs.background_pixel = 0; // transparent black for RGBA visuals
+            attrs.border_pixel = 0;
+            attrs.event_mask = 0;
+
+            let child = (xlib.XCreateWindow)(
                 x_display,
-                parent_window, // parent
-                0, 0,          // x, y
-                w_ret.max(1), h_ret.max(1), // width, height
-                0,             // border width
-                black,         // border color
-                black,         // background color
+                parent_window,
+                0, 0,
+                w_ret.max(1), h_ret.max(1),
+                0,           // border width
+                vi.depth,    // depth from matched visual
+                1,           // InputOutput class
+                vi.visual,   // visual from EGL config
+                0x0002 | 0x0008 | 0x0800 | 0x2000, // CWBackPixel|CWBorderPixel|CWEventMask|CWColormap
+                &mut attrs,
             );
 
             if child == 0 {
-                return Err("XCreateSimpleWindow failed".to_string());
+                return Err("XCreateWindow failed".to_string());
             }
 
             // Map the child window (make it visible)
@@ -264,6 +303,7 @@ impl LinuxGlRenderer {
             x11_child_window: child_window,
             x11_parent_window: parent_window,
             xlib: Some(xlib),
+            owns_display,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
             first_frame_cb: None,
@@ -385,14 +425,37 @@ impl PlatformRenderer for LinuxGlRenderer {
             Some(self.egl_context),
         );
 
-        // Drop RenderContext (-> mpv_render_context_free) with GL context current.
-        let render_inner = self.render_inner.take();
-        drop(render_inner);
+        // Drop the RenderContext on the GLib main thread, blocking until all already-queued
+        // idle callbacks have drained.  This prevents the use-after-free race where a callback
+        // queued before valid was cleared dereferences inner_ptr after the Box is gone.
+        if let Some(render_inner) = self.render_inner.take() {
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let display = self.egl_display;
+            let surface = self.egl_surface;
+            let context = self.egl_context;
+            glib::idle_add_once(move || {
+                let egl = egl_instance();
+                let _ = egl.make_current(display, Some(surface), Some(surface), Some(context));
+                drop(render_inner);
+                let _ = egl.make_current(display, None, None, None);
+                let _ = tx.send(());
+            });
+            // Block until the GLib main thread has actually dropped the render context.
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+        }
 
-        // Clean up EGL resources
+        // Clean up EGL resources, guarding against double-free.
         let _ = egl.make_current(self.egl_display, None, None, None);
-        let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
-        let _ = egl.destroy_context(self.egl_display, self.egl_context);
+        if self.egl_display != egl::NO_DISPLAY {
+            if self.egl_surface != egl::NO_SURFACE {
+                let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
+                self.egl_surface = egl::NO_SURFACE;
+            }
+            if self.egl_context != egl::NO_CONTEXT {
+                let _ = egl.destroy_context(self.egl_display, self.egl_context);
+                self.egl_context = egl::NO_CONTEXT;
+            }
+        }
 
         // Destroy X11 child window
         if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
@@ -402,6 +465,11 @@ impl PlatformRenderer for LinuxGlRenderer {
                     (xlib.XDestroyWindow)(x_display, self.x11_child_window);
                     (xlib.XFlush)(x_display);
                 }
+            }
+            // Close the display connection if we opened it ourselves (XCB path).
+            if self.owns_display {
+                unsafe { (xlib.XCloseDisplay)(x_display) };
+                self.x11_display = None;
             }
         }
 
