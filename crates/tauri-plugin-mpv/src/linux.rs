@@ -200,7 +200,9 @@ impl LinuxGlRenderer {
             RawWindowHandle::Xlib(h) => {
                 let parent_window = h.window;
                 let x11_display_ptr = match raw_display {
-                    RawDisplayHandle::Xlib(dh) => dh.display.as_ptr(),
+                    RawDisplayHandle::Xlib(dh) => {
+                        dh.display.map(|d| d.as_ptr()).unwrap_or(std::ptr::null_mut())
+                    }
                     _ => std::ptr::null_mut(),
                 };
                 if x11_display_ptr.is_null() {
@@ -630,7 +632,7 @@ impl LinuxGlRenderer {
         tracing::debug!(
             "[Linux renderer] Wayland EGL: falling back to eglGetDisplay"
         );
-        egl.get_display(wl_display_ptr)
+        unsafe { egl.get_display(wl_display_ptr) }
             .ok_or_else(|| "Wayland: eglGetDisplay returned NO_DISPLAY".to_string())
     }
 
@@ -775,12 +777,18 @@ impl PlatformRenderer for LinuxGlRenderer {
         // the GLib main thread (e.g. Drop triggered during GTK teardown), run
         // cleanup inline to avoid deadlocking on our own idle callback.
         if let Some(render_inner) = self.render_inner.take() {
-            let display = self.egl_display;
-            let surface = self.egl_surface;
-            let context = self.egl_context;
+            // egl::Display/Surface/Context are newtype wrappers around *mut c_void
+            // and don't implement Send. Transmute to usize for cross-thread dispatch
+            // (same pattern as macOS raw pointer dispatch).
+            let display_usize = self.egl_display.as_ptr() as usize;
+            let surface_usize = self.egl_surface.as_ptr() as usize;
+            let context_usize = self.egl_context.as_ptr() as usize;
 
             let do_drop = move |ri: Box<RenderInner>| {
                 let egl = egl_instance();
+                let display: egl::Display = unsafe { std::mem::transmute(display_usize as *mut c_void) };
+                let surface: egl::Surface = unsafe { std::mem::transmute(surface_usize as *mut c_void) };
+                let context: egl::Context = unsafe { std::mem::transmute(context_usize as *mut c_void) };
                 let _ = egl.make_current(display, Some(surface), Some(surface), Some(context));
                 drop(ri);
                 let _ = egl.make_current(display, None, None, None);
