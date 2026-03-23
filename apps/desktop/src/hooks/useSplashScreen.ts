@@ -182,7 +182,8 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 	const progress =
 		steps.length === 0
 			? 0
-			: steps.filter((s) => s.status === "done" || s.status === "error").length / steps.length;
+			: steps.filter((s) => s.status === "done" || s.status === "error").length /
+				steps.length;
 
 	return { steps, allDone, progress, update, dismissed, hasProviders, dismiss };
 };

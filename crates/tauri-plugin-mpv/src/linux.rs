@@ -169,6 +169,9 @@ pub struct LinuxGlRenderer {
     valid: Arc<AtomicBool>,
     /// Heap-stable render state. Box address is captured in the update callback.
     render_inner: Option<Box<RenderInner>>,
+    /// Stable pointer to RenderInner (set during attach). Used by set_frame to
+    /// schedule a re-render after resize so the surface shows black instead of garbage.
+    render_inner_ptr: usize,
     /// Called once on first rendered frame; moved into RenderInner during attach().
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Controls whether GPU rendering happens. Toggled by set_visible().
@@ -418,6 +421,7 @@ impl LinuxGlRenderer {
             egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
+            render_inner_ptr: 0,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
         })
@@ -599,6 +603,7 @@ impl LinuxGlRenderer {
             egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
+            render_inner_ptr: 0,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
         })
@@ -664,6 +669,9 @@ impl PlatformRenderer for LinuxGlRenderer {
         )
         .map_err(|e| format!("eglMakeCurrent: {:?}", e))?;
 
+        // Load GL function pointers once (for glViewport/glClear in render_frame).
+        gl::load_with(|name| gl_get_proc_address(name) as *const _);
+
         fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
             gl_get_proc_address(name)
         }
@@ -702,7 +710,16 @@ impl PlatformRenderer for LinuxGlRenderer {
             });
         });
 
+        self.render_inner_ptr = inner_ptr;
         self.render_inner = Some(inner);
+
+        // Clear the framebuffer to black before the first mpv frame arrives.
+        // Without this, the surface shows uninitialized GPU memory (green/purple garbage).
+        unsafe {
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        let _ = egl.swap_buffers(self.egl_display, self.egl_surface);
 
         // Release the EGL context from this thread so the GLib main thread
         // can make it current in render_frame(). EGL contexts are thread-local —
@@ -747,6 +764,20 @@ impl PlatformRenderer for LinuxGlRenderer {
                 );
                 (xlib.XFlush)(x_display);
             }
+        }
+
+        // After resizing the surface, schedule a render on the GLib main thread.
+        // This clears the framebuffer to black immediately, preventing garbage
+        // pixels from appearing during the gap before mpv's next frame.
+        let inner_ptr = self.render_inner_ptr;
+        let v = self.valid.clone();
+        if inner_ptr != 0 {
+            glib::idle_add_once(move || {
+                if !v.load(Ordering::Acquire) {
+                    return;
+                }
+                unsafe { render_frame(inner_ptr) };
+            });
         }
     }
 
@@ -891,13 +922,9 @@ impl Drop for LinuxGlRenderer {
 /// Safety: caller must verify `valid = true`; `inner_ptr` must be live.
 unsafe fn render_frame(inner_ptr: usize) {
     static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    static LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let inner = &mut *(inner_ptr as *mut RenderInner);
 
     if !inner.video_active.load(Ordering::Acquire) {
-        if LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 3 {
-            tracing::debug!("[Linux renderer] render_frame: video_active=false, skipping");
-        }
         return;
     }
 
@@ -919,11 +946,16 @@ unsafe fn render_frame(inner_ptr: usize) {
     let w = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH).unwrap_or(0);
     let h = egl.query_surface(inner.egl_display, inner.egl_surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
-        if LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 5 {
-            tracing::debug!("[Linux renderer] render_frame: surface size {}x{}, skipping", w, h);
-        }
         return;
     }
+
+    // Set the GL viewport to match the current surface size and clear the
+    // framebuffer to black. Without this, resize transitions show
+    // uninitialized GPU memory (green/purple garbage) because the
+    // wl_egl_window may have been resized before mpv renders into it.
+    gl::Viewport(0, 0, w, h);
+    gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+    gl::Clear(gl::COLOR_BUFFER_BIT);
 
     let rc = &inner.ctx as *const RenderContext;
     let rc: &RenderContext = &*rc;
@@ -933,6 +965,8 @@ unsafe fn render_frame(inner_ptr: usize) {
                 // fbo=0 = default framebuffer; flip_y=true corrects GL framebuffer orientation.
                 if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
                     tracing::trace!("[Linux renderer] render error: {}", e);
+                    // Even on render error, swap the black-cleared buffer to avoid garbage.
+                    let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
                     return;
                 }
                 // Present frame. For wl_egl_window, eglSwapBuffers implicitly
@@ -948,6 +982,10 @@ unsafe fn render_frame(inner_ptr: usize) {
                 if let Some(cb) = inner.first_frame_cb.take() {
                     cb();
                 }
+            } else {
+                // No new mpv frame, but we cleared to black above (e.g. after resize).
+                // Swap so the clear is visible instead of stale/garbage pixels.
+                let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
             }
         }
         Err(e) => tracing::trace!("[Linux renderer] update error: {}", e),
