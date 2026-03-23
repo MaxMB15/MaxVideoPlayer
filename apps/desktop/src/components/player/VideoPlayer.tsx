@@ -550,7 +550,7 @@ export const PlayerView = () => {
 					<div className="text-center p-6 max-w-md">
 						<p className="text-destructive text-sm mb-2">{mpv.error}</p>
 						<p className="text-muted-foreground text-xs">
-							Run ./scripts/build-libmpv.sh macos before dev/build.
+							Check that libmpv is installed. See README for setup instructions.
 						</p>
 					</div>
 				)}
