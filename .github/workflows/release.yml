@@ -143,29 +143,13 @@ jobs:
             cd -
           fi
 
-          # Build latest.json for the auto-updater endpoint
-          SIG=$(cat "${UPDATER}.sig")
-          python3 - "$VERSION" "$SIG" << 'PYEOF'
-          import json, sys
-          from datetime import datetime, timezone
-          version, sig = sys.argv[1], sys.argv[2]
-          data = {
-            "version": version,
-            "notes": "See the CHANGELOG for details.",
-            "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "platforms": {
-              "darwin-aarch64": {
-                "signature": sig,
-                "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}/MaxVideoPlayer_{version}_aarch64.app.tar.gz"
-              }
-            }
-          }
-          with open("latest.json", "w") as f:
-            json.dump(data, f, indent=2)
-          print("latest.json written")
-          PYEOF
+      - name: Upload macOS updater signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-updater-sig
+          path: target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig
 
-      - name: Publish GitHub release
+      - name: Publish GitHub release (draft)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -181,8 +165,7 @@ jobs:
             --draft \
             "$DMG" \
             "${UPDATER}#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz" \
-            "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig" \
-            "latest.json"
+            "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig"
 
   release-linux:
     runs-on: ubuntu-latest
@@ -283,6 +266,13 @@ jobs:
             fi
           fi
 
+      - name: Upload Linux updater signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-updater-sig
+          path: target/release/bundle/MaxVideoPlayer_linux.tar.gz.sig
+          if-no-files-found: warn
+
       - name: Publish to GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -302,6 +292,12 @@ jobs:
           for appimage in "$BUNDLE_DIR"/appimage/*.AppImage; do
             [[ -f "$appimage" ]] && ARTIFACTS+=("$appimage")
           done
+          # Include updater tar.gz if it exists
+          UPDATER="$BUNDLE_DIR/MaxVideoPlayer_linux.tar.gz"
+          if [[ -f "$UPDATER" ]]; then
+            ARTIFACTS+=("$UPDATER")
+            [[ -f "${UPDATER}.sig" ]] && ARTIFACTS+=("${UPDATER}.sig")
+          fi
 
           # Upload to existing draft release (created by macOS job)
           for artifact in "${ARTIFACTS[@]}"; do
@@ -309,3 +305,65 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --clobber || true
           done
+
+  # ── Publish latest.json (depends on both platform jobs) ───────────────
+  publish-latest-json:
+    runs-on: ubuntu-latest
+    needs: [release-macos, release-linux]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download updater signatures
+        uses: actions/download-artifact@v4
+        with:
+          path: sigs
+
+      - name: Build and upload latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+
+          MACOS_SIG=""
+          if [[ -f sigs/macos-updater-sig/MaxVideoPlayer.app.tar.gz.sig ]]; then
+            MACOS_SIG=$(cat sigs/macos-updater-sig/MaxVideoPlayer.app.tar.gz.sig)
+          fi
+
+          LINUX_SIG=""
+          if [[ -f sigs/linux-updater-sig/MaxVideoPlayer_linux.tar.gz.sig ]]; then
+            LINUX_SIG=$(cat sigs/linux-updater-sig/MaxVideoPlayer_linux.tar.gz.sig)
+          fi
+
+          python3 - "$VERSION" "$MACOS_SIG" "$LINUX_SIG" << 'PYEOF'
+          import json, sys
+          from datetime import datetime, timezone
+          version, macos_sig, linux_sig = sys.argv[1], sys.argv[2], sys.argv[3]
+          platforms = {}
+          if macos_sig:
+              platforms["darwin-aarch64"] = {
+                  "signature": macos_sig,
+                  "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}/MaxVideoPlayer_{version}_aarch64.app.tar.gz"
+              }
+          if linux_sig:
+              platforms["linux-x86_64"] = {
+                  "signature": linux_sig,
+                  "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}/MaxVideoPlayer_linux.tar.gz"
+              }
+          data = {
+              "version": version,
+              "notes": "See the CHANGELOG for details.",
+              "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms
+          }
+          with open("latest.json", "w") as f:
+              json.dump(data, f, indent=2)
+          print(f"latest.json written with platforms: {list(platforms.keys())}")
+          PYEOF
+
+          gh release upload "v${VERSION}" latest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
