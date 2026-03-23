@@ -169,9 +169,6 @@ pub struct LinuxGlRenderer {
     valid: Arc<AtomicBool>,
     /// Heap-stable render state. Box address is captured in the update callback.
     render_inner: Option<Box<RenderInner>>,
-    /// Stable pointer to RenderInner (set during attach). Used by set_frame to
-    /// schedule a re-render after resize so the surface shows black instead of garbage.
-    render_inner_ptr: usize,
     /// Called once on first rendered frame; moved into RenderInner during attach().
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Controls whether GPU rendering happens. Toggled by set_visible().
@@ -421,7 +418,6 @@ impl LinuxGlRenderer {
             egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
-            render_inner_ptr: 0,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
         })
@@ -603,7 +599,6 @@ impl LinuxGlRenderer {
             egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
-            render_inner_ptr: 0,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
         })
@@ -710,7 +705,6 @@ impl PlatformRenderer for LinuxGlRenderer {
             });
         });
 
-        self.render_inner_ptr = inner_ptr;
         self.render_inner = Some(inner);
 
         // Clear the framebuffer to black before the first mpv frame arrives.
@@ -735,7 +729,7 @@ impl PlatformRenderer for LinuxGlRenderer {
     }
 
     fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64) {
-        tracing::debug!("[Linux renderer] set_frame({}, {}, {}, {})", x, y, w, h);
+        tracing::trace!("[Linux renderer] set_frame({}, {}, {}, {})", x, y, w, h);
         if let Some(ref mut wl) = self.wayland {
             // Wayland: position the subsurface and resize the wl_egl_window.
             //
@@ -766,19 +760,6 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
         }
 
-        // After resizing the surface, schedule a render on the GLib main thread.
-        // This clears the framebuffer to black immediately, preventing garbage
-        // pixels from appearing during the gap before mpv's next frame.
-        let inner_ptr = self.render_inner_ptr;
-        let v = self.valid.clone();
-        if inner_ptr != 0 {
-            glib::idle_add_once(move || {
-                if !v.load(Ordering::Acquire) {
-                    return;
-                }
-                unsafe { render_frame(inner_ptr) };
-            });
-        }
     }
 
     fn set_visible(&mut self, visible: bool) {
@@ -949,14 +930,6 @@ unsafe fn render_frame(inner_ptr: usize) {
         return;
     }
 
-    // Set the GL viewport to match the current surface size and clear the
-    // framebuffer to black. Without this, resize transitions show
-    // uninitialized GPU memory (green/purple garbage) because the
-    // wl_egl_window may have been resized before mpv renders into it.
-    gl::Viewport(0, 0, w, h);
-    gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-    gl::Clear(gl::COLOR_BUFFER_BIT);
-
     let rc = &inner.ctx as *const RenderContext;
     let rc: &RenderContext = &*rc;
     match rc.update() {
@@ -965,8 +938,6 @@ unsafe fn render_frame(inner_ptr: usize) {
                 // fbo=0 = default framebuffer; flip_y=true corrects GL framebuffer orientation.
                 if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
                     tracing::trace!("[Linux renderer] render error: {}", e);
-                    // Even on render error, swap the black-cleared buffer to avoid garbage.
-                    let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
                     return;
                 }
                 // Present frame. For wl_egl_window, eglSwapBuffers implicitly
@@ -982,10 +953,6 @@ unsafe fn render_frame(inner_ptr: usize) {
                 if let Some(cb) = inner.first_frame_cb.take() {
                     cb();
                 }
-            } else {
-                // No new mpv frame, but we cleared to black above (e.g. after resize).
-                // Swap so the clear is visible instead of stale/garbage pixels.
-                let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
             }
         }
         Err(e) => tracing::trace!("[Linux renderer] update error: {}", e),
