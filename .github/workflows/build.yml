@@ -94,6 +94,9 @@ jobs:
         # package-lock.json was generated on macOS; delete and reinstall for Linux
         run: rm -f package-lock.json && npm install
 
+      - name: Rust type-check (plugin + core)
+        run: cargo check -p tauri-plugin-mpv -p mvp-core
+
       - name: Build frontend
         run: npm run build:desktop
 

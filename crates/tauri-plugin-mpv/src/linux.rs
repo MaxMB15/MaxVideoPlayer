@@ -253,6 +253,11 @@ impl LinuxGlRenderer {
         xlib: x11_dl::xlib::Xlib,
         owns_display: bool,
     ) -> Result<Self, String> {
+        // Enable Xlib thread safety. Tauri command handlers run on a thread pool,
+        // so set_frame/set_visible may race with GTK's own X11 usage without this.
+        // Safe to call multiple times — subsequent calls are no-ops.
+        unsafe { (xlib.XInitThreads)() };
+
         let egl = egl_instance();
 
         let egl_display = unsafe { egl.get_display(x11_display_ptr) }
@@ -456,12 +461,18 @@ impl LinuxGlRenderer {
             .roundtrip(&mut state)
             .map_err(|e| format!("Wayland roundtrip: {}", e))?;
 
-        // Wrap the parent surface pointer (owned by GTK/GDK) as a proxy so
-        // we can pass it to get_subsurface(). The underlying protocol object
-        // lives in the same connection namespace.
+        // Wrap the parent surface pointer (owned by GTK/GDK) as a Rust proxy
+        // so we can pass it to get_subsurface().
         //
-        // ObjectId::from_ptr requires the interface descriptor so wayland-backend
-        // can validate the interface name against the C proxy.
+        // Safety rationale for cross-connection wrapping:
+        // - `from_foreign_display` shares the same fd and server-side object namespace
+        //   as GTK's connection — object IDs are valid across both.
+        // - `ObjectId::from_ptr` extracts the ID from the C-level wl_proxy; the server
+        //   recognizes it because it's the same connection underneath.
+        // - Dropping this `WlSurface` proxy does NOT send `wl_surface_destroy` — it
+        //   only releases the Rust wrapper. GTK retains ownership of the actual surface.
+        // - We only use `parent_surface` as an argument to `get_subsurface()`, never to
+        //   receive events or manage its lifetime.
         let parent_id = unsafe {
             ObjectId::from_ptr(WlSurface::interface(), parent_surface_ptr as *mut _)
         }
@@ -762,27 +773,37 @@ impl PlatformRenderer for LinuxGlRenderer {
 
         let egl = egl_instance();
 
-        // Drop the RenderContext on the GLib main thread, blocking until all
-        // already-queued idle callbacks have drained. This prevents the
-        // use-after-free race where a callback dereferences inner_ptr after
-        // the Box is gone.
+        // Drop the RenderContext with GL context current. If we're already on
+        // the GLib main thread (e.g. Drop triggered during GTK teardown), run
+        // cleanup inline to avoid deadlocking on our own idle callback.
         if let Some(render_inner) = self.render_inner.take() {
-            let (tx, rx) = std::sync::mpsc::channel::<()>();
             let display = self.egl_display;
             let surface = self.egl_surface;
             let context = self.egl_context;
-            glib::idle_add_once(move || {
+
+            let do_drop = move |ri: Box<RenderInner>| {
                 let egl = egl_instance();
                 let _ = egl.make_current(display, Some(surface), Some(surface), Some(context));
-                drop(render_inner);
+                drop(ri);
                 let _ = egl.make_current(display, None, None, None);
-                let _ = tx.send(());
-            });
-            if rx
-                .recv_timeout(std::time::Duration::from_secs(2))
-                .is_err()
-            {
-                tracing::warn!("[Linux renderer] detach: timed out waiting for GLib idle drain — possible main-thread call");
+            };
+
+            if glib::MainContext::default().is_owner() {
+                // Already on the main thread — run cleanup directly.
+                do_drop(render_inner);
+            } else {
+                // Schedule on the GLib main thread and block until drained.
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                glib::idle_add_once(move || {
+                    do_drop(render_inner);
+                    let _ = tx.send(());
+                });
+                if rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .is_err()
+                {
+                    tracing::warn!("[Linux renderer] detach: timed out waiting for GLib idle drain");
+                }
             }
         }
 
@@ -797,7 +818,12 @@ impl PlatformRenderer for LinuxGlRenderer {
                 let _ = egl.destroy_context(self.egl_display, self.egl_context);
                 self.egl_context = egl::NO_CONTEXT;
             }
-            let _ = egl.terminate(self.egl_display);
+            // Only terminate the EGL display on X11 where we own it.
+            // On Wayland, GTK shares the same EGLDisplay — terminating it
+            // would crash the application.
+            if self.wayland.is_none() {
+                let _ = egl.terminate(self.egl_display);
+            }
             self.egl_display = egl::NO_DISPLAY;
         }
 
@@ -918,7 +944,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "libmpv"),
         ("hwdec", "auto"),
-        ("ao", "pulse,alsa"),
+        ("ao", "pipewire,pulse,alsa"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
@@ -931,7 +957,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
 pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hwdec", "auto"),
-        ("ao", "pulse,alsa"),
+        ("ao", "pipewire,pulse,alsa"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
