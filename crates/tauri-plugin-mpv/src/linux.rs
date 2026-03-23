@@ -18,7 +18,7 @@ use libmpv2::{
     Mpv,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-use std::ffi::{c_void, CString};
+use std::ffi::c_void;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
@@ -61,12 +61,8 @@ fn egl_instance() -> &'static egl::DynamicInstance<egl::EGL1_4> {
 
 fn gl_get_proc_address(name: &str) -> *mut c_void {
     let egl = egl_instance();
-    match CString::new(name) {
-        Ok(c) => egl
-            .get_proc_address(c.as_c_str())
-            .map_or(std::ptr::null_mut(), |f| f as *mut c_void),
-        Err(_) => std::ptr::null_mut(),
-    }
+    egl.get_proc_address(name)
+        .map_or(std::ptr::null_mut(), |f| f as *mut c_void)
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +163,9 @@ pub struct LinuxGlRenderer {
     // Wayland-specific — None on X11 sessions
     wayland: Option<WaylandState>,
 
+    /// Guards against double-cleanup of EGL resources in detach().
+    egl_cleaned_up: bool,
+
     valid: Arc<AtomicBool>,
     /// Heap-stable render state. Box address is captured in the update callback.
     render_inner: Option<Box<RenderInner>>,
@@ -200,8 +199,10 @@ impl LinuxGlRenderer {
         match raw_window {
             RawWindowHandle::Xlib(h) => {
                 let parent_window = h.window;
-                let x11_display_ptr =
-                    h.display.map(|d| d.as_ptr()).unwrap_or(std::ptr::null_mut());
+                let x11_display_ptr = match raw_display {
+                    RawDisplayHandle::Xlib(dh) => dh.display.as_ptr(),
+                    _ => std::ptr::null_mut(),
+                };
                 if x11_display_ptr.is_null() {
                     return Err("X11 display pointer is null".to_string());
                 }
@@ -296,14 +297,9 @@ impl LinuxGlRenderer {
 
         let x_display = x11_display_ptr as *mut x11_dl::xlib::Display;
 
-        let mut native_visual_id: i32 = 0;
-        egl.get_config_attrib(
-            egl_display,
-            config,
-            egl::NATIVE_VISUAL_ID,
-            &mut native_visual_id,
-        )
-        .map_err(|e| format!("eglGetConfigAttrib(NATIVE_VISUAL_ID): {:?}", e))?;
+        let native_visual_id: i32 = egl
+            .get_config_attrib(egl_display, config, egl::NATIVE_VISUAL_ID)
+            .map_err(|e| format!("eglGetConfigAttrib(NATIVE_VISUAL_ID): {:?}", e))?;
 
         let (child_window, x11_colormap) = unsafe {
             let mut vi_template: x11_dl::xlib::XVisualInfo = std::mem::zeroed();
@@ -417,6 +413,7 @@ impl LinuxGlRenderer {
             xlib: Some(xlib),
             owns_display,
             wayland: None,
+            egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
             first_frame_cb: None,
@@ -591,6 +588,7 @@ impl LinuxGlRenderer {
             xlib: None,
             owns_display: false,
             wayland: Some(wayland),
+            egl_cleaned_up: false,
             valid: Arc::new(AtomicBool::new(true)),
             render_inner: None,
             first_frame_cb: None,
@@ -610,8 +608,8 @@ impl LinuxGlRenderer {
         type GetPlatformDisplayEXT =
             unsafe extern "C" fn(u32, *mut c_void, *const i32) -> *mut c_void;
 
-        if let Ok(name) = CString::new("eglGetPlatformDisplayEXT") {
-            if let Some(get_fn) = egl.get_proc_address(name.as_c_str()) {
+        {
+            if let Some(get_fn) = egl.get_proc_address("eglGetPlatformDisplayEXT") {
                 let get_platform_display: GetPlatformDisplayEXT =
                     unsafe { std::mem::transmute(get_fn) };
                 let d_ptr = unsafe {
@@ -807,24 +805,18 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
         }
 
-        // Clean up EGL resources.
-        if self.egl_display != egl::NO_DISPLAY {
+        // Clean up EGL resources (guarded by flag to prevent double-cleanup).
+        if !self.egl_cleaned_up {
+            self.egl_cleaned_up = true;
             let _ = egl.make_current(self.egl_display, None, None, None);
-            if self.egl_surface != egl::NO_SURFACE {
-                let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
-                self.egl_surface = egl::NO_SURFACE;
-            }
-            if self.egl_context != egl::NO_CONTEXT {
-                let _ = egl.destroy_context(self.egl_display, self.egl_context);
-                self.egl_context = egl::NO_CONTEXT;
-            }
+            let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
+            let _ = egl.destroy_context(self.egl_display, self.egl_context);
             // Only terminate the EGL display on X11 where we own it.
             // On Wayland, GTK shares the same EGLDisplay — terminating it
             // would crash the application.
             if self.wayland.is_none() {
                 let _ = egl.terminate(self.egl_display);
             }
-            self.egl_display = egl::NO_DISPLAY;
         }
 
         // Wayland cleanup: drop subsurface and surface (in correct order),
@@ -898,10 +890,8 @@ unsafe fn render_frame(inner_ptr: usize) {
         return;
     }
 
-    let mut w: i32 = 0;
-    let mut h: i32 = 0;
-    let _ = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH, &mut w);
-    let _ = egl.query_surface(inner.egl_display, inner.egl_surface, egl::HEIGHT, &mut h);
+    let w = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH).unwrap_or(0);
+    let h = egl.query_surface(inner.egl_display, inner.egl_surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
         return;
     }
