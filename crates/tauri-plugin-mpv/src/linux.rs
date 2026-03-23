@@ -703,6 +703,12 @@ impl PlatformRenderer for LinuxGlRenderer {
         });
 
         self.render_inner = Some(inner);
+
+        // Release the EGL context from this thread so the GLib main thread
+        // can make it current in render_frame(). EGL contexts are thread-local —
+        // only one thread can hold a context current at a time.
+        let _ = egl.make_current(self.egl_display, None, None, None);
+
         tracing::info!("[Linux renderer] render context attached");
         Ok(())
     }
