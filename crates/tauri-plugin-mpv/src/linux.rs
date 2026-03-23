@@ -21,7 +21,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use std::ffi::c_void;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, OnceLock,
+    Arc, Mutex, OnceLock,
 };
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -69,6 +69,13 @@ fn gl_get_proc_address(name: &str) -> *mut c_void {
 // Render callback inner state (heap-stable, accessed from glib main thread)
 // ---------------------------------------------------------------------------
 
+/// Pending resize request queued by `set_frame()` and applied by `render_frame()`
+/// on the GLib main thread, ensuring wl_egl_window_resize never races with EGL calls.
+struct PendingResize {
+    w: i32,
+    h: i32,
+}
+
 struct RenderInner {
     ctx: RenderContext,
     egl_display: egl::Display,
@@ -78,6 +85,13 @@ struct RenderInner {
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Shared with LinuxGlRenderer::set_visible; skips GPU calls when false.
     video_active: Arc<AtomicBool>,
+    /// Pending wl_egl_window resize — set by set_frame (command thread),
+    /// consumed by render_frame (GLib main thread). Protected by Mutex so
+    /// wl_egl_window_resize never races with eglSwapBuffers.
+    pending_resize: Arc<Mutex<Option<PendingResize>>>,
+    /// Pointer to the WlEglSurface so render_frame can call resize() on the
+    /// GLib main thread. Only valid while LinuxGlRenderer is alive.
+    wl_egl_surface_ptr: usize,
 }
 
 unsafe impl Send for RenderInner {}
@@ -173,6 +187,8 @@ pub struct LinuxGlRenderer {
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Controls whether GPU rendering happens. Toggled by set_visible().
     video_active: Arc<AtomicBool>,
+    /// Shared with RenderInner so set_frame can queue resizes for the GLib thread.
+    pending_resize: Arc<Mutex<Option<PendingResize>>>,
 }
 
 unsafe impl Send for LinuxGlRenderer {}
@@ -420,6 +436,7 @@ impl LinuxGlRenderer {
             render_inner: None,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
+            pending_resize: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -601,6 +618,7 @@ impl LinuxGlRenderer {
             render_inner: None,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
+            pending_resize: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -683,6 +701,13 @@ impl PlatformRenderer for LinuxGlRenderer {
         )
         .map_err(|e| format!("mpv_render_context_create: {}", e))?;
 
+        // Get wl_egl_surface pointer for render_frame to apply pending resizes.
+        let wl_egl_surface_ptr = self
+            .wayland
+            .as_ref()
+            .map(|wl| &wl.wl_egl_surface as *const WlEglSurface as usize)
+            .unwrap_or(0);
+
         let mut inner = Box::new(RenderInner {
             ctx: render_ctx,
             egl_display: self.egl_display,
@@ -690,6 +715,8 @@ impl PlatformRenderer for LinuxGlRenderer {
             egl_context: self.egl_context,
             first_frame_cb: self.first_frame_cb.take(),
             video_active: self.video_active.clone(),
+            pending_resize: self.pending_resize.clone(),
+            wl_egl_surface_ptr,
         });
 
         let inner_ptr = &*inner as *const RenderInner as usize;
@@ -731,18 +758,25 @@ impl PlatformRenderer for LinuxGlRenderer {
     fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64) {
         tracing::trace!("[Linux renderer] set_frame({}, {}, {}, {})", x, y, w, h);
         if let Some(ref mut wl) = self.wayland {
-            // Wayland: position the subsurface and resize the wl_egl_window.
+            // Wayland: position the subsurface and queue resize for GLib thread.
             //
-            // Linux/GTK uses top-left origin (same as CSS) — no Y-flip needed.
-            // set_position() is double-buffered: it takes effect when the parent
-            // surface next commits, which GTK handles on every frame tick.
+            // wl_egl_window_resize is NOT thread-safe with respect to EGL calls
+            // (eglMakeCurrent, eglSwapBuffers). Instead of resizing here on the
+            // command thread, we queue the resize and let render_frame() apply it
+            // on the GLib main thread — the same thread that does EGL rendering.
+            // This mirrors macOS's pattern of dispatching set_frame to main queue.
             let wi = (w as i32).max(1);
             let hi = (h as i32).max(1);
             wl.last_frame = (x as i32, y as i32, wi, hi);
 
+            // set_position is double-buffered (safe from any thread).
             wl.subsurface.set_position(x as i32, y as i32);
-            wl.wl_egl_surface.resize(wi, hi, 0, 0);
-            // Commit the child surface to apply the position change double-buffer.
+
+            // Queue the resize for the GLib main thread.
+            if let Ok(mut pending) = self.pending_resize.lock() {
+                *pending = Some(PendingResize { w: wi, h: hi });
+            }
+
             wl.child_surface.commit();
             let _ = wl.conn.flush();
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
@@ -767,10 +801,12 @@ impl PlatformRenderer for LinuxGlRenderer {
 
         if let Some(ref mut wl) = self.wayland {
             if visible {
-                // Restore last known position (in case we moved it off-screen).
+                // Restore last known position and queue resize for GLib thread.
                 let (lx, ly, lw, lh) = wl.last_frame;
                 wl.subsurface.set_position(lx, ly);
-                wl.wl_egl_surface.resize(lw, lh, 0, 0);
+                if let Ok(mut pending) = self.pending_resize.lock() {
+                    *pending = Some(PendingResize { w: lw, h: lh });
+                }
             } else {
                 // Move subsurface far off-screen. This is the safe Wayland equivalent
                 // of XUnmapWindow — we cannot call wl_surface_attach(NULL) on an
@@ -907,6 +943,18 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     if !inner.video_active.load(Ordering::Acquire) {
         return;
+    }
+
+    // Apply any pending wl_egl_window resize BEFORE making the EGL context
+    // current. This ensures resize and EGL calls happen on the same thread
+    // (GLib main), eliminating the race condition that caused color corruption.
+    if inner.wl_egl_surface_ptr != 0 {
+        if let Ok(mut pending) = inner.pending_resize.lock() {
+            if let Some(resize) = pending.take() {
+                let wl_egl = &*(inner.wl_egl_surface_ptr as *const WlEglSurface);
+                wl_egl.resize(resize.w, resize.h, 0, 0);
+            }
+        }
     }
 
     let egl = egl_instance();

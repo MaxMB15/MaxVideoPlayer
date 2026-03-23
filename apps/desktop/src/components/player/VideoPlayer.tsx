@@ -123,6 +123,9 @@ export const PlayerView = () => {
 				// Only apply if positive and reasonable (< 100px) to avoid wrong values
 				// on platforms where innerSize already matches viewport.
 				decoOffsetRef.current = offset > 0 && offset < 100 ? offset : 0;
+				console.log(
+					`[VideoPlayer] decoOffset: tauriInnerSize=${size.width}x${size.height} dpr=${window.devicePixelRatio} cssHeight=${cssHeight} windowInnerHeight=${window.innerHeight} offset=${offset} applied=${decoOffsetRef.current}`,
+				);
 			})
 			.catch(() => {});
 	}, []);
@@ -132,6 +135,9 @@ export const PlayerView = () => {
 		if (!el) return;
 		const report = () => {
 			const r = el.getBoundingClientRect();
+			console.log(
+				`[VideoPlayer] bounds: rect=(${r.x.toFixed(1)}, ${r.y.toFixed(1)}, ${r.width.toFixed(1)}, ${r.height.toFixed(1)}) decoOffset=${decoOffsetRef.current} → mpvSetBounds(${r.x.toFixed(1)}, ${(r.y + decoOffsetRef.current).toFixed(1)}, ${r.width.toFixed(1)}, ${r.height.toFixed(1)})`,
+			);
 			mpvSetBounds(r.x, r.y + decoOffsetRef.current, r.width, r.height).catch(() => {});
 		};
 		report();
