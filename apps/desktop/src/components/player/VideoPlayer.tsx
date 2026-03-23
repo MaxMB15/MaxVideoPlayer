@@ -105,40 +105,15 @@ export const PlayerView = () => {
 		};
 	}, [mpv.firstFrameReady]);
 
-	// On Linux with CSD (client-side decorations), the native video surface is
-	// positioned relative to the full window surface (including the GTK header bar).
-	// CSS getBoundingClientRect() returns coordinates relative to the WebView viewport
-	// (below the header bar). Compute the header bar height once and add it to y.
-	// On macOS the offset is handled natively in set_frame, so this is a no-op (0).
-	const decoOffsetRef = useRef(0);
-	useEffect(() => {
-		getCurrentWindow()
-			.innerSize()
-			.then((size) => {
-				// innerSize() returns physical pixels (includes CSD header bar on Linux).
-				// window.innerHeight is CSS pixels (viewport only, excludes header bar).
-				// The difference (in CSS pixels) is the header bar height.
-				const cssHeight = size.height / window.devicePixelRatio;
-				const offset = cssHeight - window.innerHeight;
-				// Only apply if positive and reasonable (< 100px) to avoid wrong values
-				// on platforms where innerSize already matches viewport.
-				decoOffsetRef.current = offset > 0 && offset < 100 ? offset : 0;
-				console.log(
-					`[VideoPlayer] decoOffset: tauriInnerSize=${size.width}x${size.height} dpr=${window.devicePixelRatio} cssHeight=${cssHeight} windowInnerHeight=${window.innerHeight} offset=${offset} applied=${decoOffsetRef.current}`,
-				);
-			})
-			.catch(() => {});
-	}, []);
-
+	// Report video container bounds to the Rust renderer. The CSD header bar
+	// offset is applied on the Rust side (LinuxGlRenderer::csd_y_offset) so the
+	// frontend just sends raw getBoundingClientRect values.
 	useEffect(() => {
 		const el = containerRef.current;
 		if (!el) return;
 		const report = () => {
 			const r = el.getBoundingClientRect();
-			console.log(
-				`[VideoPlayer] bounds: rect=(${r.x.toFixed(1)}, ${r.y.toFixed(1)}, ${r.width.toFixed(1)}, ${r.height.toFixed(1)}) decoOffset=${decoOffsetRef.current} → mpvSetBounds(${r.x.toFixed(1)}, ${(r.y + decoOffsetRef.current).toFixed(1)}, ${r.width.toFixed(1)}, ${r.height.toFixed(1)})`,
-			);
-			mpvSetBounds(r.x, r.y + decoOffsetRef.current, r.width, r.height).catch(() => {});
+			mpvSetBounds(r.x, r.y, r.width, r.height).catch(() => {});
 		};
 		report();
 		const ro = new ResizeObserver(report);

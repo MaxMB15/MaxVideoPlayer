@@ -189,15 +189,66 @@ pub struct LinuxGlRenderer {
     video_active: Arc<AtomicBool>,
     /// Shared with RenderInner so set_frame can queue resizes for the GLib thread.
     pending_resize: Arc<Mutex<Option<PendingResize>>>,
+    /// CSD header bar height in pixels. Added to y in set_frame() on Wayland
+    /// because subsurface position is relative to the parent wl_surface (which
+    /// includes the header bar), but frontend coords are relative to the WebView
+    /// viewport (which starts below the header bar).
+    csd_y_offset: i32,
 }
 
 unsafe impl Send for LinuxGlRenderer {}
 unsafe impl Sync for LinuxGlRenderer {}
 
 impl LinuxGlRenderer {
+    /// Query the CSD (Client-Side Decoration) header bar height from GTK.
+    /// Must dispatch to the GLib main thread because `gtk_window()` requires it.
+    /// Returns 0 on X11 or if the query fails.
+    fn query_csd_offset<R: Runtime>(app: &AppHandle<R>) -> i32 {
+        use gtk::prelude::*;
+
+        let window = match app.get_webview_window("main") {
+            Some(w) => w,
+            None => return 0,
+        };
+
+        // gtk_window() requires the main thread. Use a channel to get the result.
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // We need to move a raw pointer across the thread boundary since
+        // WebviewWindow isn't Send. The pointer is valid because we block
+        // until the callback completes.
+        let win_ptr = &window as *const _ as usize;
+
+        glib::idle_add_once(move || {
+            let window = unsafe {
+                &*(win_ptr as *const tauri::WebviewWindow<R>)
+            };
+            let offset = window
+                .gtk_window()
+                .ok()
+                .and_then(|gtk_win| gtk_win.titlebar())
+                .map(|tb| tb.allocated_height())
+                .unwrap_or(0);
+            let _ = tx.send(offset);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(offset) => {
+                tracing::info!("[Linux renderer] CSD header bar offset: {}px", offset);
+                offset
+            }
+            Err(_) => {
+                tracing::warn!("[Linux renderer] timed out querying CSD offset, defaulting to 0");
+                0
+            }
+        }
+    }
+
     /// Create an EGL-backed renderer within the Tauri window.
     /// Dispatches to the X11 or Wayland path based on the raw window handle.
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+        let csd_y_offset = Self::query_csd_offset(app);
+
         let window = app
             .get_webview_window("main")
             .ok_or_else(|| "Window 'main' not found".to_string())?;
@@ -212,7 +263,7 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("display handle: {:?}", e))?
             .as_raw();
 
-        match raw_window {
+        let mut renderer = match raw_window {
             RawWindowHandle::Xlib(h) => {
                 let parent_window = h.window;
                 let x11_display_ptr = match raw_display {
@@ -253,7 +304,9 @@ impl LinuxGlRenderer {
                 "Unsupported window handle type on Linux: {:?}",
                 raw_window
             )),
-        }
+        }?;
+        renderer.csd_y_offset = csd_y_offset;
+        Ok(renderer)
     }
 
     // -----------------------------------------------------------------------
@@ -437,6 +490,7 @@ impl LinuxGlRenderer {
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
+            csd_y_offset: 0,
         })
     }
 
@@ -619,6 +673,7 @@ impl LinuxGlRenderer {
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
+            csd_y_offset: 0,
         })
     }
 
@@ -767,10 +822,15 @@ impl PlatformRenderer for LinuxGlRenderer {
             // This mirrors macOS's pattern of dispatching set_frame to main queue.
             let wi = (w as i32).max(1);
             let hi = (h as i32).max(1);
-            wl.last_frame = (x as i32, y as i32, wi, hi);
+
+            // Frontend coords are relative to the WebView viewport, but
+            // subsurface position is relative to the parent wl_surface which
+            // includes the CSD header bar. Add the header bar offset to y.
+            let adjusted_y = y as i32 + self.csd_y_offset;
+            wl.last_frame = (x as i32, adjusted_y, wi, hi);
 
             // set_position is double-buffered (safe from any thread).
-            wl.subsurface.set_position(x as i32, y as i32);
+            wl.subsurface.set_position(x as i32, adjusted_y);
 
             // Queue the resize for the GLib main thread.
             if let Ok(mut pending) = self.pending_resize.lock() {
