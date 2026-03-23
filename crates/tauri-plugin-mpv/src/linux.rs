@@ -37,7 +37,7 @@ use wayland_client::{
         wl_registry::WlRegistry,
         wl_subcompositor::WlSubcompositor,
         wl_subsurface::WlSubsurface,
-        wl_surface::{self, WlSurface},
+        wl_surface::WlSurface,
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
@@ -712,6 +712,7 @@ impl PlatformRenderer for LinuxGlRenderer {
     }
 
     fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        tracing::debug!("[Linux renderer] set_frame({}, {}, {}, {})", x, y, w, h);
         if let Some(ref mut wl) = self.wayland {
             // Wayland: position the subsurface and resize the wl_egl_window.
             //
@@ -884,9 +885,13 @@ impl Drop for LinuxGlRenderer {
 /// Safety: caller must verify `valid = true`; `inner_ptr` must be live.
 unsafe fn render_frame(inner_ptr: usize) {
     static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let inner = &mut *(inner_ptr as *mut RenderInner);
 
     if !inner.video_active.load(Ordering::Acquire) {
+        if LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 3 {
+            tracing::debug!("[Linux renderer] render_frame: video_active=false, skipping");
+        }
         return;
     }
 
@@ -901,12 +906,16 @@ unsafe fn render_frame(inner_ptr: usize) {
         )
         .is_err()
     {
+        tracing::warn!("[Linux renderer] render_frame: eglMakeCurrent failed");
         return;
     }
 
     let w = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH).unwrap_or(0);
     let h = egl.query_surface(inner.egl_display, inner.egl_surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
+        if LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 5 {
+            tracing::debug!("[Linux renderer] render_frame: surface size {}x{}, skipping", w, h);
+        }
         return;
     }
 
