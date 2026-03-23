@@ -487,6 +487,12 @@ impl LinuxGlRenderer {
         let subsurface =
             subcompositor.get_subsurface(&child_surface, &parent_surface, &qh, ());
 
+        // Place the video subsurface BELOW the parent surface (WebView).
+        // Without this, the subsurface defaults to above the parent, covering
+        // the transparent WebView controls. This mirrors macOS's
+        // addSubview:positioned:NSWindowBelow:relativeTo: pattern.
+        subsurface.place_below(&parent_surface);
+
         // Desync: the subsurface can be committed independently of the parent.
         // This is the correct mode for video — we don't want to wait for GTK's
         // frame cycle before presenting each decoded frame.

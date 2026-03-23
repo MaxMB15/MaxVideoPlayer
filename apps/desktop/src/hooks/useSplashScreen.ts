@@ -10,7 +10,7 @@ import {
 } from "@/hooks/useChannels";
 import { parseDateMs } from "@/lib/date";
 
-export type StepStatus = "pending" | "active" | "done";
+export type StepStatus = "pending" | "active" | "done" | "error";
 
 export interface SplashStep {
 	id: string;
@@ -152,8 +152,14 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 			let foundUpdate: Update | null = null;
 			try {
 				foundUpdate = (await check()) ?? null;
-			} catch {
-				// Silently ignore — offline, etc.
+			} catch (e) {
+				if (cancelled) return;
+				const msg = e instanceof Error ? e.message : String(e);
+				setStepStatus("updates", "error", `Unable to check for updates`);
+				console.warn("[splash] update check failed:", msg);
+				setAllDone(true);
+				onCompleteRef.current?.();
+				return;
 			}
 			if (cancelled) return;
 			if (foundUpdate) {
@@ -174,7 +180,9 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 	}, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const progress =
-		steps.length === 0 ? 0 : steps.filter((s) => s.status === "done").length / steps.length;
+		steps.length === 0
+			? 0
+			: steps.filter((s) => s.status === "done" || s.status === "error").length / steps.length;
 
 	return { steps, allDone, progress, update, dismissed, hasProviders, dismiss };
 };
