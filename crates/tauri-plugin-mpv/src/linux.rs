@@ -967,7 +967,11 @@ unsafe fn render_frame(inner_ptr: usize) {
 pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "libmpv"),
-        ("hwdec", "auto"),
+        // auto-copy: hardware-decode but copy frames to CPU for GL rendering.
+        // Plain "auto" maps VAAPI surfaces directly as GL textures, which causes
+        // color corruption (red/green hue) on drivers that can't handle the
+        // NV12→RGB interop (VMware, some Mesa/Intel setups).
+        ("hwdec", "auto-copy"),
         ("ao", "pipewire,pulse,alsa"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),

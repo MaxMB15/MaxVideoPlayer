@@ -81,16 +81,23 @@ pub async fn mpv_set_bounds<R: Runtime>(
     // CSS getBoundingClientRect() gives coordinates relative to the WebView viewport
     // which starts BELOW the header bar. Compute the decoration offset and adjust y.
     #[cfg(target_os = "linux")]
-    let y = {
+    let (x, y) = {
         if let Some(win) = app.get_webview_window("main") {
             let outer = win.outer_size().unwrap_or_default();
             let inner = win.inner_size().unwrap_or_default();
             let scale = win.scale_factor().unwrap_or(1.0);
-            // Decoration height in physical pixels, convert to logical (CSS) pixels
-            let deco_height = (outer.height as f64 - inner.height as f64) / scale;
-            y + deco_height
+            // Decoration offset in physical pixels, convert to logical (CSS) pixels.
+            // CSD header bar adds height; some compositors also report width differences
+            // (e.g. window shadows).
+            let deco_y = (outer.height as f64 - inner.height as f64) / scale;
+            let deco_x = (outer.width as f64 - inner.width as f64) / scale;
+            tracing::debug!(
+                "[mpv_set_bounds] css=({x},{y},{w},{h}) outer={}x{} inner={}x{} scale={scale} deco=({deco_x},{deco_y})",
+                outer.width, outer.height, inner.width, inner.height
+            );
+            (x + deco_x / 2.0, y + deco_y)
         } else {
-            y
+            (x, y)
         }
     };
     #[cfg(not(target_os = "linux"))]
