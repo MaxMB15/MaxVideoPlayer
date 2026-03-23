@@ -10,8 +10,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIBS_BUNDLE="$WORKSPACE_ROOT/libs/macos-bundle"
 
+if [[ "$(uname -s)" == "Linux" ]]; then
+  echo "==> Dispatching to Linux bundler..."
+  exec "$SCRIPT_DIR/bundle-libmpv-linux.sh"
+fi
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Skipping libmpv bundle (not macOS)"
+  echo "Skipping libmpv bundle (unsupported platform: $(uname -s))"
   mkdir -p "$LIBS_BUNDLE"
   exit 0
 fi

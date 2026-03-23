@@ -12,6 +12,9 @@ use std::sync::{
 #[cfg(target_os = "macos")]
 use crate::macos::{embedded_options, fallback_options, MacosGlRenderer};
 
+#[cfg(target_os = "linux")]
+use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, LinuxGlRenderer};
+
 pub struct MpvState {
     inner: Mutex<MpvEngine>,
     renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
@@ -92,7 +95,50 @@ impl MpvState {
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    fn load_impl<R: tauri::Runtime>(
+        &self,
+        url: &str,
+        app: &tauri::AppHandle<R>,
+    ) -> Result<(), String> {
+        let mut gl_renderer = match LinuxGlRenderer::new(app) {
+            Ok(r) => r,
+            Err(e) => return self.launch_fallback(url, app, &e),
+        };
+
+        {
+            use tauri::Emitter;
+            let app_clone = app.clone();
+            gl_renderer.set_first_frame_callback(Box::new(move || {
+                let _ = app_clone.emit("mpv://first-frame", ());
+            }));
+        }
+
+        let attach_result = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            match engine.create(&linux_embedded_options()) {
+                Ok(mpv) => gl_renderer.attach(mpv),
+                Err(e) => Err(e),
+            }
+        };
+
+        if let Err(e) = attach_result {
+            self.inner.lock().map_err(|e| e.to_string())?.stop();
+            return self.launch_fallback(url, app, &e);
+        }
+
+        {
+            let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
+            *renderer = Some(Box::new(gl_renderer));
+        }
+
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
@@ -131,7 +177,16 @@ impl MpvState {
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.create(&linux_fallback_options())?;
+        engine.loadfile(url)?;
+        engine.set_current_url(url);
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&[])?;
