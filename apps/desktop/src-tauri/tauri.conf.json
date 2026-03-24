@@ -53,6 +53,7 @@
 		],
 
 		"macOS": {
+			"entitlements": "./Entitlements.plist",
 			"frameworks": [],
 			"files": {
 				"Frameworks": "../../../libs/macos-bundle"
