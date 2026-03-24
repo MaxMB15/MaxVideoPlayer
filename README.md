@@ -139,7 +139,7 @@ MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins
 
 **Recommended (GitHub Actions):** two workflows so rulesets that require **pull requests**, **status checks**, and **verified commits** on `main` still work.
 
-1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR (`release/bump-vX.Y.Z`) that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
+1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR from branch `chore-bump-vX.Y.Z` that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
 2. Wait for CI (and Code Scanning if enabled for PRs). **Merge the PR** when green. If your rules require **signed commits** on `main`, prefer **Squash merge** so the merge commit uses your verified identity.
 3. **[Release — push tag](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-tag.yml)** → **Run workflow**. It reads the version from `tauri.conf.json` on `main`, creates **`vX.Y.Z`**, and pushes the tag so **`release.yml`** runs (builds macOS + Linux, draft GitHub Release, `latest.json`).
 

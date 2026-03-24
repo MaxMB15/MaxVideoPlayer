@@ -1,7 +1,8 @@
 # Semver version bump via pull request (for repos where main is ruleset-protected:
 # PR required, status checks, signed commits, etc.).
 #
-# 1) Run this workflow → opens PR `release/bump-vX.Y.Z` → main.
+# 1) Run this workflow → opens PR from branch `chore-bump-vX.Y.Z` → main.
+#    (Do not use `release/...` — a branch or tag named `release` causes push conflicts.)
 # 2) Wait for CI / Code Scanning on the PR; merge when green (prefer **Squash merge**
 #    so your verified/signed identity applies if you require signed commits on main).
 # 3) Run **Release — push tag** (`release-tag.yml`) to create `vX.Y.Z` and trigger `release.yml`.
@@ -122,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           NEW="${{ steps.ver.outputs.new }}"
-          BRANCH="release/bump-v${NEW}"
+          BRANCH="chore-bump-v${NEW}"
 
           git checkout -b "$BRANCH"
           git add apps/desktop/src-tauri/tauri.conf.json \
