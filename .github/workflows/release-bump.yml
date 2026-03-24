@@ -1,7 +1,8 @@
 # Semver version bump via pull request (for repos where main is ruleset-protected:
 # PR required, status checks, signed commits, etc.).
 #
-# 1) Run this workflow → opens PR `release/bump-vX.Y.Z` → main.
+# 1) Run this workflow → opens PR from branch `chore-bump-vX.Y.Z` → main.
+#    (Do not use `release/...` — a branch or tag named `release` causes push conflicts.)
 # 2) Wait for CI / Code Scanning on the PR; merge when green (prefer **Squash merge**
 #    so your verified/signed identity applies if you require signed commits on main).
 # 3) Run **Release — push tag** (`release-tag.yml`) to create `vX.Y.Z` and trigger `release.yml`.
@@ -11,8 +12,8 @@
 # Who can run: repository variable RELEASE_ALLOWED_ACTORS (comma-separated). If unset,
 # only github.repository_owner. For org-owned repos, set RELEASE_ALLOWED_ACTORS.
 #
-# Token: secrets.RELEASE_AUTOMATION_PAT (optional) — needs contents:write + pull-requests:write.
-#        Falls back to github.token (works for PR creation on same repo).
+# Token: secrets.RELEASE_AUTOMATION_PAT (required) — fine-grained PAT: Contents + Pull requests
+#        for this repo. Many orgs block GITHUB_TOKEN from creating PRs (createPullRequest).
 
 name: Release — bump version (PR)
 
@@ -67,12 +68,21 @@ jobs:
           print(f"OK: {actor} is authorized to release.")
           PY
 
+      - name: Require automation PAT
+        env:
+          RELEASE_AUTOMATION_PAT: ${{ secrets.RELEASE_AUTOMATION_PAT }}
+        run: |
+          if [ -z "${RELEASE_AUTOMATION_PAT:-}" ]; then
+            echo "::error::Add repository secret RELEASE_AUTOMATION_PAT. A fine-grained personal access token needs Contents: Read and write and Pull requests: Read and write on this repository. The default GITHUB_TOKEN cannot create pull requests when GitHub reports: createPullRequest is not permitted for GitHub Actions."
+            exit 1
+          fi
+
       - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+          token: ${{ secrets.RELEASE_AUTOMATION_PAT }}
 
       - name: Configure git
         run: |
@@ -118,11 +128,11 @@ jobs:
 
       - name: Create branch, commit, open PR
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_AUTOMATION_PAT }}
         run: |
           set -euo pipefail
           NEW="${{ steps.ver.outputs.new }}"
-          BRANCH="release/bump-v${NEW}"
+          BRANCH="chore-bump-v${NEW}"
 
           git checkout -b "$BRANCH"
           git add apps/desktop/src-tauri/tauri.conf.json \
@@ -130,7 +140,21 @@ jobs:
                   apps/desktop/src/components/settings/Settings.tsx \
                   Cargo.lock
           git commit -m "chore: bump version to $NEW"
-          git push -u origin "$BRANCH"
+
+          # Earlier runs may have left the same branch on the remote; a plain push then fails (non-fast-forward).
+          if git ls-remote --heads origin "$BRANCH" | grep -q .; then
+            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+            echo "Remote branch $BRANCH already exists (retry); pushing with --force-with-lease"
+            git push --force-with-lease -u origin "$BRANCH"
+          else
+            git push -u origin "$BRANCH"
+          fi
+
+          PR_COUNT=$(gh pr list --head "$BRANCH" --base main --json number --jq 'length')
+          if [ "$PR_COUNT" != "0" ]; then
+            echo "Pull request already open for $BRANCH; skipping gh pr create."
+            exit 0
+          fi
 
           gh pr create \
             --base main \
@@ -152,5 +176,5 @@ jobs:
       - name: Summary
         run: |
           NEW="${{ steps.ver.outputs.new }}"
-          echo "### Pull request opened for v$NEW" >> "$GITHUB_STEP_SUMMARY"
-          echo "Merge the PR when checks pass, then run **Release — push tag**." >> "$GITHUB_STEP_SUMMARY"
+          echo "### Branch chore-bump-v$NEW pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "If the PR was new, it was opened; if you re-ran the workflow, the branch was updated and an existing PR was left as-is. Merge when checks pass, then run **Release — push tag**." >> "$GITHUB_STEP_SUMMARY"

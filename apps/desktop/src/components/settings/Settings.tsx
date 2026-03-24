@@ -640,7 +640,7 @@ export const Settings = () => {
 						<CardTitle className="text-base">About</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.1</p>
+						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.3</p>
 					</CardContent>
 				</Card>
 			</div>
