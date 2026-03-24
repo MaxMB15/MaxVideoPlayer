@@ -183,13 +183,18 @@ jobs:
           VERSION="$VERSION"
           DMG="target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg"
           UPDATER="target/release/bundle/macos/MaxVideoPlayer.app.tar.gz"
+          UPDATER_VERSIONED="target/release/bundle/macos/MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz"
+
+          # Rename updater files so the download URL matches what latest.json expects
+          cp "$UPDATER" "$UPDATER_VERSIONED"
+          cp "${UPDATER}.sig" "${UPDATER_VERSIONED}.sig"
 
           gh release upload "v${VERSION}" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
             "$DMG" \
-            "${UPDATER}#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz" \
-            "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig"
+            "$UPDATER_VERSIONED" \
+            "${UPDATER_VERSIONED}.sig"
 
   release-linux:
     needs: [prepare-release]
