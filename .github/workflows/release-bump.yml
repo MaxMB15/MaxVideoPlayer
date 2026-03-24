@@ -1,24 +1,20 @@
-# Bump semver version on main, commit, tag vX.Y.Z — triggers `release.yml` on tag push.
+# Semver version bump via pull request (for repos where main is ruleset-protected:
+# PR required, status checks, signed commits, etc.).
 #
-# Semver (industry standard): https://semver.org
-#   - patch — bug fixes, compatible with current minor
-#   - minor — new features, backward compatible
-#   - major — breaking changes
+# 1) Run this workflow → opens PR `release/bump-vX.Y.Z` → main.
+# 2) Wait for CI / Code Scanning on the PR; merge when green (prefer **Squash merge**
+#    so your verified/signed identity applies if you require signed commits on main).
+# 3) Run **Release — push tag** (`release-tag.yml`) to create `vX.Y.Z` and trigger `release.yml`.
 #
-# Who can run this:
-#   1) Repository variable RELEASE_ALLOWED_ACTORS (comma-separated GitHub logins).
-#      If unset, only github.repository_owner may run (works for user-owned repos).
-#      For organization-owned repos, set RELEASE_ALLOWED_ACTORS to your username.
-#   2) Optional: GitHub Environment "release" with required reviewers (add manual
-#      approval before the job runs). Uncomment `environment:` on the job below.
-#   3) For protected `main`: add secret RELEASE_AUTOMATION_PAT — a fine-grained PAT
-#      (Contents: Read and write) owned by someone allowed to push to main, or
-#      configure branch rules to allow github-actions[bot] to bypass.
+# Semver: https://semver.org — patch / minor / major (same as before).
 #
-# Setup: Settings → Secrets and variables → Actions → New repository secret:
-#        RELEASE_AUTOMATION_PAT (optional if GITHUB_TOKEN can push to main)
+# Who can run: repository variable RELEASE_ALLOWED_ACTORS (comma-separated). If unset,
+# only github.repository_owner. For org-owned repos, set RELEASE_ALLOWED_ACTORS.
+#
+# Token: secrets.RELEASE_AUTOMATION_PAT (optional) — needs contents:write + pull-requests:write.
+#        Falls back to github.token (works for PR creation on same repo).
 
-name: Release — bump version & tag
+name: Release — bump version (PR)
 
 on:
   workflow_dispatch:
@@ -32,22 +28,19 @@ on:
           - patch
           - minor
           - major
-      sync_dev:
-        description: "After tagging, merge main into dev (git-flow sync)"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: release-bump
   cancel-in-progress: false
 
 jobs:
-  bump-and-tag:
+  open-version-pr:
     runs-on: ubuntu-latest
-    # Uncomment for a manual approval gate (Settings → Environments → release):
+    # Uncomment for manual approval before opening the PR:
     # environment: release
 
     steps:
@@ -69,8 +62,7 @@ jobs:
               allowed = [owner]
           if actor not in allowed:
               print(f"::error::User '{actor}' is not allowed to run releases. "
-                    f"Allowed: {allowed}. Set repository variable RELEASE_ALLOWED_ACTORS "
-                    f"to a comma-separated list of GitHub usernames (for org repos).")
+                    f"Allowed: {allowed}. Set repository variable RELEASE_ALLOWED_ACTORS.")
               raise SystemExit(1)
           print(f"OK: {actor} is authorized to release.")
           PY
@@ -124,39 +116,41 @@ jobs:
       - name: Refresh Cargo.lock
         run: cargo generate-lockfile
 
-      - name: Commit version bump
+      - name: Create branch, commit, open PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
         run: |
           set -euo pipefail
           NEW="${{ steps.ver.outputs.new }}"
+          BRANCH="release/bump-v${NEW}"
+
+          git checkout -b "$BRANCH"
           git add apps/desktop/src-tauri/tauri.conf.json \
                   apps/desktop/src-tauri/Cargo.toml \
                   apps/desktop/src/components/settings/Settings.tsx \
                   Cargo.lock
           git commit -m "chore: bump version to $NEW"
+          git push -u origin "$BRANCH"
 
-      - name: Push commit to main
-        run: git push origin main
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: bump version to $NEW" \
+            --body "## Version bump $NEW
 
-      - name: Create and push tag
-        run: |
-          set -euo pipefail
-          NEW="${{ steps.ver.outputs.new }}"
-          git tag -a "v$NEW" -m "Release v$NEW"
-          git push origin "v$NEW"
+          Automated by **Release — bump version (PR)**.
+
+          ### Next steps
+          1. Wait for required checks (including Code Scanning if configured for PRs).
+          2. Merge this PR (prefer **Squash merge** if your rules require verified commits on \`main\`).
+          3. Run [**Release — push tag**](${{ github.server_url }}/${{ github.repository }}/actions/workflows/release-tag.yml) to create tag \`v$NEW\` and start the build (\`release.yml\`).
+
+          ---
+
+          * [Semver](https://semver.org) bump type: \`${{ inputs.release_type }}\`"
 
       - name: Summary
         run: |
           NEW="${{ steps.ver.outputs.new }}"
-          echo "### Release v$NEW started" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tag \`v$NEW\` pushed — **Release** workflow builds artifacts next." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Merge main into dev (optional)
-        if: inputs.sync_dev
-        run: |
-          set -euo pipefail
-          NEW="${{ steps.ver.outputs.new }}"
-          git fetch origin main dev
-          git checkout dev
-          git merge --no-ff origin/main -m "chore: merge main into dev after v$NEW release"
-          git push origin dev
-          git checkout main
+          echo "### Pull request opened for v$NEW" >> "$GITHUB_STEP_SUMMARY"
+          echo "Merge the PR when checks pass, then run **Release — push tag**." >> "$GITHUB_STEP_SUMMARY"

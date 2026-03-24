@@ -1,0 +1,88 @@
+# After the version-bump PR is merged to main, run this workflow to create tag vX.Y.Z
+# and trigger `release.yml` (same as pushing a v* tag manually).
+#
+# Who can run: same gate as release-bump (`RELEASE_ALLOWED_ACTORS`).
+#
+# Token: secrets.RELEASE_AUTOMATION_PAT if tag creation is restricted; else github.token.
+
+name: Release — push tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  push-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify release trigger permission
+        env:
+          ACTOR: ${{ github.actor }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_ALLOWED_ACTORS }}
+        run: |
+          set -euo pipefail
+          python3 << 'PY'
+          import os
+          actor = os.environ["ACTOR"]
+          owner = os.environ["REPO_OWNER"]
+          raw = os.environ.get("ALLOWED_ACTORS", "").strip()
+          if raw:
+              allowed = [x.strip() for x in raw.split(",") if x.strip()]
+          else:
+              allowed = [owner]
+          if actor not in allowed:
+              print(f"::error::User '{actor}' is not allowed to run releases. "
+                    f"Allowed: {allowed}. Set repository variable RELEASE_ALLOWED_ACTORS.")
+              raise SystemExit(1)
+          print(f"OK: {actor} is authorized.")
+          PY
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+
+      - name: Pull latest main
+        run: git pull origin main
+
+      - name: Read version and push tag
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          TAG="v${VERSION}"
+
+          git fetch origin --tags
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists locally. Refusing to overwrite."
+            exit 1
+          fi
+
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "::error::Tag $TAG already exists on the remote. Nothing to do (or delete tag first)."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          echo "Pushed $TAG — release.yml should run for this tag."
+
+      - name: Summary
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          echo "### Tag v${VERSION} pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "The **release** workflow should build and publish the draft release." >> "$GITHUB_STEP_SUMMARY"
