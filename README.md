@@ -145,7 +145,7 @@ MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins
 
 **Who can run it:** By default only the **repository owner** login matches the allowlist. For **organization-owned** repos, set a repository **variable** `RELEASE_ALLOWED_ACTORS` (comma-separated GitHub usernames).
 
-**Secret `RELEASE_AUTOMATION_PAT` (optional):** a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Contents: Read and write** and **Pull requests: Read and write** on this repo. Use it if the default `GITHUB_TOKEN` cannot open PRs or push tags (e.g. org rules). If you use a PAT for tagging, **tag protection** rules must allow that user or the workflow will fail.
+**Secret `RELEASE_AUTOMATION_PAT` (required for bump workflow):** add a [fine-grained PAT](https://github.com/settings/tokens?type=beta) as repository secret **`RELEASE_AUTOMATION_PAT`** with **Contents: Read and write** and **Pull requests: Read and write** on this repo. GitHub often blocks the default `GITHUB_TOKEN` from creating pull requests (`createPullRequest`). For **Release — push tag**, the same PAT is optional unless **tag protection** or other rules require it; otherwise `GITHUB_TOKEN` may work.
 
 **Optional:** Uncomment `environment: release` in `.github/workflows/release-bump.yml` and create a [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) named `release` with **required reviewers** so a second approval is required before the version bump runs.
 
