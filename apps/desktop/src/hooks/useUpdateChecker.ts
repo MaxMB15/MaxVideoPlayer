@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
@@ -7,8 +7,10 @@ export interface UpdateState {
 	checking: boolean;
 	installing: boolean;
 	progress: number | null;
+	error: string | null;
 	dismiss: () => void;
 	install: () => void;
+	checkForUpdates: () => Promise<Update | null>;
 }
 
 export const useUpdateChecker = (): UpdateState => {
@@ -16,31 +18,42 @@ export const useUpdateChecker = (): UpdateState => {
 	const [checking, setChecking] = useState(false);
 	const [installing, setInstalling] = useState(false);
 	const [progress, setProgress] = useState<number | null>(null);
+	const [error, setError] = useState<string | null>(null);
 
-	useEffect(() => {
-		// Check for updates on mount, silently ignore errors (offline, etc.)
+	// Guard against concurrent check() calls — only one at a time
+	const checkingRef = useRef(false);
+
+	const checkForUpdates = useCallback(async (): Promise<Update | null> => {
+		if (checkingRef.current) return null;
+		checkingRef.current = true;
 		setChecking(true);
-		check()
-			.then((result) => {
-				console.log("[updater] result:", result);
-				setUpdate(result ?? null);
-			})
-			.catch((err) => console.warn("[updater] error:", err))
-			.finally(() => setChecking(false));
+		setError(null);
+		try {
+			const result = (await check()) ?? null;
+			setUpdate(result);
+			return result;
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.warn("[updater] check error:", msg);
+			return null;
+		} finally {
+			setChecking(false);
+			checkingRef.current = false;
+		}
 	}, []);
 
-	// Re-check every 2 hours while the app is open
+	// Check on mount
 	useEffect(() => {
-		const id = setInterval(
-			() => {
-				check()
-					.then((result) => setUpdate(result ?? null))
-					.catch(() => {});
-			},
-			2 * 60 * 60 * 1000
-		);
+		checkForUpdates();
+	}, [checkForUpdates]);
+
+	// Re-check every 2 hours
+	useEffect(() => {
+		const id = setInterval(() => {
+			checkForUpdates();
+		}, 2 * 60 * 60 * 1000);
 		return () => clearInterval(id);
-	}, []);
+	}, [checkForUpdates]);
 
 	const dismiss = useCallback(() => setUpdate(null), []);
 
@@ -48,6 +61,7 @@ export const useUpdateChecker = (): UpdateState => {
 		if (!update) return;
 		setInstalling(true);
 		setProgress(0);
+		setError(null);
 		try {
 			let downloaded = 0;
 			let total: number | undefined;
@@ -61,11 +75,13 @@ export const useUpdateChecker = (): UpdateState => {
 			});
 			await relaunch();
 		} catch (err) {
-			console.error("[updater] install failed:", err);
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error("[updater] install failed:", msg);
+			setError(`Update failed: ${msg}`);
 			setInstalling(false);
 			setProgress(null);
 		}
 	}, [update]);
 
-	return { update, checking, installing, progress, dismiss, install };
+	return { update, checking, installing, progress, error, dismiss, install, checkForUpdates };
 };

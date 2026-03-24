@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { usePlatform } from "@/hooks/usePlatform";
+import type { UpdateState } from "@/hooks/useUpdateChecker";
+import { getVersion } from "@tauri-apps/api/app";
 import {
 	Settings as SettingsIcon,
 	Monitor,
@@ -15,6 +17,8 @@ import {
 	EyeOff,
 	CheckCircle,
 	XCircle,
+	Download,
+	RefreshCw,
 } from "lucide-react";
 import {
 	getOmdbApiKey,
@@ -60,8 +64,13 @@ const DonationReset = () => {
 	);
 };
 
-export const Settings = () => {
+interface SettingsProps {
+	updateState: UpdateState;
+}
+
+export const Settings = ({ updateState }: SettingsProps) => {
 	const { platform, layoutMode } = usePlatform();
+	const [appVersion, setAppVersion] = useState("");
 	const [hwAccel, setHwAccel] = useState(true);
 	const [defaultVolume, setDefaultVolume] = useState(100);
 
@@ -96,6 +105,10 @@ export const Settings = () => {
 	const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("idle");
 	const [historyError, setHistoryError] = useState<string | null>(null);
 	const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		getVersion().then(setAppVersion).catch(() => {});
+	}, []);
 
 	useEffect(() => {
 		getOmdbApiKey().then((key) => {
@@ -639,8 +652,76 @@ export const Settings = () => {
 					<CardHeader>
 						<CardTitle className="text-base">About</CardTitle>
 					</CardHeader>
-					<CardContent>
-						<p className="text-sm text-muted-foreground">MaxVideoPlayer v0.3.1</p>
+					<CardContent className="space-y-4">
+						<p className="text-sm text-muted-foreground">
+							MaxVideoPlayer {appVersion ? `v${appVersion}` : ""}
+						</p>
+
+						<div className="space-y-2">
+							{updateState.update ? (
+								<div className="rounded-lg bg-primary/10 border border-primary/25 px-4 py-3 space-y-2">
+									<p className="text-sm font-semibold text-primary">
+										Update available — v{updateState.update.version}
+									</p>
+									<p className="text-xs text-muted-foreground leading-relaxed">
+										{updateState.update.body ?? "A new version is ready to install."}
+									</p>
+									{updateState.installing && updateState.progress !== null && (
+										<div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
+											<div
+												className="h-full bg-primary transition-all duration-200"
+												style={{ width: `${updateState.progress}%` }}
+											/>
+										</div>
+									)}
+									{updateState.error && (
+										<p className="text-xs text-destructive">{updateState.error}</p>
+									)}
+									<Button
+										size="sm"
+										onClick={updateState.install}
+										disabled={updateState.installing}
+									>
+										{updateState.installing ? (
+											<span className="flex items-center gap-1.5">
+												<RefreshCw className="h-3 w-3 animate-spin" />
+												{updateState.progress !== null
+													? `Downloading… ${updateState.progress}%`
+													: "Installing…"}
+											</span>
+										) : (
+											<span className="flex items-center gap-1.5">
+												<Download className="h-3 w-3" />
+												Install Update
+											</span>
+										)}
+									</Button>
+								</div>
+							) : (
+								<div className="flex items-center gap-3">
+									<Button
+										size="sm"
+										variant="secondary"
+										onClick={() => updateState.checkForUpdates()}
+										disabled={updateState.checking}
+									>
+										{updateState.checking ? (
+											<span className="flex items-center gap-1.5">
+												<RefreshCw className="h-3 w-3 animate-spin" />
+												Checking…
+											</span>
+										) : (
+											"Check for Updates"
+										)}
+									</Button>
+									{!updateState.checking && !updateState.update && (
+										<span className="text-xs text-muted-foreground">
+											You're up to date.
+										</span>
+									)}
+								</div>
+							)}
+						</div>
 					</CardContent>
 				</Card>
 			</div>

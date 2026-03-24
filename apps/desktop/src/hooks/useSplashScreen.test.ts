@@ -1,15 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSplashScreen } from "./useSplashScreen";
+import type { UpdateState } from "./useUpdateChecker";
 
 // Mock Tauri API calls
 vi.mock("@/lib/tauri", () => ({
 	refreshProvider: vi.fn(),
 	refreshEpg: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/plugin-updater", () => ({
-	check: vi.fn(),
 }));
 
 vi.mock("./useChannels", () => ({
@@ -20,15 +17,25 @@ vi.mock("./useChannels", () => ({
 }));
 
 import * as tauri from "@/lib/tauri";
-import { check } from "@tauri-apps/plugin-updater";
 import * as channelsHook from "./useChannels";
 
 const mockUseChannels = vi.mocked(channelsHook.useChannels);
 const mockRefreshProvider = vi.mocked(tauri.refreshProvider);
 const mockRefreshEpg = vi.mocked(tauri.refreshEpg);
-const mockCheck = vi.mocked(check);
 const mockLoadProviderSettings = vi.mocked(channelsHook.loadProviderSettings);
 const mockGetEpgLastRefresh = vi.mocked(channelsHook.getEpgLastRefresh);
+
+const makeUpdateState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
+	update: null,
+	checking: false,
+	installing: false,
+	progress: null,
+	error: null,
+	dismiss: vi.fn(),
+	install: vi.fn(),
+	checkForUpdates: vi.fn().mockResolvedValue(null),
+	...overrides,
+});
 
 describe("useSplashScreen", () => {
 	beforeEach(() => {
@@ -38,7 +45,6 @@ describe("useSplashScreen", () => {
 			providers: [],
 			initialized: true,
 		} as never);
-		mockCheck.mockResolvedValue(null);
 		mockLoadProviderSettings.mockReturnValue({
 			autoRefresh: false,
 			refreshIntervalHours: 24,
@@ -53,24 +59,25 @@ describe("useSplashScreen", () => {
 	});
 
 	it("starts with dismissed=false and 4 steps when session is fresh", async () => {
-		const { result } = renderHook(() => useSplashScreen());
-		// Steps are initialized immediately (all 4 visible from the first render)
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		expect(result.current.steps).toHaveLength(4);
 		expect(result.current.dismissed).toBe(false);
-		// Wait for async completion
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 		expect(result.current.steps.every((s) => s.status === "done")).toBe(true);
 	});
 
 	it("marks dismissed immediately if session key is already set", () => {
 		sessionStorage.setItem("splash-shown", "true");
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		expect(result.current.dismissed).toBe(true);
 		expect(result.current.allDone).toBe(true);
 	});
 
 	it("completes all steps and sets allDone when there are no providers", async () => {
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
@@ -90,7 +97,8 @@ describe("useSplashScreen", () => {
 			epgRefreshIntervalHours: 24,
 		});
 
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(mockRefreshProvider).not.toHaveBeenCalled();
@@ -109,7 +117,8 @@ describe("useSplashScreen", () => {
 		});
 		mockRefreshProvider.mockResolvedValue(undefined);
 
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(mockRefreshProvider).toHaveBeenCalledWith("p1");
@@ -135,7 +144,8 @@ describe("useSplashScreen", () => {
 		mockGetEpgLastRefresh.mockReturnValue(0); // never refreshed
 		mockRefreshEpg.mockResolvedValue(undefined);
 
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(mockRefreshEpg).toHaveBeenCalledWith("p1");
@@ -160,16 +170,19 @@ describe("useSplashScreen", () => {
 		});
 		mockGetEpgLastRefresh.mockReturnValue(Date.now() - 1000); // refreshed 1 second ago
 
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(mockRefreshEpg).not.toHaveBeenCalled();
 	});
 
 	it("shows update step as 'Update available' when update is found", async () => {
-		mockCheck.mockResolvedValue({ version: "1.2.3" } as never);
+		const updateState = makeUpdateState({
+			update: { version: "1.2.3" } as never,
+		});
 
-		const { result } = renderHook(() => useSplashScreen());
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(result.current.update).toEqual({ version: "1.2.3" });
@@ -178,7 +191,8 @@ describe("useSplashScreen", () => {
 	});
 
 	it("dismiss() sets dismissed=true and stores session key", async () => {
-		const { result } = renderHook(() => useSplashScreen());
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		act(() => result.current.dismiss());
@@ -189,7 +203,8 @@ describe("useSplashScreen", () => {
 
 	it("calls onComplete callback when loading finishes", async () => {
 		const onComplete = vi.fn();
-		const { result } = renderHook(() => useSplashScreen({ onComplete }));
+		const updateState = makeUpdateState();
+		const { result } = renderHook(() => useSplashScreen({ updateState, onComplete }));
 		await waitFor(() => expect(result.current.allDone).toBe(true));
 
 		expect(onComplete).toHaveBeenCalledOnce();

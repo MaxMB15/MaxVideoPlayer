@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
-import type { Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import type { UpdateState } from "@/hooks/useUpdateChecker";
 import { openUrl } from "@/lib/openUrl";
 import bmcQr from "@/assets/bmc-qr.png";
 
@@ -10,9 +8,10 @@ const BMC_URL = "https://buymeacoffee.com/MaxMB15";
 
 interface SplashScreenProps {
 	splash: SplashScreenState;
+	updateState: UpdateState;
 }
 
-export const SplashScreen = ({ splash }: SplashScreenProps) => {
+export const SplashScreen = ({ splash, updateState }: SplashScreenProps) => {
 	const { steps, allDone, progress, update, hasProviders, dismiss } = splash;
 
 	return (
@@ -24,6 +23,7 @@ export const SplashScreen = ({ splash }: SplashScreenProps) => {
 				update={update}
 				hasProviders={hasProviders}
 				onDismiss={dismiss}
+				updateState={updateState}
 			/>
 			<RightPanel />
 		</div>
@@ -36,9 +36,10 @@ interface LeftPanelProps {
 	steps: SplashStep[];
 	allDone: boolean;
 	progress: number;
-	update: Update | null;
+	update: UpdateState["update"];
 	hasProviders: boolean;
 	onDismiss: () => void;
+	updateState: UpdateState;
 }
 
 const LeftPanel = ({
@@ -48,31 +49,9 @@ const LeftPanel = ({
 	update,
 	hasProviders,
 	onDismiss,
+	updateState,
 }: LeftPanelProps) => {
-	const [installing, setInstalling] = useState(false);
-	const [installProgress, setInstallProgress] = useState<number | null>(null);
-
-	const handleInstall = async () => {
-		if (!update) return;
-		setInstalling(true);
-		setInstallProgress(0);
-		try {
-			let downloaded = 0;
-			let total: number | undefined;
-			await update.downloadAndInstall((event) => {
-				if (event.event === "Started") {
-					total = event.data.contentLength ?? undefined;
-				} else if (event.event === "Progress") {
-					downloaded += event.data.chunkLength;
-					if (total) setInstallProgress(Math.round((downloaded / total) * 100));
-				}
-			});
-			await relaunch();
-		} catch {
-			setInstalling(false);
-			setInstallProgress(null);
-		}
-	};
+	const { installing, progress: installProgress, error, install: handleInstall } = updateState;
 
 	return (
 		<div className="flex-1 flex flex-col items-center justify-center gap-10 px-16 border-r border-border">
@@ -142,6 +121,9 @@ const LeftPanel = ({
 									style={{ width: `${installProgress}%` }}
 								/>
 							</div>
+						)}
+						{error && (
+							<p className="mt-1.5 text-xs text-destructive">{error}</p>
 						)}
 					</div>
 				)}
