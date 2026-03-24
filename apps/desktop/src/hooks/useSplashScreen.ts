@@ -150,10 +150,16 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 			// Step 4: Check for updates via the shared hook.
 			// checkForUpdates() joins the in-flight promise if the mount check is
 			// still running, so only one actual check() call happens.
+			// Timeout after 10s so the splash never gets stuck.
 			setStepStatus("updates", "active");
 			let foundUpdate: Update | null = null;
 			try {
-				foundUpdate = await updateState.checkForUpdates();
+				foundUpdate = await Promise.race([
+					updateState.checkForUpdates(),
+					new Promise<null>((_, reject) =>
+						setTimeout(() => reject(new Error("Update check timed out")), 7_000)
+					),
+				]);
 			} catch {
 				if (cancelled) return;
 				setStepStatus("updates", "error", "Unable to check for updates");

@@ -31,7 +31,7 @@ export const useUpdateChecker = (): UpdateState => {
 			setChecking(true);
 			setError(null);
 			try {
-				const result = (await check()) ?? null;
+				const result = (await check({ timeout: 5_000 })) ?? null;
 				setUpdate(result);
 				return result;
 			} catch (err) {
