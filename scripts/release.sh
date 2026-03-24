@@ -70,57 +70,12 @@ case "$CONFIRM" in
   *) echo "Aborted."; exit 0 ;;
 esac
 
-# ── Update tauri.conf.json ────────────────────────────────────────────────────
-python3 - <<PYEOF
-import json, re
+# ── Bump version in tauri.conf.json, Cargo.toml, Settings.tsx ────────────────
+python3 "$REPO_ROOT/scripts/bump-version.py" "$NEW"
 
-path = "$TAURI_CONF"
-with open(path) as f:
-    raw = f.read()
-
-# Preserve formatting: targeted replacement of the version field
-updated = re.sub(
-    r'("version"\s*:\s*)"[^"]+"',
-    r'\g<1>"$NEW"',
-    raw,
-    count=1
-)
-
-with open(path, "w") as f:
-    f.write(updated)
-
-print("  Updated tauri.conf.json")
-PYEOF
-
-# ── Update Cargo.toml ────────────────────────────────────────────────────────
-python3 - <<PYEOF
-import re
-
-path = "$CARGO_TOML"
-with open(path) as f:
-    raw = f.read()
-
-# Only replace the first [package] version = "..." line
-updated = re.sub(
-    r'^(version\s*=\s*)"[^"]+"',
-    r'\g<1>"$NEW"',
-    raw,
-    count=1,
-    flags=re.MULTILINE
-)
-
-with open(path, "w") as f:
-    f.write(updated)
-
-print("  Updated Cargo.toml")
-PYEOF
-
-# ── Update Settings.tsx version string ───────────────────────────────────────
-sed -i.bak \
-  "s/MaxVideoPlayer v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/MaxVideoPlayer v$NEW/" \
-  "$SETTINGS_TSX"
-rm -f "${SETTINGS_TSX}.bak"
-echo "  Updated Settings.tsx"
+# ── Refresh workspace lockfile after Cargo.toml version change ────────────────
+( cd "$REPO_ROOT" && cargo generate-lockfile )
+echo "  Updated Cargo.lock"
 
 # ── Commit ───────────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"

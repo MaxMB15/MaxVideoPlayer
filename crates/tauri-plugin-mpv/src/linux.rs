@@ -21,7 +21,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use std::ffi::c_void;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, OnceLock,
+    Arc, Mutex, OnceLock,
 };
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -37,7 +37,7 @@ use wayland_client::{
         wl_registry::WlRegistry,
         wl_subcompositor::WlSubcompositor,
         wl_subsurface::WlSubsurface,
-        wl_surface::{self, WlSurface},
+        wl_surface::WlSurface,
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
@@ -69,6 +69,13 @@ fn gl_get_proc_address(name: &str) -> *mut c_void {
 // Render callback inner state (heap-stable, accessed from glib main thread)
 // ---------------------------------------------------------------------------
 
+/// Pending resize request queued by `set_frame()` and applied by `render_frame()`
+/// on the GLib main thread, ensuring wl_egl_window_resize never races with EGL calls.
+struct PendingResize {
+    w: i32,
+    h: i32,
+}
+
 struct RenderInner {
     ctx: RenderContext,
     egl_display: egl::Display,
@@ -78,6 +85,13 @@ struct RenderInner {
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Shared with LinuxGlRenderer::set_visible; skips GPU calls when false.
     video_active: Arc<AtomicBool>,
+    /// Pending wl_egl_window resize — set by set_frame (command thread),
+    /// consumed by render_frame (GLib main thread). Protected by Mutex so
+    /// wl_egl_window_resize never races with eglSwapBuffers.
+    pending_resize: Arc<Mutex<Option<PendingResize>>>,
+    /// Pointer to the WlEglSurface so render_frame can call resize() on the
+    /// GLib main thread. Only valid while LinuxGlRenderer is alive.
+    wl_egl_surface_ptr: usize,
 }
 
 unsafe impl Send for RenderInner {}
@@ -173,15 +187,117 @@ pub struct LinuxGlRenderer {
     first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
     /// Controls whether GPU rendering happens. Toggled by set_visible().
     video_active: Arc<AtomicBool>,
+    /// Shared with RenderInner so set_frame can queue resizes for the GLib thread.
+    pending_resize: Arc<Mutex<Option<PendingResize>>>,
+    /// CSD offsets in pixels: (x, y) from the parent wl_surface origin to the
+    /// WebView content area origin. Includes shadow margin + header bar height.
+    /// Added to subsurface coordinates in set_frame() because frontend coords
+    /// (getBoundingClientRect) are relative to the WebView viewport, but
+    /// set_position() is relative to the parent wl_surface.
+    csd_offset: (i32, i32),
 }
 
 unsafe impl Send for LinuxGlRenderer {}
 unsafe impl Sync for LinuxGlRenderer {}
 
 impl LinuxGlRenderer {
+    /// Query the CSD (Client-Side Decoration) offset from the top-left of the
+    /// parent wl_surface to the top-left of the WebView content area.
+    ///
+    /// On Wayland with CSD, the wl_surface includes:
+    ///  1. Shadow/decoration margin (typically 10px Adwaita theme)
+    ///  2. Header bar (typically ~47px)
+    ///  3. Any container padding (0 for Tauri)
+    ///
+    /// We query the decoration margin from the GTK style context and the
+    /// WebView offset via `translate_coordinates()`. Must dispatch to the
+    /// GLib main thread because GTK widget APIs require it.
+    ///
+    /// Returns (x_offset, y_offset) in pixels; (0, 0) on X11 or failure.
+    fn query_csd_offsets<R: Runtime>(app: &AppHandle<R>) -> (i32, i32) {
+        use gtk::prelude::*;
+
+        let window = match app.get_webview_window("main") {
+            Some(w) => w,
+            None => return (0, 0),
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let win_ptr = &window as *const _ as usize;
+
+        glib::idle_add_once(move || {
+            let window = unsafe {
+                &*(win_ptr as *const tauri::WebviewWindow<R>)
+            };
+
+            let result = (|| -> Option<(i32, i32)> {
+                let gtk_win = window.gtk_window().ok()?;
+
+                // Use the default_vbox (Tauri's content container that holds the
+                // WebView) and translate_coordinates to get its exact position
+                // within the GtkWindow. This accounts for:
+                //  - CSD shadow margins (decoration CSS margin, ~10px Adwaita)
+                //  - Header bar height (~47px)
+                //  - Any container padding (0 for Tauri)
+                let vbox = window.default_vbox().ok()?;
+                let (vbox_x, vbox_y) = match vbox.translate_coordinates(&gtk_win, 0, 0) {
+                    Some(coords) => coords,
+                    None => {
+                        // Fallback: header bar height only (no shadow info).
+                        let header_h = gtk_win
+                            .titlebar()
+                            .map(|tb| tb.allocated_height())
+                            .unwrap_or(0);
+                        return Some((0, header_h));
+                    }
+                };
+
+                // translate_coordinates gives the vbox position within the
+                // GtkWindow widget's allocation. On GTK3/CSD, the GdkWindow
+                // backing the GtkWindow includes the shadow area, but the
+                // GtkWindow widget is allocated inside (after) the shadow.
+                // So vbox_y includes the header bar offset but NOT the shadow.
+                //
+                // Get the shadow margin from GdkWindow size vs GtkWidget allocation.
+                let gdk_win = gtk_win.window()?;
+                let (gdk_w, gdk_h) = (gdk_win.width(), gdk_win.height());
+                let alloc = gtk_win.allocation();
+                // Shadow = (GdkWindow size - GtkWidget allocation) / 2 on each side
+                let shadow_x = (gdk_w - alloc.width()).max(0) / 2;
+                let shadow_y = (gdk_h - alloc.height()).max(0) / 2;
+
+                tracing::info!(
+                    "[Linux renderer] CSD breakdown: vbox_translate=({},{}) gdk={}x{} alloc={}x{} shadow=({},{}) total=({},{})",
+                    vbox_x, vbox_y, gdk_w, gdk_h, alloc.width(), alloc.height(),
+                    shadow_x, shadow_y,
+                    shadow_x + vbox_x, shadow_y + vbox_y
+                );
+                Some((shadow_x + vbox_x, shadow_y + vbox_y))
+            })();
+
+            let _ = tx.send(result.unwrap_or((0, 0)));
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(offsets) => {
+                tracing::info!(
+                    "[Linux renderer] CSD offsets: x={}px y={}px (shadow + header bar)",
+                    offsets.0, offsets.1
+                );
+                offsets
+            }
+            Err(_) => {
+                tracing::warn!("[Linux renderer] timed out querying CSD offsets, defaulting to (0,0)");
+                (0, 0)
+            }
+        }
+    }
+
     /// Create an EGL-backed renderer within the Tauri window.
     /// Dispatches to the X11 or Wayland path based on the raw window handle.
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+        let csd_offset = Self::query_csd_offsets(app);
+
         let window = app
             .get_webview_window("main")
             .ok_or_else(|| "Window 'main' not found".to_string())?;
@@ -196,7 +312,7 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("display handle: {:?}", e))?
             .as_raw();
 
-        match raw_window {
+        let mut renderer = match raw_window {
             RawWindowHandle::Xlib(h) => {
                 let parent_window = h.window;
                 let x11_display_ptr = match raw_display {
@@ -237,7 +353,9 @@ impl LinuxGlRenderer {
                 "Unsupported window handle type on Linux: {:?}",
                 raw_window
             )),
-        }
+        }?;
+        renderer.csd_offset = csd_offset;
+        Ok(renderer)
     }
 
     // -----------------------------------------------------------------------
@@ -420,6 +538,8 @@ impl LinuxGlRenderer {
             render_inner: None,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
+            pending_resize: Arc::new(Mutex::new(None)),
+            csd_offset: (0, 0),
         })
     }
 
@@ -486,6 +606,12 @@ impl LinuxGlRenderer {
         // parent (Tauri's WKView equivalent on Wayland).
         let subsurface =
             subcompositor.get_subsurface(&child_surface, &parent_surface, &qh, ());
+
+        // Place the video subsurface BELOW the parent surface (WebView).
+        // Without this, the subsurface defaults to above the parent, covering
+        // the transparent WebView controls. This mirrors macOS's
+        // addSubview:positioned:NSWindowBelow:relativeTo: pattern.
+        subsurface.place_below(&parent_surface);
 
         // Desync: the subsurface can be committed independently of the parent.
         // This is the correct mode for video — we don't want to wait for GTK's
@@ -595,6 +721,8 @@ impl LinuxGlRenderer {
             render_inner: None,
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
+            pending_resize: Arc::new(Mutex::new(None)),
+            csd_offset: (0, 0),
         })
     }
 
@@ -658,6 +786,9 @@ impl PlatformRenderer for LinuxGlRenderer {
         )
         .map_err(|e| format!("eglMakeCurrent: {:?}", e))?;
 
+        // Load GL function pointers once (for glViewport/glClear in render_frame).
+        gl::load_with(|name| gl_get_proc_address(name) as *const _);
+
         fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
             gl_get_proc_address(name)
         }
@@ -674,6 +805,13 @@ impl PlatformRenderer for LinuxGlRenderer {
         )
         .map_err(|e| format!("mpv_render_context_create: {}", e))?;
 
+        // Get wl_egl_surface pointer for render_frame to apply pending resizes.
+        let wl_egl_surface_ptr = self
+            .wayland
+            .as_ref()
+            .map(|wl| &wl.wl_egl_surface as *const WlEglSurface as usize)
+            .unwrap_or(0);
+
         let mut inner = Box::new(RenderInner {
             ctx: render_ctx,
             egl_display: self.egl_display,
@@ -681,6 +819,8 @@ impl PlatformRenderer for LinuxGlRenderer {
             egl_context: self.egl_context,
             first_frame_cb: self.first_frame_cb.take(),
             video_active: self.video_active.clone(),
+            pending_resize: self.pending_resize.clone(),
+            wl_egl_surface_ptr,
         });
 
         let inner_ptr = &*inner as *const RenderInner as usize;
@@ -697,6 +837,20 @@ impl PlatformRenderer for LinuxGlRenderer {
         });
 
         self.render_inner = Some(inner);
+
+        // Clear the framebuffer to black before the first mpv frame arrives.
+        // Without this, the surface shows uninitialized GPU memory (green/purple garbage).
+        unsafe {
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        let _ = egl.swap_buffers(self.egl_display, self.egl_surface);
+
+        // Release the EGL context from this thread so the GLib main thread
+        // can make it current in render_frame(). EGL contexts are thread-local —
+        // only one thread can hold a context current at a time.
+        let _ = egl.make_current(self.egl_display, None, None, None);
+
         tracing::info!("[Linux renderer] render context attached");
         Ok(())
     }
@@ -706,19 +860,47 @@ impl PlatformRenderer for LinuxGlRenderer {
     }
 
     fn set_frame(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        tracing::trace!("[Linux renderer] set_frame({}, {}, {}, {})", x, y, w, h);
         if let Some(ref mut wl) = self.wayland {
-            // Wayland: position the subsurface and resize the wl_egl_window.
+            // Wayland: position the subsurface and queue resize for GLib thread.
             //
-            // Linux/GTK uses top-left origin (same as CSS) — no Y-flip needed.
-            // set_position() is double-buffered: it takes effect when the parent
-            // surface next commits, which GTK handles on every frame tick.
+            // wl_egl_window_resize is NOT thread-safe with respect to EGL calls
+            // (eglMakeCurrent, eglSwapBuffers). Instead of resizing here on the
+            // command thread, we queue the resize and let render_frame() apply it
+            // on the GLib main thread — the same thread that does EGL rendering.
+            // This mirrors macOS's pattern of dispatching set_frame to main queue.
             let wi = (w as i32).max(1);
             let hi = (h as i32).max(1);
-            wl.last_frame = (x as i32, y as i32, wi, hi);
 
-            wl.subsurface.set_position(x as i32, y as i32);
-            wl.wl_egl_surface.resize(wi, hi, 0, 0);
-            // Commit the child surface to apply the position change double-buffer.
+            // Frontend coords are relative to the WebView viewport, but
+            // subsurface position is relative to the parent wl_surface which
+            // includes CSD shadow margins and header bar. Add both offsets.
+            let adjusted_x = x as i32 + self.csd_offset.0;
+            let adjusted_y = y as i32 + self.csd_offset.1;
+            wl.last_frame = (adjusted_x, adjusted_y, wi, hi);
+
+            // set_position is double-buffered (safe from any thread).
+            wl.subsurface.set_position(adjusted_x, adjusted_y);
+
+            // Queue the resize for the GLib main thread.
+            if let Ok(mut pending) = self.pending_resize.lock() {
+                *pending = Some(PendingResize { w: wi, h: hi });
+            }
+
+            // Manually trigger a render_frame dispatch. When paused, mpv doesn't
+            // fire update callbacks, so the pending resize would never be applied.
+            // This ensures resize is visible immediately (redraws last frame).
+            if let Some(ref inner) = self.render_inner {
+                let inner_ptr = &**inner as *const RenderInner as usize;
+                let v = self.valid.clone();
+                glib::idle_add_once(move || {
+                    if !v.load(Ordering::Acquire) {
+                        return;
+                    }
+                    unsafe { render_frame(inner_ptr) };
+                });
+            }
+
             wl.child_surface.commit();
             let _ = wl.conn.flush();
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
@@ -735,6 +917,7 @@ impl PlatformRenderer for LinuxGlRenderer {
                 (xlib.XFlush)(x_display);
             }
         }
+
     }
 
     fn set_visible(&mut self, visible: bool) {
@@ -742,10 +925,12 @@ impl PlatformRenderer for LinuxGlRenderer {
 
         if let Some(ref mut wl) = self.wayland {
             if visible {
-                // Restore last known position (in case we moved it off-screen).
+                // Restore last known position and queue resize for GLib thread.
                 let (lx, ly, lw, lh) = wl.last_frame;
                 wl.subsurface.set_position(lx, ly);
-                wl.wl_egl_surface.resize(lw, lh, 0, 0);
+                if let Ok(mut pending) = self.pending_resize.lock() {
+                    *pending = Some(PendingResize { w: lw, h: lh });
+                }
             } else {
                 // Move subsurface far off-screen. This is the safe Wayland equivalent
                 // of XUnmapWindow — we cannot call wl_surface_attach(NULL) on an
@@ -886,6 +1071,8 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     let egl = egl_instance();
 
+    // 1. Make the EGL context current FIRST — wl_egl_window_resize() requires
+    //    the EGL surface to be current on the calling thread.
     if egl
         .make_current(
             inner.egl_display,
@@ -895,7 +1082,27 @@ unsafe fn render_frame(inner_ptr: usize) {
         )
         .is_err()
     {
+        tracing::warn!("[Linux renderer] render_frame: eglMakeCurrent failed");
         return;
+    }
+
+    // 2. Apply any pending wl_egl_window resize AFTER making context current.
+    //    This ensures the resize and subsequent EGL calls happen on the same
+    //    thread with the surface current, avoiding the race condition that
+    //    caused color corruption. Also set glViewport and clear the buffer
+    //    to avoid garbage from newly allocated regions.
+    let mut did_resize = false;
+    if inner.wl_egl_surface_ptr != 0 {
+        if let Ok(mut pending) = inner.pending_resize.lock() {
+            if let Some(resize) = pending.take() {
+                let wl_egl = &*(inner.wl_egl_surface_ptr as *const WlEglSurface);
+                wl_egl.resize(resize.w, resize.h, 0, 0);
+                gl::Viewport(0, 0, resize.w, resize.h);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                did_resize = true;
+            }
+        }
     }
 
     let w = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH).unwrap_or(0);
@@ -906,30 +1113,35 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     let rc = &inner.ctx as *const RenderContext;
     let rc: &RenderContext = &*rc;
-    match rc.update() {
-        Ok(flags) => {
-            if flags & mpv_render_update::Frame != 0 {
-                // fbo=0 = default framebuffer; flip_y=true corrects GL framebuffer orientation.
-                if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
-                    tracing::trace!("[Linux renderer] render error: {}", e);
-                    return;
-                }
-                // Present frame. For wl_egl_window, eglSwapBuffers implicitly
-                // calls wl_surface_commit, so no manual commit needed here.
-                let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
-                rc.report_swap();
 
-                let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
-                if n < 5 || n % 60 == 0 {
-                    tracing::debug!("[Linux renderer] frame presented (#{n})");
-                }
-
-                if let Some(cb) = inner.first_frame_cb.take() {
-                    cb();
-                }
-            }
+    // 3. Check if mpv has a new frame or if we need to force a redraw after resize.
+    //    When paused, mpv doesn't fire update callbacks, so resizes would never
+    //    be visually applied. Calling render() unconditionally after resize
+    //    redraws the last frame at the new size (mpv docs confirm this behavior).
+    let should_render = match rc.update() {
+        Ok(flags) => (flags & mpv_render_update::Frame != 0) || did_resize,
+        Err(e) => {
+            tracing::trace!("[Linux renderer] update error: {}", e);
+            did_resize // Still render if we resized, even if update() fails
         }
-        Err(e) => tracing::trace!("[Linux renderer] update error: {}", e),
+    };
+
+    if should_render {
+        if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
+            tracing::trace!("[Linux renderer] render error: {}", e);
+            return;
+        }
+        let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
+        rc.report_swap();
+
+        let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n < 5 || n % 60 == 0 {
+            tracing::debug!("[Linux renderer] frame presented (#{n})");
+        }
+
+        if let Some(cb) = inner.first_frame_cb.take() {
+            cb();
+        }
     }
 }
 
@@ -941,9 +1153,16 @@ unsafe fn render_frame(inner_ptr: usize) {
 pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "libmpv"),
-        ("hwdec", "auto"),
+        // auto-copy: hardware-decode but copy frames to CPU for GL rendering.
+        // Plain "auto" maps VAAPI surfaces directly as GL textures, which causes
+        // color corruption (red/green hue) on drivers that can't handle the
+        // NV12→RGB interop (VMware, some Mesa/Intel setups).
+        ("hwdec", "auto-copy"),
         ("ao", "pipewire,pulse,alsa"),
-        ("video-sync", "display-resample"),
+        // audio sync is correct for callback-driven rendering (not vsync-locked).
+        // display-resample requires calling render() at every vsync, which our
+        // idle_add_once approach doesn't guarantee — it deactivates after a few seconds.
+        ("video-sync", "audio"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),

@@ -1,0 +1,162 @@
+# Bump semver version on main, commit, tag vX.Y.Z — triggers `release.yml` on tag push.
+#
+# Semver (industry standard): https://semver.org
+#   - patch — bug fixes, compatible with current minor
+#   - minor — new features, backward compatible
+#   - major — breaking changes
+#
+# Who can run this:
+#   1) Repository variable RELEASE_ALLOWED_ACTORS (comma-separated GitHub logins).
+#      If unset, only github.repository_owner may run (works for user-owned repos).
+#      For organization-owned repos, set RELEASE_ALLOWED_ACTORS to your username.
+#   2) Optional: GitHub Environment "release" with required reviewers (add manual
+#      approval before the job runs). Uncomment `environment:` on the job below.
+#   3) For protected `main`: add secret RELEASE_AUTOMATION_PAT — a fine-grained PAT
+#      (Contents: Read and write) owned by someone allowed to push to main, or
+#      configure branch rules to allow github-actions[bot] to bypass.
+#
+# Setup: Settings → Secrets and variables → Actions → New repository secret:
+#        RELEASE_AUTOMATION_PAT (optional if GITHUB_TOKEN can push to main)
+
+name: Release — bump version & tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Semver bump (see https://semver.org)"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      sync_dev:
+        description: "After tagging, merge main into dev (git-flow sync)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+jobs:
+  bump-and-tag:
+    runs-on: ubuntu-latest
+    # Uncomment for a manual approval gate (Settings → Environments → release):
+    # environment: release
+
+    steps:
+      - name: Verify release trigger permission
+        env:
+          ACTOR: ${{ github.actor }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_ALLOWED_ACTORS }}
+        run: |
+          set -euo pipefail
+          python3 << 'PY'
+          import os
+          actor = os.environ["ACTOR"]
+          owner = os.environ["REPO_OWNER"]
+          raw = os.environ.get("ALLOWED_ACTORS", "").strip()
+          if raw:
+              allowed = [x.strip() for x in raw.split(",") if x.strip()]
+          else:
+              allowed = [owner]
+          if actor not in allowed:
+              print(f"::error::User '{actor}' is not allowed to run releases. "
+                    f"Allowed: {allowed}. Set repository variable RELEASE_ALLOWED_ACTORS "
+                    f"to a comma-separated list of GitHub usernames (for org repos).")
+              raise SystemExit(1)
+          print(f"OK: {actor} is authorized to release.")
+          PY
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Pull latest main
+        run: git pull origin main
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compute next version & bump files
+        id: ver
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          export CURRENT
+          NEW=$(python3 - <<'PY'
+          import os
+          cur = os.environ["CURRENT"]
+          rt = os.environ["RELEASE_TYPE"]
+          major, minor, patch = map(int, cur.split("."))
+          if rt == "patch":
+              print(f"{major}.{minor}.{patch + 1}")
+          elif rt == "minor":
+              print(f"{major}.{minor + 1}.0")
+          elif rt == "major":
+              print(f"{major + 1}.0.0")
+          else:
+              raise SystemExit(1)
+          PY
+          )
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumping $CURRENT → $NEW ($RELEASE_TYPE)"
+          python3 scripts/bump-version.py "$NEW"
+
+      - name: Refresh Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Commit version bump
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.ver.outputs.new }}"
+          git add apps/desktop/src-tauri/tauri.conf.json \
+                  apps/desktop/src-tauri/Cargo.toml \
+                  apps/desktop/src/components/settings/Settings.tsx \
+                  Cargo.lock
+          git commit -m "chore: bump version to $NEW"
+
+      - name: Push commit to main
+        run: git push origin main
+
+      - name: Create and push tag
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.ver.outputs.new }}"
+          git tag -a "v$NEW" -m "Release v$NEW"
+          git push origin "v$NEW"
+
+      - name: Summary
+        run: |
+          NEW="${{ steps.ver.outputs.new }}"
+          echo "### Release v$NEW started" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag \`v$NEW\` pushed — **Release** workflow builds artifacts next." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge main into dev (optional)
+        if: inputs.sync_dev
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.ver.outputs.new }}"
+          git fetch origin main dev
+          git checkout dev
+          git merge --no-ff origin/main -m "chore: merge main into dev after v$NEW release"
+          git push origin dev
+          git checkout main
