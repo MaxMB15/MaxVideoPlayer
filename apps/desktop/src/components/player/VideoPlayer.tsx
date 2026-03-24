@@ -105,6 +105,9 @@ export const PlayerView = () => {
 		};
 	}, [mpv.firstFrameReady]);
 
+	// Report video container bounds to the Rust renderer. The CSD header bar
+	// offset is applied on the Rust side (LinuxGlRenderer::csd_y_offset) so the
+	// frontend just sends raw getBoundingClientRect values.
 	useEffect(() => {
 		const el = containerRef.current;
 		if (!el) return;
@@ -550,7 +553,7 @@ export const PlayerView = () => {
 					<div className="text-center p-6 max-w-md">
 						<p className="text-destructive text-sm mb-2">{mpv.error}</p>
 						<p className="text-muted-foreground text-xs">
-							Run ./scripts/build-libmpv.sh macos before dev/build.
+							Check that libmpv is installed. See README for setup instructions.
 						</p>
 					</div>
 				)}

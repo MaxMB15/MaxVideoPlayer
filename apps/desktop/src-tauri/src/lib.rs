@@ -80,7 +80,7 @@ pub fn run() {
                 window.open_devtools();
             }
 
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 if let Some(window) = app.get_webview_window("main") {
                     let handle = app.handle().clone();

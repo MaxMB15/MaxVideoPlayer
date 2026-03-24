@@ -99,8 +99,65 @@ case "$PLATFORM" in
     echo "    Place libmpv.so in libs/android/<abi>/ (for apps/android)"
     ;;
 
+  linux)
+    echo "==> Building libmpv from source for Linux..."
+    mkdir -p "$LIBS_DIR/linux"
+
+    # Check build tools
+    for tool in meson ninja pkg-config; do
+      if ! command -v "$tool" &>/dev/null; then
+        echo "Error: $tool not found. Run: sudo apt-get install meson ninja-build pkg-config"
+        exit 1
+      fi
+    done
+
+    if ! pkg-config --exists libavcodec; then
+      echo "Error: ffmpeg dev packages not found."
+      echo "Run: sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev"
+      exit 1
+    fi
+
+    # Clone mpv source (same version as macOS for consistency)
+    MPV_SRC="$LIBS_DIR/mpv-src"
+    MPV_TAG="v0.40.0"
+    if [[ ! -d "$MPV_SRC/.git" ]]; then
+      echo "    Cloning mpv source (${MPV_TAG})..."
+      git clone https://github.com/mpv-player/mpv.git --depth=1 --branch "$MPV_TAG" "$MPV_SRC"
+    else
+      echo "    mpv source already present, skipping clone."
+    fi
+
+    # Build
+    BUILD_DIR="$MPV_SRC/build-linux"
+    echo "    Running meson setup..."
+    meson setup "$BUILD_DIR" "$MPV_SRC" \
+      --buildtype=release \
+      --wipe \
+      -Dlibmpv=true \
+      -Dgl=enabled \
+      -Dvulkan=disabled \
+      -Dwayland=enabled \
+      -Dx11=enabled \
+      -Degl=enabled
+
+    echo "    Building libmpv.so (this takes a few minutes)..."
+    ninja -C "$BUILD_DIR" libmpv.so.2
+
+    # Copy .so to libs/linux/
+    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -not -type l | head -1)
+    if [[ -z "$SO" ]]; then
+      echo "Error: libmpv.so not found after build"
+      exit 1
+    fi
+    rm -f "$LIBS_DIR/linux/libmpv.so" "$LIBS_DIR/linux/libmpv.so.2"
+    cp "$SO" "$LIBS_DIR/linux/libmpv.so"
+    ln -sf libmpv.so "$LIBS_DIR/linux/libmpv.so.2"
+    echo "    Built libmpv -> $LIBS_DIR/linux/libmpv.so"
+    echo "    Done."
+    ;;
+
   *)
-    echo "Usage: $0 {macos|ios|android}"
+    echo "Usage: $0 {macos|linux|ios|android}"
     echo ""
     echo "Downloads or builds libmpv for the target platform."
     echo "Output goes to libs/<platform>/"

@@ -42,6 +42,9 @@ libs/android/**/*.so
 libs/mpv-src/
 libs/macos/
 
+# Worktrees
+.worktrees/
+
 # AI Generated Files
 .claude/
 docs/
