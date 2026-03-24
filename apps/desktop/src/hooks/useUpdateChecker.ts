@@ -20,26 +20,32 @@ export const useUpdateChecker = (): UpdateState => {
 	const [progress, setProgress] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	// Guard against concurrent check() calls — only one at a time
-	const checkingRef = useRef(false);
+	// Share a single in-flight promise so concurrent callers (mount + splash)
+	// all wait for the same check() call instead of one getting null.
+	const inflightRef = useRef<Promise<Update | null> | null>(null);
 
-	const checkForUpdates = useCallback(async (): Promise<Update | null> => {
-		if (checkingRef.current) return null;
-		checkingRef.current = true;
-		setChecking(true);
-		setError(null);
-		try {
-			const result = (await check()) ?? null;
-			setUpdate(result);
-			return result;
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			console.warn("[updater] check error:", msg);
-			return null;
-		} finally {
-			setChecking(false);
-			checkingRef.current = false;
-		}
+	const checkForUpdates = useCallback((): Promise<Update | null> => {
+		if (inflightRef.current) return inflightRef.current;
+
+		const promise = (async () => {
+			setChecking(true);
+			setError(null);
+			try {
+				const result = (await check()) ?? null;
+				setUpdate(result);
+				return result;
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				console.warn("[updater] check error:", msg);
+				return null;
+			} finally {
+				setChecking(false);
+				inflightRef.current = null;
+			}
+		})();
+
+		inflightRef.current = promise;
+		return promise;
 	}, []);
 
 	// Check on mount
@@ -49,9 +55,12 @@ export const useUpdateChecker = (): UpdateState => {
 
 	// Re-check every 2 hours
 	useEffect(() => {
-		const id = setInterval(() => {
-			checkForUpdates();
-		}, 2 * 60 * 60 * 1000);
+		const id = setInterval(
+			() => {
+				checkForUpdates();
+			},
+			2 * 60 * 60 * 1000
+		);
 		return () => clearInterval(id);
 	}, [checkForUpdates]);
 

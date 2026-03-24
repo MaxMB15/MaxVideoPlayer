@@ -178,8 +178,10 @@ describe("useSplashScreen", () => {
 	});
 
 	it("shows update step as 'Update available' when update is found", async () => {
+		const fakeUpdate = { version: "1.2.3" } as never;
 		const updateState = makeUpdateState({
-			update: { version: "1.2.3" } as never,
+			update: fakeUpdate,
+			checkForUpdates: vi.fn().mockResolvedValue(fakeUpdate),
 		});
 
 		const { result } = renderHook(() => useSplashScreen({ updateState }));
