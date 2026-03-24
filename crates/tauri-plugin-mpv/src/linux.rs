@@ -217,17 +217,18 @@ impl LinuxGlRenderer {
     fn query_csd_offsets<R: Runtime>(app: &AppHandle<R>) -> (i32, i32) {
         use gtk::prelude::*;
 
-        let window = match app.get_webview_window("main") {
-            Some(w) => w,
-            None => return (0, 0),
-        };
+        // Verify the window exists before dispatching to the GLib main thread.
+        if app.get_webview_window("main").is_none() {
+            return (0, 0);
+        }
 
         let (tx, rx) = std::sync::mpsc::channel();
-        let win_ptr = &window as *const _ as usize;
+        let app_handle = app.clone();
 
         glib::idle_add_once(move || {
-            let window = unsafe {
-                &*(win_ptr as *const tauri::WebviewWindow<R>)
+            let window = match app_handle.get_webview_window("main") {
+                Some(w) => w,
+                None => { let _ = tx.send((0, 0)); return; }
             };
 
             let result = (|| -> Option<(i32, i32)> {

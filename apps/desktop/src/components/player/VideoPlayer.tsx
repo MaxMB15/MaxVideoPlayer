@@ -106,8 +106,8 @@ export const PlayerView = () => {
 	}, [mpv.firstFrameReady]);
 
 	// Report video container bounds to the Rust renderer. The CSD header bar
-	// offset is applied on the Rust side (LinuxGlRenderer::csd_y_offset) so the
-	// frontend just sends raw getBoundingClientRect values.
+	// offset is applied on the Rust side via LinuxGlRenderer::csd_offset (x, y),
+	// so the frontend just sends raw getBoundingClientRect values.
 	useEffect(() => {
 		const el = containerRef.current;
 		if (!el) return;
