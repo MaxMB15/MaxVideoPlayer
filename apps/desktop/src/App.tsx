@@ -34,6 +34,7 @@ interface AppRoutesProps {
 const AppRoutes = ({ updateState }: AppRoutesProps) => {
 	const { refreshProviders } = useChannels();
 	const splash = useSplashScreen({
+		updateState,
 		// After splash finishes any playlist/EPG refreshes, sync ChannelsContext so
 		// polling in useChannels reads fresh lastUpdated timestamps (avoids re-triggering
 		// the same refresh 60s later due to stale state).
@@ -46,14 +47,14 @@ const AppRoutes = ({ updateState }: AppRoutesProps) => {
 
 	return (
 		<>
-			{!splash.dismissed && <SplashScreen splash={splash} />}
+			{!splash.dismissed && <SplashScreen splash={splash} updateState={updateState} />}
 
 			<Routes>
 				<Route element={<AppLayout />}>
 					<Route path="/" element={<ChannelList />} />
 					<Route path="/player" element={<PlayerView />} />
 					<Route path="/playlists" element={<PlaylistManager />} />
-					<Route path="/settings" element={<Settings />} />
+					<Route path="/settings" element={<Settings updateState={updateState} />} />
 				</Route>
 			</Routes>
 
