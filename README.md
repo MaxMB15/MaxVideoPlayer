@@ -137,20 +137,19 @@ MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins
 
 ### Releasing a new version
 
-**Recommended (GitHub Actions):** [Actions → Release — bump version & tag](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml) → **Run workflow**.
+**Recommended (GitHub Actions):** two workflows so rulesets that require **pull requests**, **status checks**, and **verified commits** on `main` still work.
 
-1. Choose **Semver bump** ([semver.org](https://semver.org)):
-   - **patch** — bug fixes (0.3.0 → 0.3.1)
-   - **minor** — backward-compatible features (0.3.1 → 0.4.0)
-   - **major** — breaking changes (0.4.0 → 1.0.0)
-2. Optionally enable **Merge main into dev** to sync your git-flow `dev` branch after the tag.
-3. The workflow updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`, commits to `main`, pushes tag **`vX.Y.Z`**, which starts **`release.yml`** (builds macOS + Linux, draft GitHub Release, `latest.json`).
+1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR (`release/bump-vX.Y.Z`) that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
+2. Wait for CI (and Code Scanning if enabled for PRs). **Merge the PR** when green. If your rules require **signed commits** on `main`, prefer **Squash merge** so the merge commit uses your verified identity.
+3. **[Release — push tag](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-tag.yml)** → **Run workflow**. It reads the version from `tauri.conf.json` on `main`, creates **`vX.Y.Z`**, and pushes the tag so **`release.yml`** runs (builds macOS + Linux, draft GitHub Release, `latest.json`).
 
-**Who can run it:** By default only the **repository owner** login matches the allowlist. For **organization-owned** repos, set a repository **variable** `RELEASE_ALLOWED_ACTORS` to your GitHub username (comma-separated for multiple maintainers). **Protected `main`:** add a **secret** `RELEASE_AUTOMATION_PAT` — a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Contents: Read and write** on this repo (the account must be allowed to push to `main`). If unset, the default `GITHUB_TOKEN` is used (may be blocked by branch protection).
+**Who can run it:** By default only the **repository owner** login matches the allowlist. For **organization-owned** repos, set a repository **variable** `RELEASE_ALLOWED_ACTORS` (comma-separated GitHub usernames).
+
+**Secret `RELEASE_AUTOMATION_PAT` (optional):** a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Contents: Read and write** and **Pull requests: Read and write** on this repo. Use it if the default `GITHUB_TOKEN` cannot open PRs or push tags (e.g. org rules). If you use a PAT for tagging, **tag protection** rules must allow that user or the workflow will fail.
 
 **Optional:** Uncomment `environment: release` in `.github/workflows/release-bump.yml` and create a [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) named `release` with **required reviewers** so a second approval is required before the version bump runs.
 
-**Local script (same semver rules):** `./scripts/release.sh` from `main` — uses `scripts/bump-version.py` and can merge `main` → `dev` interactively.
+**Local script (same semver rules):** `./scripts/release.sh` from `main` — uses `scripts/bump-version.py` and can merge `main` → `dev` interactively. After merging locally, push tag `vX.Y.Z` or run **Release — push tag** on GitHub.
 
 The `release.yml` workflow (on tag `v*`) builds signed artifacts for macOS (`.dmg`) and Linux (`.deb`, `.rpm`, `.AppImage`), creates a draft GitHub Release, and uploads `latest.json` for the auto-updater.
 

@@ -25,6 +25,18 @@ use tauri::{
 
 pub use mpv::MpvState;
 
+/// Set LC_NUMERIC=C once at plugin init (before any threads use locale-dependent code).
+/// libmpv requires this for correct number parsing; without it mpv_create() returns null
+/// on non-C locales (common on Linux).
+#[cfg(target_os = "linux")]
+fn ensure_c_locale() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| unsafe {
+        libc::setlocale(libc::LC_NUMERIC, b"C\0".as_ptr() as *const _);
+    });
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("mpv")
         .invoke_handler(tauri::generate_handler![
@@ -43,6 +55,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::mpv_set_sub_delay,
         ])
         .setup(|app, _api| {
+            #[cfg(target_os = "linux")]
+            ensure_c_locale();
             app.manage(MpvState::new());
             tracing::info!("MPV plugin initialized");
             Ok(())
