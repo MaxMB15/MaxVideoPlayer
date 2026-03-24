@@ -189,57 +189,106 @@ pub struct LinuxGlRenderer {
     video_active: Arc<AtomicBool>,
     /// Shared with RenderInner so set_frame can queue resizes for the GLib thread.
     pending_resize: Arc<Mutex<Option<PendingResize>>>,
-    /// CSD header bar height in pixels. Added to y in set_frame() on Wayland
-    /// because subsurface position is relative to the parent wl_surface (which
-    /// includes the header bar), but frontend coords are relative to the WebView
-    /// viewport (which starts below the header bar).
-    csd_y_offset: i32,
+    /// CSD offsets in pixels: (x, y) from the parent wl_surface origin to the
+    /// WebView content area origin. Includes shadow margin + header bar height.
+    /// Added to subsurface coordinates in set_frame() because frontend coords
+    /// (getBoundingClientRect) are relative to the WebView viewport, but
+    /// set_position() is relative to the parent wl_surface.
+    csd_offset: (i32, i32),
 }
 
 unsafe impl Send for LinuxGlRenderer {}
 unsafe impl Sync for LinuxGlRenderer {}
 
 impl LinuxGlRenderer {
-    /// Query the CSD (Client-Side Decoration) header bar height from GTK.
-    /// Must dispatch to the GLib main thread because `gtk_window()` requires it.
-    /// Returns 0 on X11 or if the query fails.
-    fn query_csd_offset<R: Runtime>(app: &AppHandle<R>) -> i32 {
+    /// Query the CSD (Client-Side Decoration) offset from the top-left of the
+    /// parent wl_surface to the top-left of the WebView content area.
+    ///
+    /// On Wayland with CSD, the wl_surface includes:
+    ///  1. Shadow/decoration margin (typically 10px Adwaita theme)
+    ///  2. Header bar (typically ~47px)
+    ///  3. Any container padding (0 for Tauri)
+    ///
+    /// We query the decoration margin from the GTK style context and the
+    /// WebView offset via `translate_coordinates()`. Must dispatch to the
+    /// GLib main thread because GTK widget APIs require it.
+    ///
+    /// Returns (x_offset, y_offset) in pixels; (0, 0) on X11 or failure.
+    fn query_csd_offsets<R: Runtime>(app: &AppHandle<R>) -> (i32, i32) {
         use gtk::prelude::*;
 
         let window = match app.get_webview_window("main") {
             Some(w) => w,
-            None => return 0,
+            None => return (0, 0),
         };
 
-        // gtk_window() requires the main thread. Use a channel to get the result.
         let (tx, rx) = std::sync::mpsc::channel();
-
-        // We need to move a raw pointer across the thread boundary since
-        // WebviewWindow isn't Send. The pointer is valid because we block
-        // until the callback completes.
         let win_ptr = &window as *const _ as usize;
 
         glib::idle_add_once(move || {
             let window = unsafe {
                 &*(win_ptr as *const tauri::WebviewWindow<R>)
             };
-            let offset = window
-                .gtk_window()
-                .ok()
-                .and_then(|gtk_win| gtk_win.titlebar())
-                .map(|tb| tb.allocated_height())
-                .unwrap_or(0);
-            let _ = tx.send(offset);
+
+            let result = (|| -> Option<(i32, i32)> {
+                let gtk_win = window.gtk_window().ok()?;
+
+                // Use the default_vbox (Tauri's content container that holds the
+                // WebView) and translate_coordinates to get its exact position
+                // within the GtkWindow. This accounts for:
+                //  - CSD shadow margins (decoration CSS margin, ~10px Adwaita)
+                //  - Header bar height (~47px)
+                //  - Any container padding (0 for Tauri)
+                let vbox = window.default_vbox().ok()?;
+                let (vbox_x, vbox_y) = match vbox.translate_coordinates(&gtk_win, 0, 0) {
+                    Some(coords) => coords,
+                    None => {
+                        // Fallback: header bar height only (no shadow info).
+                        let header_h = gtk_win
+                            .titlebar()
+                            .map(|tb| tb.allocated_height())
+                            .unwrap_or(0);
+                        return Some((0, header_h));
+                    }
+                };
+
+                // translate_coordinates gives the vbox position within the
+                // GtkWindow widget's allocation. On GTK3/CSD, the GdkWindow
+                // backing the GtkWindow includes the shadow area, but the
+                // GtkWindow widget is allocated inside (after) the shadow.
+                // So vbox_y includes the header bar offset but NOT the shadow.
+                //
+                // Get the shadow margin from GdkWindow size vs GtkWidget allocation.
+                let gdk_win = gtk_win.window()?;
+                let (gdk_w, gdk_h) = (gdk_win.width(), gdk_win.height());
+                let alloc = gtk_win.allocation();
+                // Shadow = (GdkWindow size - GtkWidget allocation) / 2 on each side
+                let shadow_x = (gdk_w - alloc.width()).max(0) / 2;
+                let shadow_y = (gdk_h - alloc.height()).max(0) / 2;
+
+                tracing::info!(
+                    "[Linux renderer] CSD breakdown: vbox_translate=({},{}) gdk={}x{} alloc={}x{} shadow=({},{}) total=({},{})",
+                    vbox_x, vbox_y, gdk_w, gdk_h, alloc.width(), alloc.height(),
+                    shadow_x, shadow_y,
+                    shadow_x + vbox_x, shadow_y + vbox_y
+                );
+                Some((shadow_x + vbox_x, shadow_y + vbox_y))
+            })();
+
+            let _ = tx.send(result.unwrap_or((0, 0)));
         });
 
         match rx.recv_timeout(std::time::Duration::from_secs(2)) {
-            Ok(offset) => {
-                tracing::info!("[Linux renderer] CSD header bar offset: {}px", offset);
-                offset
+            Ok(offsets) => {
+                tracing::info!(
+                    "[Linux renderer] CSD offsets: x={}px y={}px (shadow + header bar)",
+                    offsets.0, offsets.1
+                );
+                offsets
             }
             Err(_) => {
-                tracing::warn!("[Linux renderer] timed out querying CSD offset, defaulting to 0");
-                0
+                tracing::warn!("[Linux renderer] timed out querying CSD offsets, defaulting to (0,0)");
+                (0, 0)
             }
         }
     }
@@ -247,7 +296,7 @@ impl LinuxGlRenderer {
     /// Create an EGL-backed renderer within the Tauri window.
     /// Dispatches to the X11 or Wayland path based on the raw window handle.
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
-        let csd_y_offset = Self::query_csd_offset(app);
+        let csd_offset = Self::query_csd_offsets(app);
 
         let window = app
             .get_webview_window("main")
@@ -305,7 +354,7 @@ impl LinuxGlRenderer {
                 raw_window
             )),
         }?;
-        renderer.csd_y_offset = csd_y_offset;
+        renderer.csd_offset = csd_offset;
         Ok(renderer)
     }
 
@@ -490,7 +539,7 @@ impl LinuxGlRenderer {
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
-            csd_y_offset: 0,
+            csd_offset: (0, 0),
         })
     }
 
@@ -673,7 +722,7 @@ impl LinuxGlRenderer {
             first_frame_cb: None,
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
-            csd_y_offset: 0,
+            csd_offset: (0, 0),
         })
     }
 
@@ -825,16 +874,31 @@ impl PlatformRenderer for LinuxGlRenderer {
 
             // Frontend coords are relative to the WebView viewport, but
             // subsurface position is relative to the parent wl_surface which
-            // includes the CSD header bar. Add the header bar offset to y.
-            let adjusted_y = y as i32 + self.csd_y_offset;
-            wl.last_frame = (x as i32, adjusted_y, wi, hi);
+            // includes CSD shadow margins and header bar. Add both offsets.
+            let adjusted_x = x as i32 + self.csd_offset.0;
+            let adjusted_y = y as i32 + self.csd_offset.1;
+            wl.last_frame = (adjusted_x, adjusted_y, wi, hi);
 
             // set_position is double-buffered (safe from any thread).
-            wl.subsurface.set_position(x as i32, adjusted_y);
+            wl.subsurface.set_position(adjusted_x, adjusted_y);
 
             // Queue the resize for the GLib main thread.
             if let Ok(mut pending) = self.pending_resize.lock() {
                 *pending = Some(PendingResize { w: wi, h: hi });
+            }
+
+            // Manually trigger a render_frame dispatch. When paused, mpv doesn't
+            // fire update callbacks, so the pending resize would never be applied.
+            // This ensures resize is visible immediately (redraws last frame).
+            if let Some(ref inner) = self.render_inner {
+                let inner_ptr = &**inner as *const RenderInner as usize;
+                let v = self.valid.clone();
+                glib::idle_add_once(move || {
+                    if !v.load(Ordering::Acquire) {
+                        return;
+                    }
+                    unsafe { render_frame(inner_ptr) };
+                });
             }
 
             wl.child_surface.commit();
@@ -1005,20 +1069,10 @@ unsafe fn render_frame(inner_ptr: usize) {
         return;
     }
 
-    // Apply any pending wl_egl_window resize BEFORE making the EGL context
-    // current. This ensures resize and EGL calls happen on the same thread
-    // (GLib main), eliminating the race condition that caused color corruption.
-    if inner.wl_egl_surface_ptr != 0 {
-        if let Ok(mut pending) = inner.pending_resize.lock() {
-            if let Some(resize) = pending.take() {
-                let wl_egl = &*(inner.wl_egl_surface_ptr as *const WlEglSurface);
-                wl_egl.resize(resize.w, resize.h, 0, 0);
-            }
-        }
-    }
-
     let egl = egl_instance();
 
+    // 1. Make the EGL context current FIRST — wl_egl_window_resize() requires
+    //    the EGL surface to be current on the calling thread.
     if egl
         .make_current(
             inner.egl_display,
@@ -1032,6 +1086,25 @@ unsafe fn render_frame(inner_ptr: usize) {
         return;
     }
 
+    // 2. Apply any pending wl_egl_window resize AFTER making context current.
+    //    This ensures the resize and subsequent EGL calls happen on the same
+    //    thread with the surface current, avoiding the race condition that
+    //    caused color corruption. Also set glViewport and clear the buffer
+    //    to avoid garbage from newly allocated regions.
+    let mut did_resize = false;
+    if inner.wl_egl_surface_ptr != 0 {
+        if let Ok(mut pending) = inner.pending_resize.lock() {
+            if let Some(resize) = pending.take() {
+                let wl_egl = &*(inner.wl_egl_surface_ptr as *const WlEglSurface);
+                wl_egl.resize(resize.w, resize.h, 0, 0);
+                gl::Viewport(0, 0, resize.w, resize.h);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                did_resize = true;
+            }
+        }
+    }
+
     let w = egl.query_surface(inner.egl_display, inner.egl_surface, egl::WIDTH).unwrap_or(0);
     let h = egl.query_surface(inner.egl_display, inner.egl_surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
@@ -1040,30 +1113,35 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     let rc = &inner.ctx as *const RenderContext;
     let rc: &RenderContext = &*rc;
-    match rc.update() {
-        Ok(flags) => {
-            if flags & mpv_render_update::Frame != 0 {
-                // fbo=0 = default framebuffer; flip_y=true corrects GL framebuffer orientation.
-                if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
-                    tracing::trace!("[Linux renderer] render error: {}", e);
-                    return;
-                }
-                // Present frame. For wl_egl_window, eglSwapBuffers implicitly
-                // calls wl_surface_commit, so no manual commit needed here.
-                let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
-                rc.report_swap();
 
-                let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
-                if n < 5 || n % 60 == 0 {
-                    tracing::debug!("[Linux renderer] frame presented (#{n})");
-                }
-
-                if let Some(cb) = inner.first_frame_cb.take() {
-                    cb();
-                }
-            }
+    // 3. Check if mpv has a new frame or if we need to force a redraw after resize.
+    //    When paused, mpv doesn't fire update callbacks, so resizes would never
+    //    be visually applied. Calling render() unconditionally after resize
+    //    redraws the last frame at the new size (mpv docs confirm this behavior).
+    let should_render = match rc.update() {
+        Ok(flags) => (flags & mpv_render_update::Frame != 0) || did_resize,
+        Err(e) => {
+            tracing::trace!("[Linux renderer] update error: {}", e);
+            did_resize // Still render if we resized, even if update() fails
         }
-        Err(e) => tracing::trace!("[Linux renderer] update error: {}", e),
+    };
+
+    if should_render {
+        if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
+            tracing::trace!("[Linux renderer] render error: {}", e);
+            return;
+        }
+        let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
+        rc.report_swap();
+
+        let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n < 5 || n % 60 == 0 {
+            tracing::debug!("[Linux renderer] frame presented (#{n})");
+        }
+
+        if let Some(cb) = inner.first_frame_cb.take() {
+            cb();
+        }
     }
 }
 
@@ -1081,7 +1159,10 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // NV12→RGB interop (VMware, some Mesa/Intel setups).
         ("hwdec", "auto-copy"),
         ("ao", "pipewire,pulse,alsa"),
-        ("video-sync", "display-resample"),
+        // audio sync is correct for callback-driven rendering (not vsync-locked).
+        // display-resample requires calling render() at every vsync, which our
+        // idle_add_once approach doesn't guarantee — it deactivates after a few seconds.
+        ("video-sync", "audio"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
