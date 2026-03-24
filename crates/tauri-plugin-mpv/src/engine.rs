@@ -30,13 +30,6 @@ impl MpvEngine {
     /// Returns a mutable reference so the caller can attach a render context
     /// before calling `loadfile`.
     pub fn create(&mut self, options: &[(&str, &str)]) -> Result<&mut Mpv, String> {
-        // libmpv requires LC_NUMERIC=C for correct number parsing.
-        // Without this, mpv_create() returns null on non-C locales (common on Linux).
-        #[cfg(target_os = "linux")]
-        unsafe {
-            libc::setlocale(libc::LC_NUMERIC, b"C\0".as_ptr() as *const _);
-        }
-
         self.stop();
         let opts: Vec<(String, String)> = options
             .iter()
