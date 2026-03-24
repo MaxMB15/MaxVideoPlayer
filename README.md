@@ -139,13 +139,13 @@ MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins
 
 **Recommended (GitHub Actions):** two workflows so rulesets that require **pull requests**, **status checks**, and **verified commits** on `main` still work.
 
-1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR (`release/bump-vX.Y.Z`) that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
+1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR from branch `chore-bump-vX.Y.Z` that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
 2. Wait for CI (and Code Scanning if enabled for PRs). **Merge the PR** when green. If your rules require **signed commits** on `main`, prefer **Squash merge** so the merge commit uses your verified identity.
 3. **[Release — push tag](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-tag.yml)** → **Run workflow**. It reads the version from `tauri.conf.json` on `main`, creates **`vX.Y.Z`**, and pushes the tag so **`release.yml`** runs (builds macOS + Linux, draft GitHub Release, `latest.json`).
 
 **Who can run it:** By default only the **repository owner** login matches the allowlist. For **organization-owned** repos, set a repository **variable** `RELEASE_ALLOWED_ACTORS` (comma-separated GitHub usernames).
 
-**Secret `RELEASE_AUTOMATION_PAT` (optional):** a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Contents: Read and write** and **Pull requests: Read and write** on this repo. Use it if the default `GITHUB_TOKEN` cannot open PRs or push tags (e.g. org rules). If you use a PAT for tagging, **tag protection** rules must allow that user or the workflow will fail.
+**Secret `RELEASE_AUTOMATION_PAT` (required for bump workflow):** add a [fine-grained PAT](https://github.com/settings/tokens?type=beta) as repository secret **`RELEASE_AUTOMATION_PAT`** with **Contents: Read and write** and **Pull requests: Read and write** on this repo. GitHub often blocks the default `GITHUB_TOKEN` from creating pull requests (`createPullRequest`). For **Release — push tag**, the same PAT is optional unless **tag protection** or other rules require it; otherwise `GITHUB_TOKEN` may work.
 
 **Optional:** Uncomment `environment: release` in `.github/workflows/release-bump.yml` and create a [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) named `release` with **required reviewers** so a second approval is required before the version bump runs.
 
