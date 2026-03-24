@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { refreshProvider, refreshEpg } from "@/lib/tauri";
 import {
@@ -9,6 +8,7 @@ import {
 	useChannels,
 } from "@/hooks/useChannels";
 import { parseDateMs } from "@/lib/date";
+import type { UpdateState } from "@/hooks/useUpdateChecker";
 
 export type StepStatus = "pending" | "active" | "done" | "error";
 
@@ -31,11 +31,12 @@ export interface SplashScreenState {
 const SESSION_KEY = "splash-shown";
 
 interface UseSplashScreenOptions {
+	updateState: UpdateState;
 	onComplete?: () => void;
 }
 
-export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScreenState => {
-	const { onComplete } = options;
+export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenState => {
+	const { updateState, onComplete } = options;
 	const onCompleteRef = useRef(onComplete);
 	useEffect(() => {
 		onCompleteRef.current = onComplete;
@@ -57,7 +58,6 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 		];
 	});
 	const [allDone, setAllDone] = useState(alreadyShownRef.current);
-	const [update, setUpdate] = useState<Update | null>(null);
 	const [dismissed, setDismissed] = useState(alreadyShownRef.current);
 	const [hasProviders, setHasProviders] = useState(false);
 
@@ -147,24 +147,27 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 				);
 			}
 
-			// Step 4: Check for updates
+			// Step 4: Wait for the shared update check to finish
 			setStepStatus("updates", "active");
-			let foundUpdate: Update | null = null;
-			try {
-				foundUpdate = (await check()) ?? null;
-			} catch (e) {
-				if (cancelled) return;
-				const msg = e instanceof Error ? e.message : String(e);
-				setStepStatus("updates", "error", `Unable to check for updates`);
-				console.warn("[splash] update check failed:", msg);
-				setAllDone(true);
-				onCompleteRef.current?.();
-				return;
-			}
+
+			// The update check was already triggered by useUpdateChecker on mount.
+			// Wait for it to complete by polling the checking state.
+			const waitForCheck = (): Promise<void> =>
+				new Promise((resolve) => {
+					const poll = () => {
+						if (cancelled) return resolve();
+						// updateState.checking is reactive; poll briefly
+						if (!updateState.checking) return resolve();
+						setTimeout(poll, 100);
+					};
+					poll();
+				});
+			await waitForCheck();
+
 			if (cancelled) return;
-			if (foundUpdate) {
-				setUpdate(foundUpdate);
-				setStepStatus("updates", "done", `Update available — v${foundUpdate.version}`);
+
+			if (updateState.update) {
+				setStepStatus("updates", "done", `Update available — v${updateState.update.version}`);
 			} else {
 				setStepStatus("updates", "done", "Up to date");
 			}
@@ -185,5 +188,5 @@ export const useSplashScreen = (options: UseSplashScreenOptions = {}): SplashScr
 			: steps.filter((s) => s.status === "done" || s.status === "error").length /
 				steps.length;
 
-	return { steps, allDone, progress, update, dismissed, hasProviders, dismiss };
+	return { steps, allDone, progress, update: updateState.update, dismissed, hasProviders, dismiss };
 };
