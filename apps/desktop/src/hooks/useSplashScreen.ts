@@ -147,27 +147,25 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 				);
 			}
 
-			// Step 4: Wait for the shared update check to finish
+			// Step 4: Check for updates via the shared hook.
+			// checkForUpdates() joins the in-flight promise if the mount check is
+			// still running, so only one actual check() call happens.
 			setStepStatus("updates", "active");
-
-			// The update check was already triggered by useUpdateChecker on mount.
-			// Wait for it to complete by polling the checking state.
-			const waitForCheck = (): Promise<void> =>
-				new Promise((resolve) => {
-					const poll = () => {
-						if (cancelled) return resolve();
-						// updateState.checking is reactive; poll briefly
-						if (!updateState.checking) return resolve();
-						setTimeout(poll, 100);
-					};
-					poll();
-				});
-			await waitForCheck();
+			let foundUpdate: Update | null = null;
+			try {
+				foundUpdate = await updateState.checkForUpdates();
+			} catch {
+				if (cancelled) return;
+				setStepStatus("updates", "error", "Unable to check for updates");
+				setAllDone(true);
+				onCompleteRef.current?.();
+				return;
+			}
 
 			if (cancelled) return;
 
-			if (updateState.update) {
-				setStepStatus("updates", "done", `Update available — v${updateState.update.version}`);
+			if (foundUpdate) {
+				setStepStatus("updates", "done", `Update available — v${foundUpdate.version}`);
 			} else {
 				setStepStatus("updates", "done", "Up to date");
 			}
@@ -188,5 +186,13 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 			: steps.filter((s) => s.status === "done" || s.status === "error").length /
 				steps.length;
 
-	return { steps, allDone, progress, update: updateState.update, dismissed, hasProviders, dismiss };
+	return {
+		steps,
+		allDone,
+		progress,
+		update: updateState.update,
+		dismissed,
+		hasProviders,
+		dismiss,
+	};
 };

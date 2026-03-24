@@ -51,9 +51,7 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 				)}
 			</div>
 
-			{error && (
-				<p className="text-xs text-destructive mt-1">{error}</p>
-			)}
+			{error && <p className="text-xs text-destructive mt-1">{error}</p>}
 
 			{installing ? (
 				<RefreshCw className="h-4 w-4 text-muted-foreground animate-spin shrink-0" />

@@ -107,7 +107,9 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
-		getVersion().then(setAppVersion).catch(() => {});
+		getVersion()
+			.then(setAppVersion)
+			.catch(() => {});
 	}, []);
 
 	useEffect(() => {
@@ -657,14 +659,38 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							MaxVideoPlayer {appVersion ? `v${appVersion}` : ""}
 						</p>
 
-						<div className="space-y-2">
-							{updateState.update ? (
+						<div className="space-y-3">
+							<div className="flex items-center gap-3">
+								<Button
+									size="sm"
+									variant="secondary"
+									onClick={() => updateState.checkForUpdates()}
+									disabled={updateState.checking}
+								>
+									{updateState.checking ? (
+										<span className="flex items-center gap-1.5">
+											<RefreshCw className="h-3 w-3 animate-spin" />
+											Checking…
+										</span>
+									) : (
+										"Check for Updates"
+									)}
+								</Button>
+								{!updateState.checking && !updateState.update && (
+									<span className="text-xs text-muted-foreground">
+										You're up to date.
+									</span>
+								)}
+							</div>
+
+							{updateState.update && (
 								<div className="rounded-lg bg-primary/10 border border-primary/25 px-4 py-3 space-y-2">
 									<p className="text-sm font-semibold text-primary">
 										Update available — v{updateState.update.version}
 									</p>
 									<p className="text-xs text-muted-foreground leading-relaxed">
-										{updateState.update.body ?? "A new version is ready to install."}
+										{updateState.update.body ??
+											"A new version is ready to install."}
 									</p>
 									{updateState.installing && updateState.progress !== null && (
 										<div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
@@ -675,7 +701,9 @@ export const Settings = ({ updateState }: SettingsProps) => {
 										</div>
 									)}
 									{updateState.error && (
-										<p className="text-xs text-destructive">{updateState.error}</p>
+										<p className="text-xs text-destructive">
+											{updateState.error}
+										</p>
 									)}
 									<Button
 										size="sm"
@@ -696,29 +724,6 @@ export const Settings = ({ updateState }: SettingsProps) => {
 											</span>
 										)}
 									</Button>
-								</div>
-							) : (
-								<div className="flex items-center gap-3">
-									<Button
-										size="sm"
-										variant="secondary"
-										onClick={() => updateState.checkForUpdates()}
-										disabled={updateState.checking}
-									>
-										{updateState.checking ? (
-											<span className="flex items-center gap-1.5">
-												<RefreshCw className="h-3 w-3 animate-spin" />
-												Checking…
-											</span>
-										) : (
-											"Check for Updates"
-										)}
-									</Button>
-									{!updateState.checking && !updateState.update && (
-										<span className="text-xs text-muted-foreground">
-											You're up to date.
-										</span>
-									)}
 								</div>
 							)}
 						</div>
