@@ -12,7 +12,33 @@ env:
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
+  # Create the draft release before platform builds so parallel jobs can upload without racing
+  # ("release not found" when Linux finished before macOS ran gh release create).
+  prepare-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create draft GitHub release (if missing)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          if gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" &>/dev/null; then
+            echo "Release v${VERSION} already exists; skipping create."
+          else
+            gh release create "v${VERSION}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "MaxVideoPlayer v${VERSION}" \
+              --notes "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details." \
+              --draft
+          fi
+
   release-macos:
+    needs: [prepare-release]
     runs-on: macos-latest
     env:
       CARGO_HOME: /Users/runner/.cargo
@@ -149,7 +175,7 @@ jobs:
           name: macos-updater-sig
           path: target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig
 
-      - name: Publish GitHub release (draft)
+      - name: Upload macOS assets to draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -158,16 +184,15 @@ jobs:
           DMG="target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg"
           UPDATER="target/release/bundle/macos/MaxVideoPlayer.app.tar.gz"
 
-          gh release create "v${VERSION}" \
+          gh release upload "v${VERSION}" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "MaxVideoPlayer v${VERSION}" \
-            --notes "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details." \
-            --draft \
+            --clobber \
             "$DMG" \
             "${UPDATER}#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz" \
             "${UPDATER}.sig#MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz.sig"
 
   release-linux:
+    needs: [prepare-release]
     runs-on: ubuntu-latest
     env:
       CARGO_HOME: /home/runner/.cargo
@@ -299,11 +324,15 @@ jobs:
             [[ -f "${UPDATER}.sig" ]] && ARTIFACTS+=("${UPDATER}.sig")
           fi
 
-          # Upload to existing draft release (created by macOS job)
+          # Upload to draft release (created by prepare-release job before builds)
+          if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
+            echo "::error::No Linux artifacts found under $BUNDLE_DIR (deb/rpm/appimage)."
+            exit 1
+          fi
           for artifact in "${ARTIFACTS[@]}"; do
             gh release upload "v${VERSION}" "$artifact" \
               --repo "$GITHUB_REPOSITORY" \
-              --clobber || true
+              --clobber
           done
 
   # ── Publish latest.json (depends on both platform jobs) ───────────────
