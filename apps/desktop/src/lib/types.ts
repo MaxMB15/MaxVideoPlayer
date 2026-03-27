@@ -105,6 +105,30 @@ export interface MdbListData {
 	mdblistScore?: number;
 }
 
+export interface WhatsonData {
+	imdbId?: string;
+	title?: string;
+	image?: string;
+	itemType?: string;
+	releaseDate?: string;
+	runtime?: number;
+	certification?: string;
+	tagline?: string;
+	imdbRating?: number;
+	imdbVotes?: number;
+	rtCriticsRating?: number;
+	rtCriticsCount?: number;
+	rtAudienceRating?: number;
+	rtAudienceCount?: number;
+	metacriticCritics?: number;
+	metacriticCriticsCount?: number;
+	metacriticUsers?: number;
+	letterboxdRating?: number;
+	letterboxdCount?: number;
+	tmdbRating?: number;
+	tmdbVotes?: number;
+}
+
 export interface WatchHistoryEntry {
 	channelId: string;
 	channelName: string;

@@ -14,7 +14,7 @@ import {
 	recordPlayStart,
 	recordPlayEnd,
 	fetchOmdbData,
-	fetchMdbListData,
+	fetchWhatsonData,
 	searchSubtitles,
 	downloadSubtitle,
 	readSubtitleFile,
@@ -22,7 +22,7 @@ import {
 	mpvSubRemove,
 } from "@/lib/tauri";
 import { parseSrt } from "@/lib/subtitle-parser";
-import type { Channel, OmdbData, MdbListData, SubtitleCue, SubtitleEntry } from "@/lib/types";
+import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
 
@@ -37,7 +37,7 @@ const parseSeasonEpisode = (name: string): { season?: number; episode?: number }
 
 interface EnrichedMeta {
 	omdbData: OmdbData | null;
-	mdbListData: MdbListData | null;
+	whatsonData: WhatsonData | null;
 }
 
 const sortEpisodes = (eps: Channel[]): Channel[] =>
@@ -216,21 +216,22 @@ export const PlayerView = () => {
 		fetchOmdbData(activeChannel.id, titleForOmdb, mediaType as "movie" | "series")
 			.then((omdbData) => {
 				if (cancelled) return;
-				setEnrichedMeta({ omdbData, mdbListData: null });
+				setEnrichedMeta({ omdbData, whatsonData: null });
 
 				if (omdbData?.imdbId) {
-					const mdbMediaType = activeChannel.contentType === "series" ? "show" : "movie";
-					fetchMdbListData(omdbData.imdbId, mdbMediaType)
-						.then((mdbListData) => {
+					const whatsonMediaType =
+						activeChannel.contentType === "series" ? "show" : "movie";
+					fetchWhatsonData(omdbData.imdbId, whatsonMediaType)
+						.then((whatsonData) => {
 							if (cancelled) return;
-							setEnrichedMeta({ omdbData, mdbListData });
+							setEnrichedMeta({ omdbData, whatsonData });
 						})
 						.catch(() => {});
 				}
 			})
 			.catch(() => {
 				if (cancelled) return;
-				setEnrichedMeta({ omdbData: null, mdbListData: null });
+				setEnrichedMeta({ omdbData: null, whatsonData: null });
 			});
 
 		return () => {
@@ -675,7 +676,7 @@ export const PlayerView = () => {
 					onClose={() => setShowInfoDrawer(false)}
 					onPlay={(ch) => playEpisode(ch)}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
-					prefetchedMdbListData={enrichedMeta?.mdbListData}
+					prefetchedWhatsonData={enrichedMeta?.whatsonData}
 				/>
 			)}
 
@@ -703,7 +704,7 @@ export const PlayerView = () => {
 						setActiveChannel(ch);
 					}}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
-					prefetchedMdbListData={enrichedMeta?.mdbListData}
+					prefetchedWhatsonData={enrichedMeta?.whatsonData}
 				/>
 			)}
 

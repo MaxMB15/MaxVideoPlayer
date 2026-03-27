@@ -2,6 +2,7 @@ use mvp_core::cache::store::{CacheStore, WatchHistoryEntry};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
+use mvp_core::iptv::whatson::WhatsonData;
 use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes, get_xtream_epg_url};
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
@@ -661,6 +662,55 @@ pub async fn fetch_mdblist_data<R: Runtime>(
         let cache = state.cache.lock().map_err(|e| e.to_string())?;
         if let Err(e) = cache.save_mdblist_cache(&imdb_id, &data) {
             tracing::warn!("[MDBList] failed to save cache for imdb_id={}: {}", imdb_id, e);
+        }
+    }
+
+    Ok(Some(data))
+}
+
+// --- Whatson Commands ---
+
+/// 7-day TTL in seconds
+const WHATSON_CACHE_TTL: i64 = 7 * 24 * 60 * 60;
+
+/// Fetch whatson-api enriched ratings for an IMDB ID. Checks cache first; fetches on miss.
+/// No API key required.
+#[command]
+pub async fn fetch_whatson_data(
+    state: State<'_, AppState>,
+    imdb_id: String,
+    media_type: String,
+) -> Result<Option<WhatsonData>, String> {
+    // 1. Check cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        match cache.get_whatson_cache(&imdb_id, WHATSON_CACHE_TTL) {
+            Ok(Some(data)) => return Ok(Some(data)),
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    // 2. Fetch from whatson-api
+    let item_type = if media_type == "show" || media_type == "series" { "tvshow" } else { "movie" };
+    tracing::info!("[Whatson] fetching data for imdb_id={} type={}", imdb_id, item_type);
+    let data = match mvp_core::iptv::whatson::fetch_whatson(&imdb_id, item_type).await {
+        Ok(data) => data,
+        Err(mvp_core::iptv::whatson::WhatsonError::NotFound) => {
+            tracing::info!("[Whatson] no data found for imdb_id={}", imdb_id);
+            return Ok(None);
+        }
+        Err(e) => {
+            tracing::warn!("[Whatson] fetch failed for imdb_id={}: {}", imdb_id, e);
+            return Err(e.to_string());
+        }
+    };
+
+    // 3. Cache
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = cache.save_whatson_cache(&imdb_id, &data) {
+            tracing::warn!("[Whatson] failed to save cache for imdb_id={}: {}", imdb_id, e);
         }
     }
 

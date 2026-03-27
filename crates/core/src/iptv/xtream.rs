@@ -401,6 +401,9 @@ pub async fn fetch_xtream_series_episodes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    // ── EPG URL ───────────────────────────────────────────────────────
 
     #[test]
     fn test_get_xtream_epg_url() {
@@ -412,5 +415,269 @@ mod tests {
     fn test_get_xtream_epg_url_trailing_slash() {
         let url = get_xtream_epg_url("http://example.com:8080/", "user", "pass");
         assert_eq!(url, "http://example.com:8080/xmltv.php?username=user&password=pass");
+    }
+
+    // ── Credentials & URL building ────────────────────────────────────
+
+    #[test]
+    fn test_credentials_strip_trailing_slash() {
+        let creds = XtreamCredentials::new("http://srv.example.com:8080/", "u", "p");
+        assert_eq!(creds.server, "http://srv.example.com:8080");
+    }
+
+    #[test]
+    fn test_api_url() {
+        let creds = XtreamCredentials::new("http://srv:8080", "user1", "pass1");
+        assert_eq!(
+            creds.api_url("get_live_streams"),
+            "http://srv:8080/player_api.php?username=user1&password=pass1&action=get_live_streams"
+        );
+    }
+
+    #[test]
+    fn test_live_stream_url() {
+        let creds = XtreamCredentials::new("http://srv:8080", "u", "p");
+        assert_eq!(
+            creds.live_stream_url(12345, "ts"),
+            "http://srv:8080/live/u/p/12345.ts"
+        );
+    }
+
+    #[test]
+    fn test_vod_stream_url() {
+        let creds = XtreamCredentials::new("http://srv:8080", "u", "p");
+        assert_eq!(
+            creds.vod_stream_url(99, "mp4"),
+            "http://srv:8080/movie/u/p/99.mp4"
+        );
+    }
+
+    #[test]
+    fn test_series_stream_url() {
+        let creds = XtreamCredentials::new("http://srv:8080", "u", "p");
+        assert_eq!(
+            creds.series_stream_url("555", "mkv"),
+            "http://srv:8080/series/u/p/555.mkv"
+        );
+    }
+
+    // ── coerce_u64 ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_coerce_u64_from_number() {
+        assert_eq!(coerce_u64(&json!(42)), Some(42));
+    }
+
+    #[test]
+    fn test_coerce_u64_from_string() {
+        assert_eq!(coerce_u64(&json!("123")), Some(123));
+    }
+
+    #[test]
+    fn test_coerce_u64_from_invalid_string() {
+        assert_eq!(coerce_u64(&json!("abc")), None);
+    }
+
+    #[test]
+    fn test_coerce_u64_from_null() {
+        assert_eq!(coerce_u64(&json!(null)), None);
+    }
+
+    #[test]
+    fn test_coerce_u64_from_float_string() {
+        assert_eq!(coerce_u64(&json!("3.14")), None);
+    }
+
+    #[test]
+    fn test_coerce_u64_from_negative_number() {
+        // serde_json stores -1 as i64, as_u64() returns None
+        assert_eq!(coerce_u64(&json!(-1)), None);
+    }
+
+    // ── Deserialization: XtreamStream ──────────────────────────────────
+
+    #[test]
+    fn test_deserialize_xtream_stream_full() {
+        let data = json!({
+            "num": 1,
+            "name": "CNN HD",
+            "stream_id": 5001,
+            "stream_icon": "http://img.example.com/cnn.png",
+            "epg_channel_id": "CNN.us",
+            "category_id": "3",
+            "container_extension": "m3u8"
+        });
+        let stream: XtreamStream = serde_json::from_value(data).unwrap();
+        assert_eq!(stream.name.as_deref(), Some("CNN HD"));
+        assert_eq!(stream.stream_id, Some(5001));
+        assert_eq!(stream.epg_channel_id.as_deref(), Some("CNN.us"));
+        assert_eq!(stream.container_extension.as_deref(), Some("m3u8"));
+    }
+
+    #[test]
+    fn test_deserialize_xtream_stream_missing_optional_fields() {
+        let data = json!({
+            "stream_id": 100
+        });
+        let stream: XtreamStream = serde_json::from_value(data).unwrap();
+        assert_eq!(stream.stream_id, Some(100));
+        assert!(stream.name.is_none());
+        assert!(stream.stream_icon.is_none());
+        assert!(stream.epg_channel_id.is_none());
+        assert!(stream.category_id.is_none());
+        assert!(stream.container_extension.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_xtream_stream_null_stream_id() {
+        let data = json!({
+            "name": "Test",
+            "stream_id": null
+        });
+        let stream: XtreamStream = serde_json::from_value(data).unwrap();
+        assert!(stream.stream_id.is_none());
+    }
+
+    // ── Deserialization: XtreamCategory ────────────────────────────────
+
+    #[test]
+    fn test_deserialize_xtream_category() {
+        let data = json!({
+            "category_id": "5",
+            "category_name": "Sports"
+        });
+        let cat: XtreamCategory = serde_json::from_value(data).unwrap();
+        assert_eq!(cat.category_id, "5");
+        assert_eq!(cat.category_name, "Sports");
+    }
+
+    // ── Deserialization: AuthResponse ──────────────────────────────────
+
+    #[test]
+    fn test_deserialize_auth_response_active() {
+        let data = json!({
+            "user_info": {
+                "auth": 1,
+                "status": "Active",
+                "username": "testuser"
+            },
+            "server_info": {
+                "url": "srv.example.com",
+                "port": "8080"
+            }
+        });
+        let resp: AuthResponse = serde_json::from_value(data).unwrap();
+        let info = resp.user_info.unwrap();
+        assert_eq!(info.auth, Some(1));
+        assert_eq!(info.status.as_deref(), Some("Active"));
+    }
+
+    #[test]
+    fn test_deserialize_auth_response_no_user_info() {
+        let data = json!({});
+        let resp: AuthResponse = serde_json::from_value(data).unwrap();
+        assert!(resp.user_info.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_auth_response_banned() {
+        let data = json!({
+            "user_info": {
+                "auth": 0,
+                "status": "Banned"
+            }
+        });
+        let resp: AuthResponse = serde_json::from_value(data).unwrap();
+        let info = resp.user_info.unwrap();
+        assert_eq!(info.auth, Some(0));
+        assert_eq!(info.status.as_deref(), Some("Banned"));
+    }
+
+    // ── Deserialization: XtreamSeriesInfoResponse ──────────────────────
+
+    #[test]
+    fn test_deserialize_series_info_response() {
+        let data = json!({
+            "info": {
+                "name": "Breaking Bad",
+                "cover": "http://img.example.com/bb.jpg"
+            },
+            "episodes": {
+                "1": [
+                    {
+                        "id": "1001",
+                        "episode_num": 1,
+                        "title": "Pilot",
+                        "container_extension": "mkv"
+                    },
+                    {
+                        "id": 1002,
+                        "episode_num": "2",
+                        "title": "Cat's in the Bag...",
+                        "container_extension": "mkv"
+                    }
+                ]
+            }
+        });
+        let resp: XtreamSeriesInfoResponse = serde_json::from_value(data).unwrap();
+        let info = resp.info.unwrap();
+        assert_eq!(info.name.as_deref(), Some("Breaking Bad"));
+
+        let episodes = resp.episodes.unwrap();
+        let s1 = episodes.get("1").unwrap();
+        assert_eq!(s1.len(), 2);
+
+        // First episode: id as string, episode_num as number
+        assert_eq!(coerce_u64(s1[0].id.as_ref().unwrap()), Some(1001));
+        assert_eq!(coerce_u64(s1[0].episode_num.as_ref().unwrap()), Some(1));
+
+        // Second episode: id as number, episode_num as string
+        assert_eq!(coerce_u64(s1[1].id.as_ref().unwrap()), Some(1002));
+        assert_eq!(coerce_u64(s1[1].episode_num.as_ref().unwrap()), Some(2));
+    }
+
+    #[test]
+    fn test_deserialize_series_info_empty_episodes() {
+        let data = json!({
+            "info": { "name": "Test Show" },
+            "episodes": {}
+        });
+        let resp: XtreamSeriesInfoResponse = serde_json::from_value(data).unwrap();
+        assert!(resp.episodes.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_series_info_missing_episodes() {
+        let data = json!({
+            "info": { "name": "Test Show" }
+        });
+        let resp: XtreamSeriesInfoResponse = serde_json::from_value(data).unwrap();
+        assert!(resp.episodes.is_none());
+    }
+
+    // ── Deserialization: XtreamSeries ──────────────────────────────────
+
+    #[test]
+    fn test_deserialize_xtream_series() {
+        let data = json!({
+            "series_id": 42,
+            "name": "The Wire",
+            "cover": "http://img.example.com/wire.jpg",
+            "category_id": "10"
+        });
+        let series: XtreamSeries = serde_json::from_value(data).unwrap();
+        assert_eq!(series.series_id, Some(42));
+        assert_eq!(series.name.as_deref(), Some("The Wire"));
+        assert_eq!(series.cover.as_deref(), Some("http://img.example.com/wire.jpg"));
+    }
+
+    #[test]
+    fn test_deserialize_xtream_series_missing_fields() {
+        let data = json!({});
+        let series: XtreamSeries = serde_json::from_value(data).unwrap();
+        assert!(series.series_id.is_none());
+        assert!(series.name.is_none());
+        assert!(series.cover.is_none());
+        assert!(series.category_id.is_none());
     }
 }

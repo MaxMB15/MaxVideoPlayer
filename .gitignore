@@ -29,6 +29,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Test coverage
+coverage/
+
 # Bundled resources
 apps/desktop/resources/
 

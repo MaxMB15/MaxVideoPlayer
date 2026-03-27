@@ -258,8 +258,11 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		[channelIndex]
 	);
 
-	// Initial load
+	// Initial load — ref guard prevents StrictMode double-mount from firing twice
+	const didInit = useRef(false);
 	useEffect(() => {
+		if (didInit.current) return;
+		didInit.current = true;
 		refreshProviders();
 		refreshChannels();
 	}, [refreshProviders, refreshChannels]);

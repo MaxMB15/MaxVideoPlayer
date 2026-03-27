@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, type SyntheticEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History } from "lucide-react";
@@ -736,10 +736,24 @@ export const ChannelList = () => {
 													alt=""
 													className="h-full w-full object-contain"
 													loading="lazy"
+													onError={(
+														e: SyntheticEvent<HTMLImageElement>
+													) => {
+														e.currentTarget.style.display = "none";
+														const fallback = e.currentTarget
+															.nextElementSibling as HTMLElement | null;
+														if (fallback) fallback.style.display = "";
+													}}
 												/>
-											) : (
-												<Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
-											)}
+											) : null}
+											<Tv2
+												className="h-3.5 w-3.5 text-muted-foreground"
+												style={
+													result.channelLogoUrl
+														? { display: "none" }
+														: undefined
+												}
+											/>
 										</div>
 										<div className="flex-1 min-w-0">
 											<p className="text-sm leading-tight truncate">

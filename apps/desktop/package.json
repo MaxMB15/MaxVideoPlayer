@@ -9,7 +9,8 @@
 		"preview": "vite preview",
 		"tauri": "tauri",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
 		"@tanstack/react-virtual": "^3.11.2",

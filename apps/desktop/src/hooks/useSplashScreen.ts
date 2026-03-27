@@ -32,7 +32,7 @@ const SESSION_KEY = "splash-shown";
 
 interface UseSplashScreenOptions {
 	updateState: UpdateState;
-	onComplete?: () => void;
+	onComplete?: (didRefresh: boolean) => void;
 }
 
 export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenState => {
@@ -113,9 +113,11 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 				}
 			}
 
+			const didRefreshProviders = providerRefreshIds.length > 0;
+
 			// Step 2: Refresh playlists (always shown; mark done immediately if nothing to do)
 			setStepStatus("playlists", "active", "Refreshing playlists…");
-			if (providerRefreshIds.length > 0) {
+			if (didRefreshProviders) {
 				await Promise.allSettled(providerRefreshIds.map((id) => refreshProvider(id)));
 				if (cancelled) return;
 				setStepStatus("playlists", "done", "Playlists refreshed");
@@ -164,7 +166,7 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 				if (cancelled) return;
 				setStepStatus("updates", "error", "Unable to check for updates");
 				setAllDone(true);
-				onCompleteRef.current?.();
+				onCompleteRef.current?.(didRefreshProviders);
 				return;
 			}
 
@@ -177,7 +179,7 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 			}
 
 			setAllDone(true);
-			onCompleteRef.current?.();
+			onCompleteRef.current?.(didRefreshProviders);
 		};
 
 		run();
