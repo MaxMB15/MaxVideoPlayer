@@ -115,7 +115,10 @@ describe("useMpv", () => {
 	it("prevents double-load while loading", async () => {
 		let resolveLoad: () => void;
 		mockMpvLoad.mockImplementation(
-			() => new Promise<void>((r) => { resolveLoad = r; })
+			() =>
+				new Promise<void>((r) => {
+					resolveLoad = r;
+				})
 		);
 
 		const { result } = renderHook(() => useMpv());

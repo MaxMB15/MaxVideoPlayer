@@ -71,9 +71,9 @@ const RowCard = memo(function RowCard({
 							className="h-full w-full object-contain"
 							loading="lazy"
 							onError={() => {
-							if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
-							setImgError(true);
-						}}
+								if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
+								setImgError(true);
+							}}
 						/>
 					) : (
 						<Tv2 className="h-3 w-3 text-muted-foreground" />
@@ -171,9 +171,9 @@ const PosterCard = ({
 							className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
 							loading="lazy"
 							onError={() => {
-							if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
-							setImgError(true);
-						}}
+								if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
+								setImgError(true);
+							}}
 						/>
 					) : (
 						<div className="h-full w-full bg-gradient-to-br from-secondary via-secondary/80 to-secondary/50 flex flex-col items-center justify-center gap-1">

@@ -219,7 +219,8 @@ export const PlayerView = () => {
 				setEnrichedMeta({ omdbData, whatsonData: null });
 
 				if (omdbData?.imdbId) {
-					const whatsonMediaType = activeChannel.contentType === "series" ? "show" : "movie";
+					const whatsonMediaType =
+						activeChannel.contentType === "series" ? "show" : "movie";
 					fetchWhatsonData(omdbData.imdbId, whatsonMediaType)
 						.then((whatsonData) => {
 							if (cancelled) return;

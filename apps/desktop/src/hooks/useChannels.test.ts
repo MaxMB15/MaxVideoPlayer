@@ -52,10 +52,7 @@ describe("loadProviderSettings", () => {
 	});
 
 	it("migrates old string 'startup' autoRefresh to boolean true", () => {
-		localStorage.setItem(
-			"provider-settings-p1",
-			JSON.stringify({ autoRefresh: "startup" })
-		);
+		localStorage.setItem("provider-settings-p1", JSON.stringify({ autoRefresh: "startup" }));
 		const s = loadProviderSettings("p1");
 		expect(s.autoRefresh).toBe(true);
 	});
@@ -71,10 +68,7 @@ describe("loadProviderSettings", () => {
 	});
 
 	it("fills in missing epg fields with defaults during migration", () => {
-		localStorage.setItem(
-			"provider-settings-p1",
-			JSON.stringify({ autoRefresh: "startup" })
-		);
+		localStorage.setItem("provider-settings-p1", JSON.stringify({ autoRefresh: "startup" }));
 		const s = loadProviderSettings("p1");
 		expect(s.epgAutoRefresh).toBe(true);
 		expect(s.epgRefreshIntervalHours).toBe(24);

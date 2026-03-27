@@ -736,14 +736,24 @@ export const ChannelList = () => {
 													alt=""
 													className="h-full w-full object-contain"
 													loading="lazy"
-													onError={(e: SyntheticEvent<HTMLImageElement>) => {
+													onError={(
+														e: SyntheticEvent<HTMLImageElement>
+													) => {
 														e.currentTarget.style.display = "none";
-														const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+														const fallback = e.currentTarget
+															.nextElementSibling as HTMLElement | null;
 														if (fallback) fallback.style.display = "";
 													}}
 												/>
 											) : null}
-											<Tv2 className="h-3.5 w-3.5 text-muted-foreground" style={result.channelLogoUrl ? { display: "none" } : undefined} />
+											<Tv2
+												className="h-3.5 w-3.5 text-muted-foreground"
+												style={
+													result.channelLogoUrl
+														? { display: "none" }
+														: undefined
+												}
+											/>
 										</div>
 										<div className="flex-1 min-w-0">
 											<p className="text-sm leading-tight truncate">

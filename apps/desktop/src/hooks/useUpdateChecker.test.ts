@@ -165,9 +165,9 @@ describe("useUpdateChecker", () => {
 	// ── install: failure (the 404 bug) ─────────────────────────────────
 
 	it("sets error when downloadAndInstall fails with 404", async () => {
-		const downloadAndInstall = vi.fn().mockRejectedValue(
-			new Error("Download request failed with status: 404 Not Found")
-		);
+		const downloadAndInstall = vi
+			.fn()
+			.mockRejectedValue(new Error("Download request failed with status: 404 Not Found"));
 		mockCheck.mockResolvedValue(fakeUpdate({ downloadAndInstall }) as never);
 
 		const { result } = renderHook(() => useUpdateChecker());
