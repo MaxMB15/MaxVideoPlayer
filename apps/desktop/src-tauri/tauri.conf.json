@@ -19,7 +19,7 @@
 		"windows": [
 			{
 				"label": "main",
-				"title": "MaxVideoPlayer",
+				"title": "Max Video Player",
 				"width": 1280,
 				"height": 720,
 				"resizable": true,
@@ -58,6 +58,7 @@
 			"files": {
 				"Frameworks": "../../../libs/macos-bundle"
 			},
+			"infoPlist": "./Info.plist",
 			"minimumSystemVersion": "10.15"
 		},
 		"linux": {

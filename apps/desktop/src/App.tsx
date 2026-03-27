@@ -32,14 +32,17 @@ interface AppRoutesProps {
 }
 
 const AppRoutes = ({ updateState }: AppRoutesProps) => {
-	const { refreshProviders } = useChannels();
+	const { refreshProviders, refreshChannels } = useChannels();
 	const splash = useSplashScreen({
 		updateState,
 		// After splash finishes any playlist/EPG refreshes, sync ChannelsContext so
 		// polling in useChannels reads fresh lastUpdated timestamps (avoids re-triggering
 		// the same refresh 60s later due to stale state).
-		onComplete: () => {
-			refreshProviders().catch(() => {});
+		onComplete: (didRefresh) => {
+			if (didRefresh) {
+				refreshProviders().catch(() => {});
+				refreshChannels().catch(() => {});
+			}
 		},
 	});
 

@@ -32,7 +32,7 @@ jobs:
           else
             gh release create "v${VERSION}" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "MaxVideoPlayer v${VERSION}" \
+              --title "Max Video Player v${VERSION}" \
               --notes "See the [CHANGELOG](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CHANGELOG.md) for details." \
               --draft
           fi

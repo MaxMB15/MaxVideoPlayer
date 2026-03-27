@@ -7,6 +7,7 @@ import type {
 	EpgSearchResult,
 	OmdbData,
 	MdbListData,
+	WhatsonData,
 	WatchHistoryEntry,
 	SubtitleSearchResult,
 } from "./types";
@@ -121,6 +122,11 @@ export const testMdbListApiKey = (key: string): Promise<boolean> =>
 
 export const fetchMdbListData = (imdbId: string, mediaType: string): Promise<MdbListData | null> =>
 	invoke("fetch_mdblist_data", { imdbId, mediaType });
+
+// --- Whatson Commands ---
+
+export const fetchWhatsonData = (imdbId: string, mediaType: string): Promise<WhatsonData | null> =>
+	invoke("fetch_whatson_data", { imdbId, mediaType });
 
 // --- OpenSubtitles Commands ---
 

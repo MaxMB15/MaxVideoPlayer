@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { X, Play, ChevronLeft, ChevronRight, MonitorPlay, Loader2 } from "lucide-react";
-import type { Channel, OmdbData, MdbListData } from "@/lib/types";
-import { fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
+import type { Channel, OmdbData, WhatsonData } from "@/lib/types";
+import { fetchOmdbData, fetchWhatsonData } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface SeriesDetailDrawerProps {
@@ -11,7 +11,7 @@ interface SeriesDetailDrawerProps {
 	onPlay: (channel: Channel) => void;
 	// Optional pre-fetched data from PlayerView to avoid double-fetch
 	prefetchedOmdbData?: OmdbData | null;
-	prefetchedMdbListData?: MdbListData | null;
+	prefetchedWhatsonData?: WhatsonData | null;
 }
 
 const episodeTitle = (name: string): string => {
@@ -45,7 +45,7 @@ export const SeriesDetailModal = ({
 	onClose,
 	onPlay,
 	prefetchedOmdbData,
-	prefetchedMdbListData,
+	prefetchedWhatsonData,
 }: SeriesDetailDrawerProps) => {
 	const [visible, setVisible] = useState(false);
 	const [step, setStep] = useState<Step>("seasons");
@@ -53,8 +53,8 @@ export const SeriesDetailModal = ({
 	const [sourceEp, setSourceEp] = useState<Channel | null>(null);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
 	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
-	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
-		prefetchedMdbListData ?? null
+	const [whatsonData, setWhatsonData] = useState<WhatsonData | null>(
+		prefetchedWhatsonData ?? null
 	);
 
 	const firstEp = episodes[0];
@@ -65,29 +65,29 @@ export const SeriesDetailModal = ({
 		return () => cancelAnimationFrame(id);
 	}, []);
 
-	// Sync when prefetched MDBList data arrives after drawer opens
+	// Sync when prefetched Whatson data arrives after drawer opens
 	useEffect(() => {
-		if (prefetchedMdbListData !== undefined) {
-			setMdbListData(prefetchedMdbListData ?? null);
+		if (prefetchedWhatsonData !== undefined) {
+			setWhatsonData(prefetchedWhatsonData ?? null);
 		}
-	}, [prefetchedMdbListData]);
+	}, [prefetchedWhatsonData]);
 
 	useEffect(() => {
-		if (prefetchedOmdbData !== undefined) return; // already have data
+		if (prefetchedOmdbData !== undefined) return;
 		if (!firstEp) {
 			setOmdbLoading(false);
 			return;
 		}
 		setOmdbLoading(true);
 		setOmdbData(null);
-		setMdbListData(null);
+		setWhatsonData(null);
 		fetchOmdbData(firstEp.id, showTitle, "series")
 			.then((data) => {
 				setOmdbData(data);
-				// Also fetch MDBList if we got an imdb_id
+				// Also fetch Whatson if we got an imdb_id
 				if (data?.imdbId) {
-					fetchMdbListData(data.imdbId, "show")
-						.then(setMdbListData)
+					fetchWhatsonData(data.imdbId, "show")
+						.then(setWhatsonData)
 						.catch(() => {});
 				}
 			})
@@ -161,19 +161,23 @@ export const SeriesDetailModal = ({
 
 	// Derived display values
 	const posterSrc =
-		omdbData?.posterUrl && omdbData.posterUrl !== "N/A"
+		whatsonData?.image ??
+		(omdbData?.posterUrl && omdbData.posterUrl !== "N/A"
 			? omdbData.posterUrl
-			: (showLogoUrl ?? null);
+			: (showLogoUrl ?? null));
 
 	const year = omdbData?.year && omdbData.year !== "N/A" ? omdbData.year : null;
-	const rated = omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null;
+	const rated =
+		whatsonData?.certification ??
+		(omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null);
 	const genre = omdbData?.genre && omdbData.genre !== "N/A" ? omdbData.genre : null;
 	const runtime = omdbData?.runtime && omdbData.runtime !== "N/A" ? omdbData.runtime : null;
 	const director = omdbData?.director && omdbData.director !== "N/A" ? omdbData.director : null;
 	const actors = omdbData?.actors && omdbData.actors !== "N/A" ? omdbData.actors : null;
 	const plot =
-		mdbListData?.description ??
-		(omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null);
+		(omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null) ??
+		whatsonData?.tagline ??
+		null;
 
 	const truncatedActors = actors && actors.length > 60 ? actors.slice(0, 57) + "..." : actors;
 	const genreRuntime = [genre, runtime ? `${runtime}/ep` : null].filter(Boolean).join(" · ");
@@ -266,7 +270,7 @@ export const SeriesDetailModal = ({
 										</div>
 
 										{/* Ratings row */}
-										<RatingsRow omdbData={omdbData} mdbListData={mdbListData} />
+										<RatingsRow omdbData={omdbData} whatsonData={whatsonData} />
 
 										{/* Genre + runtime */}
 										{genreRuntime && (

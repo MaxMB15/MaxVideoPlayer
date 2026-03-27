@@ -2,8 +2,14 @@
 
 [![Build & Bundle](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/MaxMB15/MaxVideoPlayer/build.yml?branch=main&label=tests&job=test)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
+[![Coverage](https://MaxMB15.github.io/MaxVideoPlayer/coverage/badge.svg)](https://MaxMB15.github.io/MaxVideoPlayer/coverage/)
 [![Release](https://img.shields.io/github/v/release/MaxMB15/MaxVideoPlayer?include_prereleases&label=release)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+
+> **Want to use Max Video Player?** Download the latest release for your platform:
+> **[macOS (.dmg)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)** | **[Linux (.deb / .rpm / .AppImage)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)**
+>
+> No build required — just download, install, and run.
 
 A cross-platform IPTV player built with **Tauri v2**, **React**, and **libmpv**. The Rust core (`mvp-core`) handles M3U/Xtream/EPG parsing and SQLite caching across all targets. A custom `tauri-plugin-mpv` embeds libmpv directly into the native window — using `NSOpenGLView` on macOS and EGL + X11/Wayland subsurfaces on Linux — for hardware-accelerated playback of virtually any IPTV protocol (HLS, RTMP, RTSP, TS, etc.).
 
@@ -108,9 +114,12 @@ cd apps/desktop && npx tauri dev
 ## Testing
 
 ```bash
-cargo test -p mvp-core        # Rust core tests
-cd apps/desktop && npm test   # Frontend tests (Vitest)
+cargo test -p mvp-core                  # Rust core tests (106 tests)
+cd apps/desktop && npm test             # Frontend tests (Vitest, 139 tests)
+cd apps/desktop && npm run test:coverage # Frontend tests with coverage report
 ```
+
+Coverage reports are generated with `@vitest/coverage-v8` and output to `apps/desktop/coverage/`. Open `coverage/index.html` for a detailed line-by-line breakdown.
 
 ## Production Build
 

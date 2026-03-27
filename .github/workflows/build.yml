@@ -162,6 +162,22 @@ jobs:
       - name: Run Rust tests
         run: cargo test -p mvp-core -- --include-ignored
 
-      - name: Run desktop tests
+      - name: Run desktop tests with coverage
         working-directory: apps/desktop
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Generate coverage badge
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: jaywcjlove/coverage-badges-cli@v2.1.0
+        with:
+          source: apps/desktop/coverage/coverage-summary.json
+          output: coverage/badge.svg
+
+      - name: Deploy coverage badge to gh-pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./coverage
+          destination_dir: coverage
+          keep_files: true

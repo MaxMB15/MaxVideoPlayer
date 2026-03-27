@@ -1,7 +1,10 @@
-import { memo } from "react";
-import { Play, Tv2, Heart } from "lucide-react";
+import { memo, useState } from "react";
+import { Play, Tv2, Heart, Film } from "lucide-react";
 import type { Channel, EpgProgram } from "@/lib/types";
 import { EpgTimelineBar } from "./EpgTimelineBar";
+
+/** Module-level cache of URLs that failed to load — persists across remounts from virtual list scrolling. */
+const brokenImageUrls = new Set<string>();
 
 /** Width (px) of the left channel-info column in RowCard — must match spacer in ChannelList header. */
 export const ROW_CARD_LEFT_WIDTH = 180;
@@ -35,6 +38,10 @@ const RowCard = memo(function RowCard({
 	windowEnd?: number;
 }) {
 	const now = Math.floor(Date.now() / 1000);
+	const [imgError, setImgError] = useState(() =>
+		channel.logoUrl ? brokenImageUrls.has(channel.logoUrl) : false
+	);
+	const showFallback = !channel.logoUrl || imgError;
 
 	return (
 		/* Outer wrapper is a div (not button) so nested buttons and div[role=button] inside
@@ -57,12 +64,16 @@ const RowCard = memo(function RowCard({
 				style={{ width: `${ROW_CARD_LEFT_WIDTH}px` }}
 			>
 				<div className="relative h-6 w-6 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
-					{channel.logoUrl ? (
+					{!showFallback ? (
 						<img
 							src={channel.logoUrl}
 							alt=""
 							className="h-full w-full object-contain"
 							loading="lazy"
+							onError={() => {
+							if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
+							setImgError(true);
+						}}
 						/>
 					) : (
 						<Tv2 className="h-3 w-3 text-muted-foreground" />
@@ -141,6 +152,10 @@ const PosterCard = ({
 	onToggleFavorite?: (ch: Channel) => void;
 }) => {
 	const hasSources = channel.sources.length > 0;
+	const [imgError, setImgError] = useState(() =>
+		channel.logoUrl ? brokenImageUrls.has(channel.logoUrl) : false
+	);
+	const showFallback = !channel.logoUrl || imgError;
 
 	return (
 		<div className="group flex flex-col text-left relative">
@@ -148,17 +163,24 @@ const PosterCard = ({
 				onClick={() => onPlay(channel)}
 				className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg w-full"
 			>
-				<div className="relative w-full h-24 rounded-lg bg-secondary overflow-hidden mb-1.5">
-					{channel.logoUrl ? (
+				<div className="relative w-full h-24 rounded-lg overflow-hidden mb-1.5 border border-border/40">
+					{!showFallback ? (
 						<img
 							src={channel.logoUrl}
 							alt=""
 							className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
 							loading="lazy"
+							onError={() => {
+							if (channel.logoUrl) brokenImageUrls.add(channel.logoUrl);
+							setImgError(true);
+						}}
 						/>
 					) : (
-						<div className="h-full w-full flex items-center justify-center">
-							<Play className="h-6 w-6 text-muted-foreground/30" />
+						<div className="h-full w-full bg-gradient-to-br from-secondary via-secondary/80 to-secondary/50 flex flex-col items-center justify-center gap-1">
+							<Film className="h-5 w-5 text-muted-foreground/25" />
+							<span className="text-[9px] font-medium text-muted-foreground/30 uppercase tracking-wider">
+								No poster
+							</span>
 						</div>
 					)}
 					<div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
@@ -186,7 +208,7 @@ const PosterCard = ({
 									onToggleFavorite(channel);
 								}
 							}}
-							className="absolute top-1 right-1 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors cursor-pointer"
+							className="absolute top-1 left-1 z-10 h-7 w-7 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors cursor-pointer"
 							aria-label={
 								channel.isFavorite ? "Remove from favorites" : "Add to favorites"
 							}

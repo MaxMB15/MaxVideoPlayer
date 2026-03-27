@@ -61,7 +61,7 @@ const LeftPanel = ({
 					<Play className="w-7 h-7 fill-current" />
 				</div>
 				<div>
-					<h1 className="text-2xl font-bold tracking-tight">MaxVideoPlayer</h1>
+					<h1 className="text-2xl font-bold tracking-tight">Max Video Player</h1>
 					<p className="text-sm text-muted-foreground mt-0.5">Open Source IPTV Player</p>
 				</div>
 			</div>
@@ -70,7 +70,7 @@ const LeftPanel = ({
 			<div className="w-full max-w-sm flex flex-col gap-6">
 				{!hasProviders ? (
 					<div className="text-center space-y-2">
-						<p className="text-base font-semibold">Welcome to MaxVideoPlayer</p>
+						<p className="text-base font-semibold">Welcome to Max Video Player</p>
 						<p className="text-sm text-muted-foreground leading-relaxed">
 							Add a playlist in the Playlists tab to get started.
 						</p>

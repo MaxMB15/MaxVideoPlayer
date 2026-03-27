@@ -25,9 +25,6 @@ import {
 	setOmdbApiKey,
 	fetchOmdbData,
 	clearWatchHistory,
-	getMdbListApiKey,
-	setMdbListApiKey,
-	testMdbListApiKey,
 	getOpenSubtitlesApiKey,
 	setOpenSubtitlesApiKey,
 	testOpenSubtitlesApiKey,
@@ -83,15 +80,6 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const [omdbTesting, setOmdbTesting] = useState(false);
 	const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// MDBList state
-	const [mdblistKey, setMdblistKey] = useState("");
-	const [mdblistKeyVisible, setMdblistKeyVisible] = useState(false);
-	const [mdblistSaveStatus, setMdblistSaveStatus] = useState<SaveStatus>("idle");
-	const [mdblistTestStatus, setMdblistTestStatus] = useState<OmdbStatus>("idle");
-	const [mdblistTesting, setMdblistTesting] = useState(false);
-	const [mdblistSaveError, setMdblistSaveError] = useState<string | null>(null);
-	const mdblistSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 	// OpenSubtitles state
 	const [openSubtitlesKey, setOpenSubtitlesKey] = useState("");
 	const [openSubtitlesKeyVisible, setOpenSubtitlesKeyVisible] = useState(false);
@@ -116,16 +104,12 @@ export const Settings = ({ updateState }: SettingsProps) => {
 		getOmdbApiKey().then((key) => {
 			if (key) setOmdbKey(key);
 		});
-		getMdbListApiKey().then((key) => {
-			if (key) setMdblistKey(key);
-		});
 		getOpenSubtitlesApiKey().then((key) => {
 			if (key) setOpenSubtitlesKey(key);
 		});
 		return () => {
 			if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 			if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
-			if (mdblistSaveTimerRef.current) clearTimeout(mdblistSaveTimerRef.current);
 			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
 		};
 	}, []);
@@ -160,32 +144,6 @@ export const Settings = ({ updateState }: SettingsProps) => {
 			setOmdbStatus("invalid");
 		} finally {
 			setOmdbTesting(false);
-		}
-	};
-
-	const handleSaveMdblistKey = async () => {
-		try {
-			await setMdbListApiKey(mdblistKey);
-			setMdblistSaveStatus("saved");
-			setMdblistSaveError(null);
-			setMdblistTestStatus("idle");
-			if (mdblistSaveTimerRef.current) clearTimeout(mdblistSaveTimerRef.current);
-			mdblistSaveTimerRef.current = setTimeout(() => setMdblistSaveStatus("idle"), 2000);
-		} catch {
-			setMdblistSaveError("Failed to save. Please try again.");
-		}
-	};
-
-	const handleTestMdblistKey = async () => {
-		setMdblistTesting(true);
-		setMdblistTestStatus("idle");
-		try {
-			const valid = await testMdbListApiKey(mdblistKey);
-			setMdblistTestStatus(valid ? "valid" : "invalid");
-		} catch {
-			setMdblistTestStatus("invalid");
-		} finally {
-			setMdblistTesting(false);
 		}
 	};
 
@@ -399,93 +357,6 @@ export const Settings = ({ updateState }: SettingsProps) => {
 									Optional enrichment (require OMDB key)
 								</p>
 
-								{/* MDBList section */}
-								<div>
-									<p className="text-sm font-medium mb-1">MDBList API</p>
-									<div className="flex items-center gap-2">
-										<div className="relative flex-1">
-											<Input
-												type={mdblistKeyVisible ? "text" : "password"}
-												placeholder="Enter API key…"
-												value={mdblistKey}
-												onChange={(e) => {
-													setMdblistKey(e.target.value);
-													setMdblistTestStatus("idle");
-													setMdblistSaveStatus("idle");
-												}}
-												className="pr-10"
-											/>
-											<button
-												type="button"
-												className="absolute inset-y-0 right-2 flex items-center text-muted-foreground hover:text-foreground"
-												onClick={() => setMdblistKeyVisible((v) => !v)}
-												aria-label={
-													mdblistKeyVisible ? "Hide key" : "Show key"
-												}
-											>
-												{mdblistKeyVisible ? (
-													<EyeOff className="h-4 w-4" />
-												) : (
-													<Eye className="h-4 w-4" />
-												)}
-											</button>
-										</div>
-										<Button
-											size="sm"
-											variant="secondary"
-											onClick={handleSaveMdblistKey}
-											disabled={!mdblistKey.trim()}
-										>
-											{mdblistSaveStatus === "saved" ? (
-												<span className="flex items-center gap-1 text-green-500">
-													<CheckCircle className="h-4 w-4" /> Saved
-												</span>
-											) : (
-												"Save"
-											)}
-										</Button>
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={handleTestMdblistKey}
-											disabled={!mdblistKey.trim() || mdblistTesting}
-										>
-											{mdblistTesting ? "Testing…" : "Test"}
-										</Button>
-									</div>
-
-									{mdblistSaveError && (
-										<p className="mt-1 text-xs text-destructive">
-											{mdblistSaveError}
-										</p>
-									)}
-
-									<div className="mt-2 text-xs">
-										{mdblistTestStatus === "valid" && (
-											<span className="flex items-center gap-1 text-green-500">
-												<CheckCircle className="h-3 w-3" /> Valid key
-											</span>
-										)}
-										{mdblistTestStatus === "invalid" && (
-											<span className="flex items-center gap-1 text-destructive">
-												<XCircle className="h-3 w-3" /> Invalid key
-											</span>
-										)}
-									</div>
-
-									<div className="mt-1 text-xs text-muted-foreground">
-										Get a free key at{" "}
-										<a
-											href="https://mdblist.com/api/"
-											target="_blank"
-											rel="noreferrer"
-											className="underline hover:text-foreground"
-										>
-											mdblist.com
-										</a>
-									</div>
-								</div>
-
 								{/* OpenSubtitles section */}
 								<div>
 									<p className="text-sm font-medium mb-1">OpenSubtitles API</p>
@@ -617,7 +488,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardHeader>
 					<CardContent className="space-y-3">
 						<p className="text-sm text-muted-foreground">
-							MaxVideoPlayer is free and open source. If you find it useful, consider
+							Max Video Player is free and open source. If you find it useful, consider
 							supporting development.
 						</p>
 						<div className="flex items-center gap-4">
@@ -656,7 +527,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<p className="text-sm text-muted-foreground">
-							MaxVideoPlayer {appVersion ? `v${appVersion}` : ""}
+							Max Video Player {appVersion ? `v${appVersion}` : ""}
 						</p>
 
 						<div className="space-y-3">

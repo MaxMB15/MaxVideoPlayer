@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { formatTime } from "@/lib/format";
 import type { PlayerState } from "@/lib/types";
 import { useState, useEffect, useRef } from "react";
 
@@ -35,16 +36,6 @@ interface ControlsProps {
 	onSubtitles?: () => void;
 	hasSubtitles?: boolean;
 }
-
-const formatTime = (seconds: number): string => {
-	const h = Math.floor(seconds / 3600);
-	const m = Math.floor((seconds % 3600) / 60);
-	const s = Math.floor(seconds % 60);
-	if (h > 0) {
-		return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-	}
-	return `${m}:${String(s).padStart(2, "0")}`;
-};
 
 export const Controls = ({
 	state,

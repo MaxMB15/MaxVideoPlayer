@@ -2,6 +2,7 @@ use crate::iptv::m3u::parse_series_name;
 use crate::iptv::mdblist::MdbListData;
 use crate::iptv::omdb::OmdbData;
 use crate::iptv::opensubtitles::SubtitleSearchResult;
+use crate::iptv::whatson::WhatsonData;
 use crate::models::channel::Channel;
 use crate::models::playlist::{Provider, ProviderType};
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -179,6 +180,13 @@ impl CacheStore {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS opensubtitles_search_cache (
                 cache_key   TEXT PRIMARY KEY,
+                data_json   TEXT NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS whatson_cache (
+                imdb_id     TEXT PRIMARY KEY,
                 data_json   TEXT NOT NULL,
                 fetched_at  INTEGER NOT NULL
             );"
@@ -720,6 +728,44 @@ impl CacheStore {
                     return Ok(None); // stale
                 }
                 let data: MdbListData = serde_json::from_str(&data_json)?;
+                Ok(Some(data))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    // --- Whatson Cache ---
+
+    /// Store whatson-api data for an IMDB ID. Overwrites any existing cached entry.
+    pub fn save_whatson_cache(&self, imdb_id: &str, data: &WhatsonData) -> Result<(), CacheError> {
+        let data_json = serde_json::to_string(data)?;
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO whatson_cache (imdb_id, data_json, fetched_at) VALUES (?1, ?2, ?3)",
+            params![imdb_id, data_json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve cached whatson-api data for an IMDB ID. Returns `None` if not cached or stale.
+    pub fn get_whatson_cache(&self, imdb_id: &str, ttl_seconds: i64) -> Result<Option<WhatsonData>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT data_json, fetched_at FROM whatson_cache WHERE imdb_id = ?1",
+            params![imdb_id],
+            |row| {
+                let data_json: String = row.get(0)?;
+                let fetched_at: i64 = row.get(1)?;
+                Ok((data_json, fetched_at))
+            },
+        );
+        match result {
+            Ok((data_json, fetched_at)) => {
+                let now = chrono::Utc::now().timestamp();
+                if now - fetched_at > ttl_seconds {
+                    return Ok(None); // stale
+                }
+                let data: WhatsonData = serde_json::from_str(&data_json)?;
                 Ok(Some(data))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
