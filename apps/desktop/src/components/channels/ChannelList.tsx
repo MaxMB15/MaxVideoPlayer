@@ -74,9 +74,7 @@ const EpgResultLogo = ({ url }: { url?: string }) => {
 					onError={() => setImgError(true)}
 				/>
 			) : null}
-			{showFallback ? (
-				<Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
-			) : null}
+			{showFallback ? <Tv2 className="h-3.5 w-3.5 text-muted-foreground" /> : null}
 		</div>
 	);
 };

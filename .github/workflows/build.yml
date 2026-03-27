@@ -188,7 +188,11 @@ jobs:
             patchelf rpm
 
       - name: Install frontend deps
-        run: npm ci
+        run: |
+          npm ci || true
+          # npm ci can skip platform-specific optional deps (npm/cli#4828).
+          # Ensure the Tauri CLI native binding for Linux is present.
+          npm ls @tauri-apps/cli-linux-x64-gnu 2>/dev/null || npm install @tauri-apps/cli-linux-x64-gnu
 
       - name: Rust type-check (plugin + core)
         run: cargo check -p tauri-plugin-mpv -p mvp-core
