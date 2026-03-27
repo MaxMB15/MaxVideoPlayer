@@ -56,6 +56,10 @@ jobs:
       - name: Install deps
         run: npm ci --ignore-scripts || (rm -f package-lock.json && npm install)
 
+      - name: TypeScript type-check
+        working-directory: apps/desktop
+        run: npx tsc -b --noEmit
+
       - name: Rust type-check (core only — avoids Tauri GTK deps on Linux)
         run: cargo check -p mvp-core
 
