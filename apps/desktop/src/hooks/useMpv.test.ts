@@ -161,7 +161,7 @@ describe("useMpv", () => {
 			}
 		});
 
-		expect(caught?.message).toBe("codec not found");
+		expect((caught as Error | null)?.message).toBe("codec not found");
 		expect(result.current.error).toContain("codec not found");
 	});
 

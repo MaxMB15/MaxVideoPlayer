@@ -281,7 +281,7 @@ describe("useChannelsProvider", () => {
 			}
 		});
 
-		expect(caught?.message).toBe("bad playlist");
+		expect((caught as Error | null)?.message).toBe("bad playlist");
 		expect(result.current.error).toContain("bad playlist");
 		expect(result.current.loading).toBe(false);
 	});
