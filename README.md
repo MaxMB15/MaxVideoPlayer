@@ -114,8 +114,8 @@ cd apps/desktop && npx tauri dev
 ## Testing
 
 ```bash
-cargo test -p mvp-core                  # Rust core tests (106 tests)
-cd apps/desktop && npm test             # Frontend tests (Vitest, 139 tests)
+cargo test -p mvp-core                  # Rust core tests
+cd apps/desktop && npm test             # Frontend tests (Vitest)
 cd apps/desktop && npm run test:coverage # Frontend tests with coverage report
 ```
 

@@ -694,12 +694,17 @@ pub async fn fetch_whatson_data(
     // 2. Fetch from whatson-api
     let item_type = if media_type == "show" || media_type == "series" { "tvshow" } else { "movie" };
     tracing::info!("[Whatson] fetching data for imdb_id={} type={}", imdb_id, item_type);
-    let data = mvp_core::iptv::whatson::fetch_whatson(&imdb_id, item_type)
-        .await
-        .map_err(|e| {
+    let data = match mvp_core::iptv::whatson::fetch_whatson(&imdb_id, item_type).await {
+        Ok(data) => data,
+        Err(mvp_core::iptv::whatson::WhatsonError::NotFound) => {
+            tracing::info!("[Whatson] no data found for imdb_id={}", imdb_id);
+            return Ok(None);
+        }
+        Err(e) => {
             tracing::warn!("[Whatson] fetch failed for imdb_id={}: {}", imdb_id, e);
-            e.to_string()
-        })?;
+            return Err(e.to_string());
+        }
+    };
 
     // 3. Cache
     {
