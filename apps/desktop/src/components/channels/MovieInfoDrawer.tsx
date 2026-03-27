@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { X, Play, Clapperboard, Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
-import type { Channel, OmdbData, MdbListData } from "@/lib/types";
-import { fetchOmdbData, fetchMdbListData } from "@/lib/tauri";
+import type { Channel, OmdbData, WhatsonData } from "@/lib/types";
+import { fetchOmdbData, fetchWhatsonData } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface MovieInfoDrawerProps {
@@ -11,7 +11,7 @@ interface MovieInfoDrawerProps {
 	onPlay: (ch: Channel) => void;
 	// Optional pre-fetched data from PlayerView to avoid double-fetch
 	prefetchedOmdbData?: OmdbData | null;
-	prefetchedMdbListData?: MdbListData | null;
+	prefetchedWhatsonData?: WhatsonData | null;
 }
 
 export const MovieInfoDrawer = ({
@@ -19,14 +19,14 @@ export const MovieInfoDrawer = ({
 	onClose,
 	onPlay,
 	prefetchedOmdbData,
-	prefetchedMdbListData,
+	prefetchedWhatsonData,
 }: MovieInfoDrawerProps) => {
 	const [visible, setVisible] = useState(false);
 	const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
 	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
-	const [mdbListData, setMdbListData] = useState<MdbListData | null>(
-		prefetchedMdbListData ?? null
+	const [whatsonData, setWhatsonData] = useState<WhatsonData | null>(
+		prefetchedWhatsonData ?? null
 	);
 
 	useEffect(() => {
@@ -34,27 +34,27 @@ export const MovieInfoDrawer = ({
 		return () => cancelAnimationFrame(id);
 	}, []);
 
-	// Sync when prefetched MDBList data arrives after drawer opens
+	// Sync when prefetched Whatson data arrives after drawer opens
 	useEffect(() => {
-		if (prefetchedMdbListData !== undefined) {
-			setMdbListData(prefetchedMdbListData ?? null);
+		if (prefetchedWhatsonData !== undefined) {
+			setWhatsonData(prefetchedWhatsonData ?? null);
 		}
-	}, [prefetchedMdbListData]);
+	}, [prefetchedWhatsonData]);
 
 	useEffect(() => {
-		if (prefetchedOmdbData !== undefined) return; // already have data
+		if (prefetchedOmdbData !== undefined) return;
 		if (!movie) return;
 		setOmdbLoading(true);
 		setOmdbData(null);
-		setMdbListData(null);
+		setWhatsonData(null);
 		fetchOmdbData(movie.id, movie.name, "movie")
 			.then((data) => {
 				setOmdbData(data);
-				// Also fetch MDBList if we got an imdb_id
+				// Also fetch Whatson if we got an imdb_id
 				if (data?.imdbId) {
 					const mediaType = movie.contentType === "series" ? "show" : "movie";
-					fetchMdbListData(data.imdbId, mediaType)
-						.then(setMdbListData)
+					fetchWhatsonData(data.imdbId, mediaType)
+						.then(setWhatsonData)
 						.catch(() => {});
 				}
 			})
@@ -83,19 +83,23 @@ export const MovieInfoDrawer = ({
 
 	// Derived display values
 	const posterSrc =
-		omdbData?.posterUrl && omdbData.posterUrl !== "N/A"
+		whatsonData?.image ??
+		(omdbData?.posterUrl && omdbData.posterUrl !== "N/A"
 			? omdbData.posterUrl
-			: (movie.logoUrl ?? null);
+			: (movie.logoUrl ?? null));
 
 	const year = omdbData?.year && omdbData.year !== "N/A" ? omdbData.year : null;
-	const rated = omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null;
+	const rated =
+		whatsonData?.certification ??
+		(omdbData?.rated && omdbData.rated !== "N/A" ? omdbData.rated : null);
 	const genre = omdbData?.genre && omdbData.genre !== "N/A" ? omdbData.genre : null;
 	const runtime = omdbData?.runtime && omdbData.runtime !== "N/A" ? omdbData.runtime : null;
 	const director = omdbData?.director && omdbData.director !== "N/A" ? omdbData.director : null;
 	const actors = omdbData?.actors && omdbData.actors !== "N/A" ? omdbData.actors : null;
 	const plot =
-		mdbListData?.description ??
-		(omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null);
+		(omdbData?.plot && omdbData.plot !== "N/A" ? omdbData.plot : null) ??
+		whatsonData?.tagline ??
+		null;
 
 	const truncatedActors = actors && actors.length > 60 ? actors.slice(0, 57) + "..." : actors;
 
@@ -173,7 +177,7 @@ export const MovieInfoDrawer = ({
 								</div>
 
 								{/* Ratings row */}
-								<RatingsRow omdbData={omdbData} mdbListData={mdbListData} />
+								<RatingsRow omdbData={omdbData} whatsonData={whatsonData} />
 
 								{/* Genre + runtime */}
 								{genreRuntime && (

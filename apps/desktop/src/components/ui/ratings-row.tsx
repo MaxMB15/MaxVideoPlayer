@@ -1,9 +1,9 @@
 import { Star } from "lucide-react";
-import type { OmdbData, MdbListData } from "@/lib/types";
+import type { OmdbData, WhatsonData } from "@/lib/types";
 
 interface RatingsRowProps {
 	omdbData?: OmdbData | null;
-	mdbListData?: MdbListData | null;
+	whatsonData?: WhatsonData | null;
 }
 
 const formatVotes = (n: number): string => {
@@ -12,22 +12,22 @@ const formatVotes = (n: number): string => {
 	return n.toString();
 };
 
-export const RatingsRow = ({ omdbData, mdbListData }: RatingsRowProps) => {
-	// Priority: use MDBList data when available, fall back to OMDB
+export const RatingsRow = ({ omdbData, whatsonData }: RatingsRowProps) => {
+	// Priority: use Whatson data when available, fall back to OMDB
 	const rawOmdbRating = omdbData?.imdbRating;
 	const omdbRatingClean = rawOmdbRating && rawOmdbRating !== "N/A" ? rawOmdbRating : null;
 	const imdbRating =
-		mdbListData?.imdbRating != null ? mdbListData.imdbRating.toFixed(1) : omdbRatingClean;
-	const imdbVotes = mdbListData?.imdbVotes ?? null;
-	const rtCritic = mdbListData?.tomatometer ?? null;
-	// When MDBList has no tomatometer, fall back to OMDB's rottenTomatoes string
+		whatsonData?.imdbRating != null ? whatsonData.imdbRating.toFixed(1) : omdbRatingClean;
+	const imdbVotes = whatsonData?.imdbVotes ?? null;
+	const rtCritic = whatsonData?.rtCriticsRating ?? null;
+	// When Whatson has no RT score, fall back to OMDB's rottenTomatoes string
 	const rtCriticFallback =
 		rtCritic === null && omdbData?.rottenTomatoes && omdbData.rottenTomatoes !== "N/A"
 			? omdbData.rottenTomatoes
 			: null;
-	const rtAudience = mdbListData?.tomatoAudienceScore ?? null;
-	const rtAudienceCount = mdbListData?.tomatoAudienceCount ?? null;
-	const rtCriticCount = mdbListData?.tomatometerCount ?? null;
+	const rtAudience = whatsonData?.rtAudienceRating ?? null;
+	const rtAudienceCount = whatsonData?.rtAudienceCount ?? null;
+	const rtCriticCount = whatsonData?.rtCriticsCount ?? null;
 
 	const hasAny = imdbRating || rtCritic !== null || rtCriticFallback || rtAudience !== null;
 	if (!hasAny) return null;

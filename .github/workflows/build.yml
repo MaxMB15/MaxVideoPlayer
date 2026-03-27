@@ -3,15 +3,110 @@ name: Build & Bundle
 on:
   push:
     branches: [main, dev, release-*]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".github/workflows/release-*.yml"
+      - "docs/**"
+      - ".vscode/**"
+      - ".idea/**"
   pull_request:
     branches: [main, dev, release-*]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".github/workflows/release-*.yml"
+      - "docs/**"
+      - ".vscode/**"
+      - ".idea/**"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── macOS Desktop ──────────────────────────────────────────────────────
+  # ── Tests (run on every push and PR) ────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci --ignore-scripts || (rm -f package-lock.json && npm install)
+
+      - name: TypeScript type-check
+        working-directory: apps/desktop
+        run: npx tsc -b --noEmit
+
+      - name: Rust type-check (core only — avoids Tauri GTK deps on Linux)
+        run: cargo check -p mvp-core
+
+      - name: Run Rust tests
+        run: cargo test -p mvp-core -- --include-ignored
+
+      - name: Run desktop tests with coverage
+        working-directory: apps/desktop
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: apps/desktop/coverage/
+          retention-days: 1
+
+  # ── Coverage badge deploy (push to main only, needs write) ─────────────
+  deploy-coverage:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+
+      - name: Generate coverage badge
+        uses: jaywcjlove/coverage-badges-cli@v2.1.0
+        with:
+          source: coverage/coverage-summary.json
+          output: coverage/badge.svg
+
+      - name: Deploy coverage to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./coverage
+          destination_dir: coverage
+          keep_files: true
+
+  # ── macOS Desktop (push only — PRs run tests only) ──────────────────────
   build-macos:
+    if: github.event_name == 'push'
+    needs: [test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,8 +155,10 @@ jobs:
             target/release/bundle/macos/*.app
           if-no-files-found: error
 
-  # ── Linux Desktop ────────────────────────────────────────────────────────
+  # ── Linux Desktop (push only — PRs run tests only) ─────────────────────
   build-linux:
+    if: github.event_name == 'push'
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,8 +188,11 @@ jobs:
             patchelf rpm
 
       - name: Install frontend deps
-        # package-lock.json was generated on macOS; delete and reinstall for Linux
-        run: rm -f package-lock.json && npm install
+        run: |
+          npm ci || true
+          # npm ci can skip platform-specific optional deps (npm/cli#4828).
+          # Ensure the Tauri CLI native binding for Linux is present.
+          npm ls @tauri-apps/cli-linux-x64-gnu 2>/dev/null || npm install @tauri-apps/cli-linux-x64-gnu
 
       - name: Rust type-check (plugin + core)
         run: cargo check -p tauri-plugin-mpv -p mvp-core
@@ -112,56 +212,3 @@ jobs:
             target/release/bundle/rpm/*.rpm
             target/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
-
-  # ── Android / Fire Stick — not yet implemented ─────────────────────────
-  build-android:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Placeholder
-        run: echo "Android build not yet implemented — skipping"
-
-  # ── iOS — not yet implemented ──────────────────────────────────────────
-  build-ios:
-    runs-on: macos-latest
-    steps:
-      - name: Placeholder
-        run: echo "iOS build not yet implemented — skipping"
-
-  # ── Tests (run on every push/PR) ────────────────────────────────────────
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install deps
-        # package-lock.json was generated on macOS; @rollup/rollup-linux-x64-gnu is absent
-        # from the packages section (npm bug #4828). Deleting the lockfile forces npm to
-        # resolve and install the correct platform-specific optional deps for Linux.
-        run: rm -f package-lock.json && npm install
-
-      - name: Rust type-check (core only — avoids Tauri GTK deps on Linux)
-        run: cargo check -p mvp-core
-
-      - name: Run Rust tests
-        run: cargo test -p mvp-core -- --include-ignored
-
-      - name: Run desktop tests
-        working-directory: apps/desktop
-        run: npm test

@@ -21,7 +21,7 @@ export const DonationPopup = ({ onDismiss }: DonationPopupProps) => {
 			}`}
 		>
 			<div className="flex items-start justify-between gap-2">
-				<p className="text-sm font-semibold leading-tight">Enjoying MaxVideoPlayer?</p>
+				<p className="text-sm font-semibold leading-tight">Enjoying Max Video Player?</p>
 				<button
 					onClick={onDismiss}
 					aria-label="Dismiss donation prompt"
