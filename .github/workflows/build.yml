@@ -171,7 +171,7 @@ jobs:
             patchelf rpm
 
       - name: Install frontend deps
-        run: npm ci --ignore-scripts || (rm -f package-lock.json && npm install)
+        run: npm ci
 
       - name: Rust type-check (plugin + core)
         run: cargo check -p tauri-plugin-mpv -p mvp-core
