@@ -31,8 +31,6 @@ jobs:
   # ── Tests (run on every push and PR) ────────────────────────────────────
   test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -70,15 +68,34 @@ jobs:
         working-directory: apps/desktop
         run: npm run test:coverage
 
-      - name: Generate coverage badge
+      - name: Upload coverage artifact
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: apps/desktop/coverage/
+          retention-days: 1
+
+  # ── Coverage badge deploy (push to main only, needs write) ─────────────
+  deploy-coverage:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+
+      - name: Generate coverage badge
         uses: jaywcjlove/coverage-badges-cli@v2.1.0
         with:
-          source: apps/desktop/coverage/coverage-summary.json
+          source: coverage/coverage-summary.json
           output: coverage/badge.svg
 
-      - name: Deploy coverage badge to gh-pages
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - name: Deploy coverage to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -171,7 +188,7 @@ jobs:
             patchelf rpm
 
       - name: Install frontend deps
-        run: npm ci --ignore-scripts || (rm -f package-lock.json && npm install)
+        run: npm ci
 
       - name: Rust type-check (plugin + core)
         run: cargo check -p tauri-plugin-mpv -p mvp-core

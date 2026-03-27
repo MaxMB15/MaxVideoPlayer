@@ -38,8 +38,8 @@ const AppRoutes = ({ updateState }: AppRoutesProps) => {
 		// After splash finishes any playlist/EPG refreshes, sync ChannelsContext so
 		// polling in useChannels reads fresh lastUpdated timestamps (avoids re-triggering
 		// the same refresh 60s later due to stale state).
-		onComplete: (didRefresh) => {
-			if (didRefresh) {
+		onComplete: (didRefreshProviders) => {
+			if (didRefreshProviders) {
 				refreshProviders().catch(() => {});
 				refreshChannels().catch(() => {});
 			}

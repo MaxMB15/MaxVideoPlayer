@@ -32,7 +32,7 @@ const SESSION_KEY = "splash-shown";
 
 interface UseSplashScreenOptions {
 	updateState: UpdateState;
-	onComplete?: (didRefresh: boolean) => void;
+	onComplete?: (didRefreshProviders: boolean) => void;
 }
 
 export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenState => {

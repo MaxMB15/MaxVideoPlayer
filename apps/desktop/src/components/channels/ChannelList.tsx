@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect, type SyntheticEvent } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History } from "lucide-react";
@@ -56,6 +56,28 @@ const formatEpgTime = (startTime: number, now: number): string => {
 	return (
 		d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) +
 		` ${timeStr}`
+	);
+};
+
+const EpgResultLogo = ({ url }: { url?: string }) => {
+	const [imgError, setImgError] = useState(false);
+	const showFallback = !url || imgError;
+
+	return (
+		<div className="h-8 w-8 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+			{url && !imgError ? (
+				<img
+					src={url}
+					alt=""
+					className="h-full w-full object-contain"
+					loading="lazy"
+					onError={() => setImgError(true)}
+				/>
+			) : null}
+			{showFallback ? (
+				<Tv2 className="h-3.5 w-3.5 text-muted-foreground" />
+			) : null}
+		</div>
 	);
 };
 
@@ -729,32 +751,8 @@ export const ChannelList = () => {
 										onClick={() => handleEpgResultPlay(result.channelId)}
 										className="group flex items-center gap-3 w-full px-2 py-2 rounded-lg hover:bg-accent transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 									>
-										<div className="h-8 w-8 rounded bg-secondary flex items-center justify-center overflow-hidden shrink-0">
-											{result.channelLogoUrl ? (
-												<img
-													src={result.channelLogoUrl}
-													alt=""
-													className="h-full w-full object-contain"
-													loading="lazy"
-													onError={(
-														e: SyntheticEvent<HTMLImageElement>
-													) => {
-														e.currentTarget.style.display = "none";
-														const fallback = e.currentTarget
-															.nextElementSibling as HTMLElement | null;
-														if (fallback) fallback.style.display = "";
-													}}
-												/>
-											) : null}
-											<Tv2
-												className="h-3.5 w-3.5 text-muted-foreground"
-												style={
-													result.channelLogoUrl
-														? { display: "none" }
-														: undefined
-												}
-											/>
-										</div>
+										<EpgResultLogo url={result.channelLogoUrl} />
+
 										<div className="flex-1 min-w-0">
 											<p className="text-sm leading-tight truncate">
 												{result.title}
