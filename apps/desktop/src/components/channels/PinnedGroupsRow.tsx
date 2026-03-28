@@ -1,0 +1,61 @@
+import { X } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import type { PinnedGroup, Category } from "@/lib/types";
+
+interface PinnedGroupsRowProps {
+	pinnedGroups: PinnedGroup[];
+	categories: Category[];
+	selectedGroup: string | null;
+	onSelectGroup: (groupName: string) => void;
+	onUnpin: (groupName: string) => void;
+}
+
+export const PinnedGroupsRow = ({
+	pinnedGroups,
+	categories,
+	selectedGroup,
+	onSelectGroup,
+	onUnpin,
+}: PinnedGroupsRowProps) => {
+	if (pinnedGroups.length === 0) return null;
+
+	const getChannelCount = (groupName: string) =>
+		categories.find((c) => c.name === groupName)?.channelCount ?? 0;
+
+	return (
+		<div className="px-4 py-2">
+			<div className="flex items-center gap-1.5 mb-2">
+				<span className="text-sm font-semibold text-muted-foreground">Pinned Groups</span>
+			</div>
+			<ScrollArea className="w-full">
+				<div className="flex gap-2 pb-1">
+					{pinnedGroups.map((pin) => (
+						<button
+							key={pin.groupName}
+							onClick={() => onSelectGroup(pin.groupName)}
+							className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs shrink-0 border transition-colors group ${
+								selectedGroup === pin.groupName
+									? "bg-primary text-primary-foreground border-primary"
+									: "bg-secondary text-secondary-foreground border-border hover:bg-accent"
+							}`}
+						>
+							<span>{pin.groupName}</span>
+							<span className="opacity-60 text-[10px]">
+								{getChannelCount(pin.groupName)}
+							</span>
+							<span
+								onClick={(e) => {
+									e.stopPropagation();
+									onUnpin(pin.groupName);
+								}}
+								className="opacity-0 group-hover:opacity-100 hover:text-destructive ml-0.5"
+							>
+								<X className="h-3 w-3" />
+							</span>
+						</button>
+					))}
+				</div>
+			</ScrollArea>
+		</div>
+	);
+};
