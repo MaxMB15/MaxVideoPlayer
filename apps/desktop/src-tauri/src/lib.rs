@@ -59,6 +59,16 @@ pub fn run() {
             commands::get_watch_history,
             commands::delete_history_entry,
             commands::clear_watch_history,
+            commands::get_group_hierarchy,
+            commands::update_group_hierarchy_entry,
+            commands::delete_group_hierarchy,
+            commands::pin_group,
+            commands::unpin_group,
+            commands::get_pinned_groups,
+            commands::get_gemini_api_key,
+            commands::set_gemini_api_key,
+            commands::test_gemini_api_key,
+            commands::categorize_provider,
         ])
         .setup(|app| {
             let app_dir = app

@@ -55,6 +55,26 @@ pub struct StoredEpgProgramWithChannel {
     pub channel_logo: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupHierarchyEntry {
+    pub provider_id: String,
+    pub content_type: String,
+    pub group_name: String,
+    pub super_category: Option<String>,
+    pub sort_order: i64,
+    pub is_user_override: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedGroup {
+    pub provider_id: String,
+    pub content_type: String,
+    pub group_name: String,
+    pub sort_order: i64,
+}
+
 pub struct CacheStore {
     conn: Connection,
 }
@@ -189,6 +209,26 @@ impl CacheStore {
                 imdb_id     TEXT PRIMARY KEY,
                 data_json   TEXT NOT NULL,
                 fetched_at  INTEGER NOT NULL
+            );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS group_hierarchy (
+                provider_id TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                super_category TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                is_user_override INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (provider_id, content_type, group_name)
+            );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pinned_groups (
+                provider_id TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (provider_id, content_type, group_name)
             );"
         )?;
         Ok(())
@@ -914,6 +954,131 @@ impl CacheStore {
     pub fn clear_watch_history(&self) -> Result<(), CacheError> {
         self.conn.execute("DELETE FROM watch_history", [])?;
         Ok(())
+    }
+
+    // --- Group Hierarchy ---
+
+    pub fn save_group_hierarchy(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+        group_name: &str,
+        super_category: Option<&str>,
+        sort_order: i64,
+        is_user_override: bool,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO group_hierarchy (provider_id, content_type, group_name, super_category, sort_order, is_user_override)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![provider_id, content_type, group_name, super_category, sort_order, is_user_override as i32],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_group_hierarchy(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+    ) -> Result<Vec<GroupHierarchyEntry>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_id, content_type, group_name, super_category, sort_order, is_user_override
+             FROM group_hierarchy
+             WHERE provider_id = ?1 AND content_type = ?2
+             ORDER BY sort_order ASC"
+        )?;
+        let entries = stmt.query_map(params![provider_id, content_type], |row| {
+            Ok(GroupHierarchyEntry {
+                provider_id: row.get(0)?,
+                content_type: row.get(1)?,
+                group_name: row.get(2)?,
+                super_category: row.get(3)?,
+                sort_order: row.get(4)?,
+                is_user_override: row.get::<_, i32>(5)? != 0,
+            })
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
+    }
+
+    pub fn replace_group_hierarchy(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+        new_entries: &[(&str, Option<&str>, i64)],
+    ) -> Result<(), CacheError> {
+        // unchecked_transaction because &self (not &mut self) — matches codebase pattern
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut stmt = tx.prepare(
+            "SELECT group_name, super_category, sort_order FROM group_hierarchy
+             WHERE provider_id = ?1 AND content_type = ?2 AND is_user_override = 1"
+        )?;
+        let overrides: Vec<(String, Option<String>, i64)> = stmt.query_map(
+            params![provider_id, content_type],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?.collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        tx.execute(
+            "DELETE FROM group_hierarchy WHERE provider_id = ?1 AND content_type = ?2",
+            params![provider_id, content_type],
+        )?;
+
+        let new_group_names: std::collections::HashSet<&str> =
+            new_entries.iter().map(|(name, _, _)| *name).collect();
+        for (group_name, super_category, sort_order) in new_entries {
+            tx.execute(
+                "INSERT INTO group_hierarchy (provider_id, content_type, group_name, super_category, sort_order, is_user_override)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                params![provider_id, content_type, group_name, super_category, sort_order],
+            )?;
+        }
+
+        for (group_name, super_cat, sort_order) in &overrides {
+            if new_group_names.contains(group_name.as_str()) {
+                tx.execute(
+                    "UPDATE group_hierarchy SET super_category = ?1, sort_order = ?2, is_user_override = 1
+                     WHERE provider_id = ?3 AND content_type = ?4 AND group_name = ?5",
+                    params![super_cat, sort_order, provider_id, content_type, group_name],
+                )?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    // --- Pinned Groups ---
+
+    pub fn pin_group(&self, provider_id: &str, content_type: &str, group_name: &str, sort_order: i64) -> Result<(), CacheError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pinned_groups (provider_id, content_type, group_name, sort_order) VALUES (?1, ?2, ?3, ?4)",
+            params![provider_id, content_type, group_name, sort_order],
+        )?;
+        Ok(())
+    }
+
+    pub fn unpin_group(&self, provider_id: &str, content_type: &str, group_name: &str) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM pinned_groups WHERE provider_id = ?1 AND content_type = ?2 AND group_name = ?3",
+            params![provider_id, content_type, group_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_pinned_groups(&self, provider_id: &str, content_type: &str) -> Result<Vec<PinnedGroup>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_id, content_type, group_name, sort_order FROM pinned_groups
+             WHERE provider_id = ?1 AND content_type = ?2 ORDER BY sort_order ASC"
+        )?;
+        let pins = stmt.query_map(params![provider_id, content_type], |row| {
+            Ok(PinnedGroup {
+                provider_id: row.get(0)?,
+                content_type: row.get(1)?,
+                group_name: row.get(2)?,
+                sort_order: row.get(3)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(pins)
     }
 }
 
@@ -1645,5 +1810,59 @@ mod tests {
             .get_opensubtitles_search_cache("tt9999999", None, None, 3600)
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_group_hierarchy_roundtrip() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_group_hierarchy("prov1", "live", "US: Sports", Some("United States"), 0, false).unwrap();
+        store.save_group_hierarchy("prov1", "live", "US: News", Some("United States"), 100, false).unwrap();
+        store.save_group_hierarchy("prov1", "live", "Misc", None, 200, false).unwrap();
+
+        let entries = store.get_group_hierarchy("prov1", "live").unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].group_name, "US: Sports");
+        assert_eq!(entries[0].super_category.as_deref(), Some("United States"));
+        assert_eq!(entries[2].super_category, None);
+    }
+
+    #[test]
+    fn test_replace_group_hierarchy_preserves_overrides() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_group_hierarchy("p1", "live", "Sports", Some("US"), 0, false).unwrap();
+        store.save_group_hierarchy("p1", "live", "News", Some("US"), 100, false).unwrap();
+        // User moves News to UK
+        store.save_group_hierarchy("p1", "live", "News", Some("UK"), 0, true).unwrap();
+
+        let new_entries = vec![
+            ("Sports", Some("America"), 0i64),
+            ("News", Some("America"), 100),
+            ("Kids", Some("America"), 200),
+        ];
+        store.replace_group_hierarchy("p1", "live", &new_entries).unwrap();
+
+        let entries = store.get_group_hierarchy("p1", "live").unwrap();
+        let news = entries.iter().find(|e| e.group_name == "News").unwrap();
+        assert_eq!(news.super_category.as_deref(), Some("UK"));
+        assert!(news.is_user_override);
+        let sports = entries.iter().find(|e| e.group_name == "Sports").unwrap();
+        assert_eq!(sports.super_category.as_deref(), Some("America"));
+        assert!(!sports.is_user_override);
+    }
+
+    #[test]
+    fn test_pinned_groups_crud() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.pin_group("p1", "live", "US: Sports", 0).unwrap();
+        store.pin_group("p1", "live", "UK: News", 100).unwrap();
+
+        let pins = store.get_pinned_groups("p1", "live").unwrap();
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].group_name, "US: Sports");
+
+        store.unpin_group("p1", "live", "US: Sports").unwrap();
+        let pins = store.get_pinned_groups("p1", "live").unwrap();
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].group_name, "UK: News");
     }
 }
