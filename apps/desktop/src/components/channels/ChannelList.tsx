@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
 import { ChannelCard, ROW_CARD_LEFT_WIDTH } from "./ChannelCard";
+import { useGroupHierarchy } from "@/hooks/useGroupHierarchy";
+import { RecentlyPlayedRow } from "./RecentlyPlayedRow";
+import { PinnedGroupsRow } from "./PinnedGroupsRow";
+import { CategoryBrowser } from "./CategoryBrowser";
+import { GroupList } from "./GroupList";
+import { Breadcrumb } from "./Breadcrumb";
+import { CategoryManager } from "./CategoryManager";
 import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { HistoryTab } from "./HistoryTab";
@@ -80,7 +87,7 @@ const EpgResultLogo = ({ url }: { url?: string }) => {
 };
 
 export const ChannelList = () => {
-	const { channels, loading, toggleFavorite } = useChannels();
+	const { channels, loading, toggleFavorite, providers } = useChannels();
 	const { layoutMode } = usePlatform();
 	const navigate = useNavigate();
 
@@ -89,6 +96,18 @@ export const ChannelList = () => {
 	// Debounced search — updated 250ms after user stops typing to avoid per-keystroke re-renders
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+	// Hierarchy navigation state
+	const [navState, setNavState] = useState<
+		| { level: "home" }
+		| { level: "category"; name: string }
+		| { level: "group"; name: string; parentCategory?: string }
+	>({ level: "home" });
+	const [showCategoryManager, setShowCategoryManager] = useState(false);
+
+	const activeProviderId = providers.length > 0 ? providers[0].id : null;
+	const contentType = activeTab === "movie" ? "movie" : activeTab === "series" ? "series" : "live";
+	const hierarchy = useGroupHierarchy(activeProviderId, contentType);
 	const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 	const [seriesModalData, setSeriesModalData] = useState<{
 		showTitle: string;
@@ -212,13 +231,16 @@ export const ChannelList = () => {
 		setDebouncedSearch("");
 		setShowFavoritesOnly(false);
 		setEpgSearchResults([]);
+		setNavState({ level: "home" });
 	};
+
+	const effectiveCategory = navState.level === "group" ? navState.name : selectedCategory;
 
 	// Use debouncedSearch for filtering — prevents per-keystroke re-renders of virtualizer
 	const filtered = useMemo(() => {
 		let result = activeChannels;
-		if (selectedCategory && activeTab !== "series" && activeTab !== "favorites") {
-			result = result.filter((ch) => ch.groupTitle === selectedCategory);
+		if (effectiveCategory && activeTab !== "series" && activeTab !== "favorites") {
+			result = result.filter((ch) => ch.groupTitle === effectiveCategory);
 		}
 		if (debouncedSearch.trim()) {
 			const lower = debouncedSearch.toLowerCase();
@@ -228,7 +250,7 @@ export const ChannelList = () => {
 			result = result.filter((ch) => ch.isFavorite === true);
 		}
 		return result;
-	}, [activeChannels, selectedCategory, debouncedSearch, activeTab, showFavoritesOnly]);
+	}, [activeChannels, effectiveCategory, debouncedSearch, activeTab, showFavoritesOnly]);
 
 	// Fetch EPG for all live channels: 2h past + 4h future = 6h window (generous for wider displays)
 	useEffect(() => {
@@ -389,6 +411,8 @@ export const ChannelList = () => {
 
 	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
 	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
+	// Show channel list only when: no hierarchy (flat mode), or drilled into a group, or on favorites/history
+	const showChannelList = !hierarchy.hasHierarchy || navState.level === "group" || activeTab === "favorites" || activeTab === "history";
 	const nowSec = Math.floor(Date.now() / 1000);
 
 	// Grid marks for sticky header and background gridlines (uses same window as ChannelCard)
@@ -491,22 +515,95 @@ export const ChannelList = () => {
 				)}
 			</div>
 
-			{/* Category filter */}
-			{categories.length > 1 &&
-				activeTab !== "series" &&
-				activeTab !== "favorites" &&
-				activeTab !== "history" && (
-					<div className="shrink-0 px-3 pt-2.5">
-						<CategoryFilter
-							categories={categories}
-							selected={selectedCategory}
-							onSelect={setSelectedCategory}
-						/>
-					</div>
-				)}
+			{/* Hierarchy navigation — replaces flat CategoryFilter */}
+			{activeTab !== "favorites" && activeTab !== "history" && hierarchy.loaded && (
+				<div className="shrink-0">
+					{navState.level === "home" && (
+						<>
+							<RecentlyPlayedRow contentType={contentType as "live" | "movie" | "series"} onPlay={handleHistoryPlay} />
+							<PinnedGroupsRow
+								pinnedGroups={hierarchy.pinnedGroups}
+								categories={categories}
+								selectedGroup={null}
+								onSelectGroup={(name) => setNavState({ level: "group", name })}
+								onUnpin={hierarchy.unpinGroup}
+							/>
+							{hierarchy.hasHierarchy ? (
+								<CategoryBrowser
+									superCategories={hierarchy.superCategories.map((name) => {
+										const groups = hierarchy.getGroupsForCategory(name);
+										return {
+											name,
+											groupCount: groups.length,
+											channelCount: groups.reduce(
+												(sum, g) => sum + (categories.find((c) => c.name === g)?.channelCount ?? 0), 0,
+											),
+										};
+									})}
+									topLevelGroups={hierarchy.topLevelGroups.map((name) => ({
+										name,
+										channelCount: categories.find((c) => c.name === name)?.channelCount ?? 0,
+									}))}
+									onSelectCategory={(name) => setNavState({ level: "category", name })}
+									onSelectGroup={(name) => setNavState({ level: "group", name })}
+									onManage={() => setShowCategoryManager(true)}
+								/>
+							) : categories.length > 1 ? (
+								<div className="px-3 pt-2.5">
+									<CategoryFilter
+										categories={categories}
+										selected={selectedCategory}
+										onSelect={setSelectedCategory}
+									/>
+								</div>
+							) : null}
+							{!hierarchy.hasHierarchy && hierarchy.entries.length === 0 && categories.length > 1 && (
+								<div className="mx-4 mt-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+									<p className="text-muted-foreground">Channels not categorized yet.</p>
+									<button
+										onClick={() => setShowCategoryManager(true)}
+										className="text-primary hover:underline text-xs mt-1"
+									>
+										Use AI to organize channels?
+									</button>
+								</div>
+							)}
+						</>
+					)}
+					{navState.level === "category" && (
+						<>
+							<Breadcrumb path={[
+								{ label: "All Categories", onClick: () => setNavState({ level: "home" }) },
+								{ label: navState.name },
+							]} />
+							<GroupList
+								groups={hierarchy.getGroupsForCategory(navState.name).filter(
+									(g) => !debouncedSearch || g.toLowerCase().includes(debouncedSearch.toLowerCase())
+								)}
+								categories={categories}
+								onSelectGroup={(name) => setNavState({ level: "group", name, parentCategory: navState.name })}
+								isPinned={hierarchy.isPinned}
+								onTogglePin={(name) => hierarchy.isPinned(name) ? hierarchy.unpinGroup(name) : hierarchy.pinGroup(name)}
+							/>
+						</>
+					)}
+					{navState.level === "group" && (
+						<Breadcrumb path={[
+							...(navState.parentCategory
+								? [
+									{ label: "All Categories", onClick: () => setNavState({ level: "home" }) },
+									{ label: navState.parentCategory, onClick: () => setNavState({ level: "category", name: navState.parentCategory! }) },
+								]
+								: [{ label: "All Categories", onClick: () => setNavState({ level: "home" }) }]
+							),
+							{ label: navState.name },
+						]} />
+					)}
+				</div>
+			)}
 
 			{/* Result count */}
-			{activeTab !== "history" && !isLiveSearch && (
+			{activeTab !== "history" && !isLiveSearch && showChannelList && (
 				<div className="shrink-0 px-3 pt-2 pb-1">
 					<span className="text-xs text-muted-foreground">
 						{filtered.length.toLocaleString()} {countLabel}
@@ -774,6 +871,9 @@ export const ChannelList = () => {
 						</p>
 					)}
 				</div>
+			) : !showChannelList ? (
+				/* Hierarchy navigation is active — channel list hidden until group is selected */
+				<div className="flex-1" />
 			) : (
 				/* Virtualised list — live/movie/series tabs */
 				<div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
@@ -879,6 +979,18 @@ export const ChannelList = () => {
 							})}
 						</div>
 					)}
+				</div>
+			)}
+
+			{showCategoryManager && activeProviderId && (
+				<div className="absolute inset-0 z-50 bg-background">
+					<CategoryManager
+						providerId={activeProviderId}
+						contentType={contentType}
+						channels={channels}
+						onClose={() => setShowCategoryManager(false)}
+						onHierarchyChanged={() => hierarchy.reload()}
+					/>
 				</div>
 			)}
 		</div>

@@ -193,23 +193,42 @@ export const clearWatchHistory = (): Promise<void> => invoke<void>("clear_watch_
 
 // --- Group Hierarchy Commands ---
 
-export const getGroupHierarchy = (providerId: string, contentType: string): Promise<GroupHierarchyEntry[]> =>
+export const getGroupHierarchy = (
+	providerId: string,
+	contentType: string
+): Promise<GroupHierarchyEntry[]> =>
 	invoke<GroupHierarchyEntry[]>("get_group_hierarchy", { providerId, contentType });
 
 export const updateGroupHierarchyEntry = (
-	providerId: string, contentType: string, groupName: string,
-	newSuperCategory: string | null, newSortOrder: number,
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	newSuperCategory: string | null,
+	newSortOrder: number
 ): Promise<void> =>
-	invoke("update_group_hierarchy_entry", { providerId, contentType, groupName, newSuperCategory, newSortOrder });
+	invoke("update_group_hierarchy_entry", {
+		providerId,
+		contentType,
+		groupName,
+		newSuperCategory,
+		newSortOrder,
+	});
 
 export const deleteGroupHierarchy = (providerId: string, contentType: string): Promise<void> =>
 	invoke("delete_group_hierarchy", { providerId, contentType });
 
-export const pinGroup = (providerId: string, contentType: string, groupName: string, sortOrder: number): Promise<void> =>
-	invoke("pin_group", { providerId, contentType, groupName, sortOrder });
+export const pinGroup = (
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	sortOrder: number
+): Promise<void> => invoke("pin_group", { providerId, contentType, groupName, sortOrder });
 
-export const unpinGroup = (providerId: string, contentType: string, groupName: string): Promise<void> =>
-	invoke("unpin_group", { providerId, contentType, groupName });
+export const unpinGroup = (
+	providerId: string,
+	contentType: string,
+	groupName: string
+): Promise<void> => invoke("unpin_group", { providerId, contentType, groupName });
 
 export const getPinnedGroups = (providerId: string, contentType: string): Promise<PinnedGroup[]> =>
 	invoke<PinnedGroup[]>("get_pinned_groups", { providerId, contentType });
@@ -226,7 +245,14 @@ export const testGeminiApiKey = (key: string): Promise<boolean> =>
 	invoke<boolean>("test_gemini_api_key", { key });
 
 export const categorizeProvider = (
-	providerId: string, contentType: string, apiKey: string,
-	groupsWithSamples: [string, string[]][],
+	providerId: string,
+	contentType: string,
+	apiKey: string,
+	groupsWithSamples: [string, string[]][]
 ): Promise<GroupHierarchyEntry[]> =>
-	invoke<GroupHierarchyEntry[]>("categorize_provider", { providerId, contentType, apiKey, groupsWithSamples });
+	invoke<GroupHierarchyEntry[]>("categorize_provider", {
+		providerId,
+		contentType,
+		apiKey,
+		groupsWithSamples,
+	});
