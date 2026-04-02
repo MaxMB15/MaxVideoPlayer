@@ -418,9 +418,7 @@ export const ChannelList = () => {
 		? Math.max(2, Math.floor((gridWidth + GAP_PX) / (MIN_CARD_W + GAP_PX)))
 		: 1;
 	// Card height: image (aspect 2:1 = width/2) + title (~28px) + margin (~10px)
-	const cardWidth = isGrid
-		? (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow
-		: 0;
+	const cardWidth = isGrid ? (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow : 0;
 	const gridRowHeight = isGrid ? Math.round(cardWidth / 2 + 38) : 48;
 	const rowCount =
 		activeTab === "favorites" || activeTab === "history"
@@ -433,11 +431,6 @@ export const ChannelList = () => {
 		estimateSize: () => gridRowHeight,
 		overscan: 4,
 	});
-
-	// Force virtualizer to re-measure when column layout changes on resize
-	useEffect(() => {
-		virtualizer.measure();
-	}, [columnsPerRow, gridRowHeight, virtualizer]);
 
 	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
 	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
@@ -962,7 +955,7 @@ export const ChannelList = () => {
 				</div>
 			) : !showChannelList ? null : (
 				/* Virtualised list — live/movie/series tabs */
-				<div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
+				<div key={columnsPerRow} ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
 					{filtered.length === 0 && showFavoritesOnly ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
 							<Heart className="h-10 w-10 text-muted-foreground/30" />
