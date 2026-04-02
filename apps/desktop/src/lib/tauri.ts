@@ -191,6 +191,8 @@ export const deleteHistoryEntry = (channelId: string): Promise<void> =>
 
 export const clearWatchHistory = (): Promise<void> => invoke<void>("clear_watch_history");
 
+export const clearAllCaches = (): Promise<void> => invoke<void>("clear_all_caches");
+
 // --- Group Hierarchy Commands ---
 
 export const getGroupHierarchy = (
@@ -198,6 +200,19 @@ export const getGroupHierarchy = (
 	contentType: string
 ): Promise<GroupHierarchyEntry[]> =>
 	invoke<GroupHierarchyEntry[]>("get_group_hierarchy", { providerId, contentType });
+
+export const reorderGroupHierarchyEntry = (
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	newSortOrder: number
+): Promise<void> =>
+	invoke("reorder_group_hierarchy_entry", {
+		providerId,
+		contentType,
+		groupName,
+		newSortOrder,
+	});
 
 export const updateGroupHierarchyEntry = (
 	providerId: string,
@@ -256,3 +271,31 @@ export const categorizeProvider = (
 		apiKey,
 		groupsWithSamples,
 	});
+
+export const fixUncategorizedGroups = (
+	providerId: string,
+	contentType: string,
+	apiKey: string,
+	uncategorizedGroups: [string, string[]][],
+	existingCategories: string[]
+): Promise<GroupHierarchyEntry[]> =>
+	invoke<GroupHierarchyEntry[]>("fix_uncategorized_groups", {
+		providerId,
+		contentType,
+		apiKey,
+		uncategorizedGroups,
+		existingCategories,
+	});
+
+export const renameSuperCategory = (
+	providerId: string,
+	contentType: string,
+	oldName: string,
+	newName: string
+): Promise<void> => invoke("rename_super_category", { providerId, contentType, oldName, newName });
+
+export const deleteSuperCategory = (
+	providerId: string,
+	contentType: string,
+	categoryName: string
+): Promise<void> => invoke("delete_super_category", { providerId, contentType, categoryName });

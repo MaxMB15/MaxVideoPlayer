@@ -11,7 +11,8 @@ pub fn run() {
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("max_video_player=debug".parse().unwrap())
-                .add_directive("tauri_plugin_mpv=debug".parse().unwrap()),
+                .add_directive("tauri_plugin_mpv=debug".parse().unwrap())
+                .add_directive("mvp_core=debug".parse().unwrap()),
         )
         .init();
 
@@ -69,6 +70,11 @@ pub fn run() {
             commands::set_gemini_api_key,
             commands::test_gemini_api_key,
             commands::categorize_provider,
+            commands::clear_all_caches,
+            commands::reorder_group_hierarchy_entry,
+            commands::fix_uncategorized_groups,
+            commands::rename_super_category,
+            commands::delete_super_category,
         ])
         .setup(|app| {
             let app_dir = app

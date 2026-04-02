@@ -956,7 +956,31 @@ impl CacheStore {
         Ok(())
     }
 
+    pub fn clear_all_caches(&self) -> Result<(), CacheError> {
+        self.conn.execute("DELETE FROM omdb_cache", [])?;
+        self.conn.execute("DELETE FROM mdblist_cache", [])?;
+        self.conn.execute("DELETE FROM opensubtitles_search_cache", [])?;
+        self.conn.execute("DELETE FROM whatson_cache", [])?;
+        self.conn.execute("DELETE FROM epg_programmes", [])?;
+        Ok(())
+    }
+
     // --- Group Hierarchy ---
+
+    pub fn update_group_sort_order(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+        group_name: &str,
+        sort_order: i64,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE group_hierarchy SET sort_order = ?1
+             WHERE provider_id = ?2 AND content_type = ?3 AND group_name = ?4",
+            params![sort_order, provider_id, content_type, group_name],
+        )?;
+        Ok(())
+    }
 
     pub fn save_group_hierarchy(
         &self,
@@ -1044,6 +1068,35 @@ impl CacheStore {
         }
 
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn rename_super_category(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE group_hierarchy SET super_category = ?1
+             WHERE provider_id = ?2 AND content_type = ?3 AND super_category = ?4",
+            params![new_name, provider_id, content_type, old_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_super_category(
+        &self,
+        provider_id: &str,
+        content_type: &str,
+        category_name: &str,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "UPDATE group_hierarchy SET super_category = NULL
+             WHERE provider_id = ?1 AND content_type = ?2 AND super_category = ?3",
+            params![provider_id, content_type, category_name],
+        )?;
         Ok(())
     }
 

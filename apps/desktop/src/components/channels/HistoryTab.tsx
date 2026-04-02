@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Trash2, Loader2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getWatchHistory, deleteHistoryEntry, clearWatchHistory } from "@/lib/tauri";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type { WatchHistoryEntry } from "@/lib/types";
 
 interface HistoryTabProps {
@@ -84,7 +85,11 @@ export const HistoryTab = ({ onPlay }: HistoryTabProps) => {
 	);
 
 	const handleClearAll = useCallback(async () => {
-		if (!window.confirm("Clear all watch history?")) return;
+		const confirmed = await ask("Clear all watch history?", {
+			title: "Clear History",
+			kind: "warning",
+		});
+		if (!confirmed) return;
 		try {
 			await clearWatchHistory();
 			setEntries([]);

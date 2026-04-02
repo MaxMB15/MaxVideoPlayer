@@ -31,7 +31,9 @@ import {
 	getGeminiApiKey,
 	setGeminiApiKey,
 	testGeminiApiKey,
+	clearAllCaches,
 } from "@/lib/tauri";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved";
@@ -105,6 +107,11 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const [historyError, setHistoryError] = useState<string | null>(null);
 	const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Cache state
+	const [cacheStatus, setCacheStatus] = useState<HistoryStatus>("idle");
+	const [cacheError, setCacheError] = useState<string | null>(null);
+	const cacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	useEffect(() => {
 		getVersion()
 			.then(setAppVersion)
@@ -128,6 +135,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 			if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
 			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
 			if (geminiSaveTimerRef.current) clearTimeout(geminiSaveTimerRef.current);
+			if (cacheTimerRef.current) clearTimeout(cacheTimerRef.current);
 		};
 	}, []);
 
@@ -219,12 +227,11 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	};
 
 	const handleClearHistory = async () => {
-		if (
-			!window.confirm(
-				"Are you sure you want to clear all watch history? This cannot be undone."
-			)
-		)
-			return;
+		const confirmed = await ask(
+			"Are you sure you want to clear all watch history? This cannot be undone.",
+			{ title: "Clear History", kind: "warning" }
+		);
+		if (!confirmed) return;
 		try {
 			await clearWatchHistory();
 			setHistoryStatus("cleared");
@@ -233,6 +240,23 @@ export const Settings = ({ updateState }: SettingsProps) => {
 			historyTimerRef.current = setTimeout(() => setHistoryStatus("idle"), 2000);
 		} catch {
 			setHistoryError("Failed to clear history. Please try again.");
+		}
+	};
+
+	const handleClearCaches = async () => {
+		const confirmed = await ask(
+			"Clear all cached data (OMDB, MDBList, OpenSubtitles, EPG)? This cannot be undone.",
+			{ title: "Clear Caches", kind: "warning" }
+		);
+		if (!confirmed) return;
+		try {
+			await clearAllCaches();
+			setCacheStatus("cleared");
+			setCacheError(null);
+			if (cacheTimerRef.current) clearTimeout(cacheTimerRef.current);
+			cacheTimerRef.current = setTimeout(() => setCacheStatus("idle"), 2000);
+		} catch {
+			setCacheError("Failed to clear caches. Please try again.");
 		}
 	};
 
@@ -609,6 +633,32 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							{historyError && (
 								<p className="text-xs text-destructive">{historyError}</p>
 							)}
+						</div>
+					</CardContent>
+				</Card>
+
+				{/* Cache section */}
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-base">Cache</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<div className="space-y-2">
+							<p className="text-xs text-muted-foreground">
+								Clears all cached metadata (OMDB, MDBList, OpenSubtitles, WhatsonTV,
+								EPG). Channel data and settings are not affected.
+							</p>
+							<div className="flex items-center gap-4">
+								<Button variant="destructive" size="sm" onClick={handleClearCaches}>
+									Clear All Caches…
+								</Button>
+								{cacheStatus === "cleared" && (
+									<span className="flex items-center gap-1 text-xs text-green-500">
+										<CheckCircle className="h-3 w-3" /> Caches cleared
+									</span>
+								)}
+							</div>
+							{cacheError && <p className="text-xs text-destructive">{cacheError}</p>}
 						</div>
 					</CardContent>
 				</Card>
