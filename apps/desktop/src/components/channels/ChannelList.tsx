@@ -410,17 +410,18 @@ export const ChannelList = () => {
 	}, [filtered]);
 
 	const isGrid = activeTab !== "live";
-	// Dynamic columns: target ~2:1 width:height ratio (ideal card width ~240px).
-	// containerWidth is the outer div; the grid lives inside px-3 (24px total padding).
-	const gridWidth = (containerWidth > 0 ? containerWidth : 800) - 24;
-	const GAP_PX = 12; // gap-3
+	// Dynamic grid columns: fit as many ~180 px-wide cards as possible, stretch via 1fr.
+	const gridWidth = (containerWidth > 0 ? containerWidth : 800) - 24; // minus px-3 padding
+	const GAP_PX = 12;
 	const MIN_CARD_W = 180;
 	const columnsPerRow = isGrid
 		? Math.max(2, Math.floor((gridWidth + GAP_PX) / (MIN_CARD_W + GAP_PX)))
 		: 1;
-	// Card height: image (aspect 2:1 = width/2) + title (~28px) + margin (6px from mb-1.5)
-	const cardWidth = (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow;
-	const gridRowHeight = isGrid ? Math.round(cardWidth / 2 + 34 + 4) : 48;
+	// Card height: image (aspect 2:1 = width/2) + title (~28px) + margin (~10px)
+	const cardWidth = isGrid
+		? (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow
+		: 0;
+	const gridRowHeight = isGrid ? Math.round(cardWidth / 2 + 38) : 48;
 	const rowCount =
 		activeTab === "favorites" || activeTab === "history"
 			? 0
@@ -433,7 +434,7 @@ export const ChannelList = () => {
 		overscan: 4,
 	});
 
-	// Force virtualizer to re-measure when column count or row height changes (e.g. on resize)
+	// Force virtualizer to re-measure when column layout changes on resize
 	useEffect(() => {
 		virtualizer.measure();
 	}, [columnsPerRow, gridRowHeight, virtualizer]);
