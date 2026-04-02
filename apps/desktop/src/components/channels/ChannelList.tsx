@@ -120,23 +120,41 @@ export const ChannelList = () => {
 	// EPG search: one result per channel (earliest matching program)
 	const [epgSearchResults, setEpgSearchResults] = useState<EpgSearchResult[]>([]);
 
-	// Container width → dynamic EPG window
+	// Container width → dynamic EPG window + grid column calculation
 	const [containerWidth, setContainerWidth] = useState(0);
 	/** Root div ref — always in DOM; drives ResizeObserver for dynamic EPG window. */
 	const rootRef = useRef<HTMLDivElement>(null);
 	/** Virtualizer scroll ref — kept for TanStack Virtual scroll element. */
 	const parentRef = useRef<HTMLDivElement>(null);
 
-	// Measure container width with ResizeObserver on the root div (always in DOM,
-	// unlike parentRef which is only rendered in the virtualizer path).
-	useEffect(() => {
+	const measureRoot = useCallback(() => {
 		const el = rootRef.current;
-		if (!el) return;
-		const obs = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
-		obs.observe(el);
-		setContainerWidth(el.clientWidth);
-		return () => obs.disconnect();
+		if (el) setContainerWidth(el.clientWidth);
 	}, []);
+
+	// Measure container width: ResizeObserver on root + window resize fallback
+	useEffect(() => {
+		measureRoot();
+		// Re-measure after layout settles (fonts, flex, etc.)
+		requestAnimationFrame(measureRoot);
+
+		const el = rootRef.current;
+		const obs = el
+			? new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width))
+			: null;
+		if (el && obs) obs.observe(el);
+		window.addEventListener("resize", measureRoot);
+
+		return () => {
+			obs?.disconnect();
+			window.removeEventListener("resize", measureRoot);
+		};
+	}, [measureRoot]);
+
+	// Re-measure when switching tabs (the grid area may have a different width)
+	useEffect(() => {
+		measureRoot();
+	}, [activeTab, measureRoot]);
 
 	// Compute dynamic EPG display window: now line at 1/3 mark, 100–200 px per hour
 	const { windowStart, windowEnd } = useMemo(() => {
@@ -955,7 +973,11 @@ export const ChannelList = () => {
 				</div>
 			) : !showChannelList ? null : (
 				/* Virtualised list — live/movie/series tabs */
-				<div key={columnsPerRow} ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
+				<div
+					key={columnsPerRow}
+					ref={parentRef}
+					className="flex-1 overflow-auto scrollbar-hide px-3 pb-3"
+				>
 					{filtered.length === 0 && showFavoritesOnly ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
 							<Heart className="h-10 w-10 text-muted-foreground/30" />
