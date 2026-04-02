@@ -414,9 +414,9 @@ export const ChannelList = () => {
 	// containerWidth is the outer div; the grid lives inside px-3 (24px total padding).
 	const gridWidth = (containerWidth > 0 ? containerWidth : 800) - 24;
 	const GAP_PX = 12; // gap-3
-	const IDEAL_W = 240;
+	const MIN_CARD_W = 180;
 	const columnsPerRow = isGrid
-		? Math.max(2, Math.round((gridWidth + GAP_PX) / (IDEAL_W + GAP_PX)))
+		? Math.max(2, Math.floor((gridWidth + GAP_PX) / (MIN_CARD_W + GAP_PX)))
 		: 1;
 	// Card height: image (aspect 2:1 = width/2) + title (~28px) + margin (6px from mb-1.5)
 	const cardWidth = (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow;
@@ -432,6 +432,11 @@ export const ChannelList = () => {
 		estimateSize: () => gridRowHeight,
 		overscan: 4,
 	});
+
+	// Force virtualizer to re-measure when column count or row height changes (e.g. on resize)
+	useEffect(() => {
+		virtualizer.measure();
+	}, [columnsPerRow, gridRowHeight, virtualizer]);
 
 	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
 	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
