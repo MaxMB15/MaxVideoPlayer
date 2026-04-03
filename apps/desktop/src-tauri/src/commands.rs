@@ -1,4 +1,4 @@
-use mvp_core::cache::store::{CacheStore, WatchHistoryEntry};
+use mvp_core::cache::store::{CacheStore, GroupHierarchyEntry, PinnedGroup, WatchHistoryEntry};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
@@ -922,6 +922,12 @@ pub async fn clear_watch_history(state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[command]
+pub async fn clear_all_caches(state: State<'_, AppState>) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.clear_all_caches().map_err(|e| e.to_string())
+}
+
+#[command]
 pub async fn read_subtitle_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
@@ -937,4 +943,222 @@ fn uuid_simple() -> String {
 
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+// --- Group Hierarchy Commands ---
+
+#[command]
+pub async fn get_group_hierarchy(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+) -> Result<Vec<GroupHierarchyEntry>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.get_group_hierarchy(&provider_id, &content_type).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn reorder_group_hierarchy_entry(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    group_name: String,
+    new_sort_order: i64,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.update_group_sort_order(&provider_id, &content_type, &group_name, new_sort_order)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn update_group_hierarchy_entry(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    group_name: String,
+    new_super_category: Option<String>,
+    new_sort_order: i64,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.save_group_hierarchy(
+        &provider_id, &content_type, &group_name,
+        new_super_category.as_deref(), new_sort_order, true,
+    ).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn delete_group_hierarchy(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.replace_group_hierarchy(&provider_id, &content_type, &[]).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn pin_group(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    group_name: String,
+    sort_order: i64,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.pin_group(&provider_id, &content_type, &group_name, sort_order).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn unpin_group(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    group_name: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.unpin_group(&provider_id, &content_type, &group_name).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn get_pinned_groups(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+) -> Result<Vec<PinnedGroup>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.get_pinned_groups(&provider_id, &content_type).map_err(|e| e.to_string())
+}
+
+// --- Gemini API Commands ---
+
+const GEMINI_STORE_FILE: &str = "gemini.json";
+const GEMINI_KEY: &str = "apiKey";
+
+#[command]
+pub async fn get_gemini_api_key<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    let store = app.store(GEMINI_STORE_FILE).map_err(|e| e.to_string())?;
+    Ok(store.get(GEMINI_KEY).and_then(|v| v.as_str().map(|s| s.to_string())))
+}
+
+#[command]
+pub async fn set_gemini_api_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
+    let store = app.store(GEMINI_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(GEMINI_KEY, serde_json::Value::String(key));
+    store.save().map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn test_gemini_api_key(key: String) -> Result<bool, String> {
+    mvp_core::ai::gemini::test_gemini_key(&key).await.map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn categorize_provider(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    api_key: String,
+    groups_with_samples: Vec<(String, Vec<String>)>,
+) -> Result<Vec<GroupHierarchyEntry>, String> {
+    let groups_ref: Vec<(&str, Vec<&str>)> = groups_with_samples.iter()
+        .map(|(g, s)| (g.as_str(), s.iter().map(|x| x.as_str()).collect()))
+        .collect();
+    let prompt = mvp_core::ai::gemini::build_categorization_prompt(&content_type, &groups_ref);
+
+    let known_groups: Vec<&str> = groups_with_samples.iter().map(|(g, _)| g.as_str()).collect();
+    let mut last_err = String::new();
+    for _ in 0..2 {
+        match mvp_core::ai::gemini::call_gemini(&api_key, &prompt).await {
+            Ok(json) => {
+                match mvp_core::ai::gemini::parse_categorization_response(&json, &known_groups) {
+                    Ok(result) => {
+                        let mut entries: Vec<(&str, Option<&str>, i64)> = result.hierarchy.iter()
+                            .map(|h| (h.group_name.as_str(), h.super_category.as_deref(), h.sort_order))
+                            .collect();
+                        let mut ungrouped_order = entries.last().map(|e| e.2 + 100).unwrap_or(0);
+                        for name in &result.ungrouped {
+                            entries.push((name.as_str(), None, ungrouped_order));
+                            ungrouped_order += 100;
+                        }
+
+                        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+                        cache.replace_group_hierarchy(&provider_id, &content_type, &entries)
+                            .map_err(|e| e.to_string())?;
+
+                        return cache.get_group_hierarchy(&provider_id, &content_type)
+                            .map_err(|e| e.to_string());
+                    }
+                    Err(e) => { last_err = e.to_string(); continue; }
+                }
+            }
+            Err(e) => { last_err = e.to_string(); continue; }
+        }
+    }
+    Err(format!("Categorization failed: {}", last_err))
+}
+
+#[command]
+pub async fn fix_uncategorized_groups(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    api_key: String,
+    uncategorized_groups: Vec<(String, Vec<String>)>,
+    existing_categories: Vec<String>,
+) -> Result<Vec<GroupHierarchyEntry>, String> {
+    let groups_ref: Vec<(&str, Vec<&str>)> = uncategorized_groups.iter()
+        .map(|(g, s)| (g.as_str(), s.iter().map(|x| x.as_str()).collect()))
+        .collect();
+    let cats_ref: Vec<&str> = existing_categories.iter().map(|s| s.as_str()).collect();
+    let prompt = mvp_core::ai::gemini::build_fix_uncategorized_prompt(&groups_ref, &cats_ref);
+
+    let known: Vec<&str> = uncategorized_groups.iter().map(|(g, _)| g.as_str()).collect();
+    let mut last_err = String::new();
+    for _ in 0..2 {
+        match mvp_core::ai::gemini::call_gemini(&api_key, &prompt).await {
+            Ok(json) => {
+                match mvp_core::ai::gemini::parse_assignment_response(&json, &known, &cats_ref) {
+                    Ok(assignments) => {
+                        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+                        for a in &assignments {
+                            cache.save_group_hierarchy(
+                                &provider_id, &content_type, &a.group_name,
+                                Some(&a.category), 0, false,
+                            ).map_err(|e| e.to_string())?;
+                        }
+                        return cache.get_group_hierarchy(&provider_id, &content_type)
+                            .map_err(|e| e.to_string());
+                    }
+                    Err(e) => { last_err = e.to_string(); continue; }
+                }
+            }
+            Err(e) => { last_err = e.to_string(); continue; }
+        }
+    }
+    Err(format!("Fix uncategorized failed: {}", last_err))
+}
+
+#[command]
+pub async fn rename_super_category(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.rename_super_category(&provider_id, &content_type, &old_name, &new_name)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn delete_super_category(
+    state: State<'_, AppState>,
+    provider_id: String,
+    content_type: String,
+    category_name: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.delete_super_category(&provider_id, &content_type, &category_name)
+        .map_err(|e| e.to_string())
 }

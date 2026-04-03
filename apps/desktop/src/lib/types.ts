@@ -161,3 +161,19 @@ export interface SubtitleCue {
 
 export type Platform = "macos" | "ios" | "android" | "windows" | "linux";
 export type LayoutMode = "desktop" | "mobile" | "tv";
+
+export interface GroupHierarchyEntry {
+	providerId: string;
+	contentType: string;
+	groupName: string;
+	superCategory: string | null;
+	sortOrder: number;
+	isUserOverride: boolean;
+}
+
+export interface PinnedGroup {
+	providerId: string;
+	contentType: string;
+	groupName: string;
+	sortOrder: number;
+}

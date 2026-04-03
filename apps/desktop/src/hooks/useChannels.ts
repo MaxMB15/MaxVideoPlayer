@@ -281,7 +281,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 	const refreshEpgApiRef = useRef(refreshEpgApi);
 	useEffect(() => {
 		refreshEpgApiRef.current = refreshEpgApi;
-	}, [refreshEpgApi]);
+	}, []);
 
 	// Poll every 60s to check if any provider/EPG is due for refresh.
 	// Using a ref-based approach avoids resetting timers on every providers update.
@@ -318,7 +318,7 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		tick(); // fire immediately on mount
 		const id = setInterval(tick, 60_000);
 		return () => clearInterval(id);
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+	}, []);
 
 	return {
 		channels,

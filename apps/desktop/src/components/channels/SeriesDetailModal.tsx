@@ -93,7 +93,7 @@ export const SeriesDetailModal = ({
 			})
 			.catch(() => {})
 			.finally(() => setOmdbLoading(false));
-	}, [firstEp?.id, showTitle]);
+	}, [firstEp, prefetchedOmdbData, showTitle]);
 
 	const handleClose = () => {
 		setVisible(false);

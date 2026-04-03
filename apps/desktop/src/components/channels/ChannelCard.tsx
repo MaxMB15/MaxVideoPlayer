@@ -163,7 +163,7 @@ const PosterCard = ({
 				onClick={() => onPlay(channel)}
 				className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg w-full"
 			>
-				<div className="relative w-full h-24 rounded-lg overflow-hidden mb-1.5 border border-border/40">
+				<div className="relative w-full aspect-[2/1] rounded-lg overflow-hidden mb-1.5 border border-border/40">
 					{!showFallback ? (
 						<img
 							src={channel.logoUrl}

@@ -177,6 +177,7 @@ export const PlayerView = () => {
 				} catch {}
 			}
 		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on URL only; re-running on mpv/channel refs would cause loops
 	}, [navState?.url]);
 
 	// Persist last active channel and series episode list so they can be restored when navigating back
@@ -237,6 +238,7 @@ export const PlayerView = () => {
 		return () => {
 			cancelled = true;
 		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on ID only to avoid re-fetching when channel object ref changes
 	}, [activeChannel?.id]);
 
 	const activeImdbId = enrichedMeta?.omdbData?.imdbId ?? null;
@@ -291,7 +293,6 @@ export const PlayerView = () => {
 		return () => {
 			cancelled = true;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [autoLoadTrigger, activeImdbId]);
 
 	const handleSelectChannel = useCallback(
@@ -316,7 +317,7 @@ export const PlayerView = () => {
 			setSelectedSubtitleId(null);
 			setSubtitleCues([]);
 		},
-		[mpv.load]
+		[mpv]
 	);
 
 	// --- Series episode navigation ---
@@ -368,7 +369,7 @@ export const PlayerView = () => {
 			// Increment trigger so the auto-load effect fires for this episode.
 			setAutoLoadTrigger((t) => t + 1);
 		},
-		[mpv.load]
+		[mpv]
 	);
 
 	// --- Autoplay next episode ---
