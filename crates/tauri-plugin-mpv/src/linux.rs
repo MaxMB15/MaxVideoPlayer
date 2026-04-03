@@ -135,8 +135,9 @@ struct WaylandState {
     subsurface: WlSubsurface,
     /// The child wl_surface that mpv renders into.
     child_surface: WlSurface,
-    /// Event queue used during init; kept alive to keep protocol objects valid.
-    _queue: EventQueue<WlGlobals>,
+    /// Event queue — must be periodically dispatched to drain compositor events
+    /// (buffer release, surface enter/leave) and avoid protocol errors.
+    queue: EventQueue<WlGlobals>,
     /// Keeps the Wayland connection alive (owns the fd reference). Dropped last.
     conn: Connection,
     /// Last known frame rect so we can restore position after un-hide.
@@ -631,8 +632,26 @@ impl LinuxGlRenderer {
         const EGL_PLATFORM_WAYLAND_EXT: u32 = 0x31D8;
         let egl_display = Self::get_wayland_egl_display(egl, wl_display_ptr, EGL_PLATFORM_WAYLAND_EXT)?;
 
-        egl.initialize(egl_display)
-            .map_err(|e| format!("Wayland eglInitialize: {:?}", e))?;
+        // On Wayland, GTK/GDK may share the same EGLDisplay. eglInitialize is
+        // idempotent per spec (bumps refcount), but some Mesa driver versions
+        // crash on double-init of a shared display. Check if already initialized
+        // by querying EGL_VERSION; only initialize if not yet done.
+        match egl.query_string(Some(egl_display), egl::VERSION) {
+            Ok(ver) => {
+                tracing::debug!(
+                    "[Linux renderer] EGL display already initialized (version {:?}), skipping eglInitialize",
+                    ver
+                );
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "[Linux renderer] EGL display not yet initialized ({:?}), calling eglInitialize",
+                    e
+                );
+                egl.initialize(egl_display)
+                    .map_err(|e| format!("Wayland eglInitialize: {:?}", e))?;
+            }
+        }
 
         let config_attribs = [
             egl::RED_SIZE,
@@ -699,7 +718,7 @@ impl LinuxGlRenderer {
             wl_egl_surface,
             subsurface,
             child_surface,
-            _queue: queue,
+            queue,
             conn,
             last_frame: (0, 0, 1, 1),
         };
@@ -778,33 +797,7 @@ impl LinuxGlRenderer {
 impl PlatformRenderer for LinuxGlRenderer {
     fn attach(&mut self, mpv: &mut Mpv) -> Result<(), String> {
         let egl = egl_instance();
-
-        egl.make_current(
-            self.egl_display,
-            Some(self.egl_surface),
-            Some(self.egl_surface),
-            Some(self.egl_context),
-        )
-        .map_err(|e| format!("eglMakeCurrent: {:?}", e))?;
-
-        // Load GL function pointers once (for glViewport/glClear in render_frame).
-        gl::load_with(|name| gl_get_proc_address(name) as *const _);
-
-        fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
-            gl_get_proc_address(name)
-        }
-
-        let render_ctx = RenderContext::new(
-            unsafe { &mut *mpv.ctx.as_ptr() },
-            vec![
-                RenderParam::ApiType(RenderParamApiType::OpenGl),
-                RenderParam::InitParams(OpenGLInitParams {
-                    get_proc_address,
-                    ctx: std::ptr::null_mut(),
-                }),
-            ],
-        )
-        .map_err(|e| format!("mpv_render_context_create: {}", e))?;
+        let is_wayland = self.wayland.is_some();
 
         // Get wl_egl_surface pointer for render_frame to apply pending resizes.
         let wl_egl_surface_ptr = self
@@ -813,6 +806,135 @@ impl PlatformRenderer for LinuxGlRenderer {
             .map(|wl| &wl.wl_egl_surface as *const WlEglSurface as usize)
             .unwrap_or(0);
 
+        // On Wayland, ALL EGL context operations must be serialized on the GLib
+        // main thread. Wayland EGL implementations are not thread-safe for
+        // cross-thread context migration (unlike X11 with XInitThreads). Making
+        // the context current from the Tauri command thread races with GTK's
+        // own EGL operations and subsequent render_frame callbacks.
+        //
+        // On X11, the existing pattern is safe because XInitThreads enables
+        // cross-thread usage, and attach() releases the context before
+        // render_frame can acquire it.
+        let render_ctx = if is_wayland {
+            // Cast Mpv pointer to usize for cross-thread dispatch (same pattern
+            // as macOS renderer). Safety: mpv lives in MpvState behind a Mutex,
+            // held by the caller for the duration of attach().
+            let mpv_raw = mpv.ctx.as_ptr() as usize;
+            let egl_display_usize = self.egl_display.as_ptr() as usize;
+            let egl_surface_usize = self.egl_surface.as_ptr() as usize;
+            let egl_context_usize = self.egl_context.as_ptr() as usize;
+
+            // RenderContext doesn't impl Send, but we need to return it from
+            // the GLib thread. Safety: same as RenderInner's `unsafe impl Send`.
+            struct SendableCtx(RenderContext);
+            unsafe impl Send for SendableCtx {}
+
+            let setup_egl = move || -> Result<SendableCtx, String> {
+                let egl = egl_instance();
+
+                // SAFETY: reconstruct EGL handles from usize (same as detach()).
+                let display: egl::Display =
+                    unsafe { std::mem::transmute(egl_display_usize as *mut c_void) };
+                let surface: egl::Surface =
+                    unsafe { std::mem::transmute(egl_surface_usize as *mut c_void) };
+                let context: egl::Context =
+                    unsafe { std::mem::transmute(egl_context_usize as *mut c_void) };
+
+                egl.make_current(display, Some(surface), Some(surface), Some(context))
+                    .map_err(|e| format!("eglMakeCurrent (GLib thread): {:?}", e))?;
+
+                gl::load_with(|name| gl_get_proc_address(name) as *const _);
+
+                fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
+                    gl_get_proc_address(name)
+                }
+
+                let render_ctx = RenderContext::new(
+                    unsafe { &mut *(mpv_raw as *mut _) },
+                    vec![
+                        RenderParam::ApiType(RenderParamApiType::OpenGl),
+                        RenderParam::InitParams(OpenGLInitParams {
+                            get_proc_address,
+                            ctx: std::ptr::null_mut(),
+                        }),
+                    ],
+                )
+                .map_err(|e| format!("mpv_render_context_create: {}", e))?;
+
+                // Clear to black before the first mpv frame arrives.
+                unsafe {
+                    gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                    gl::Clear(gl::COLOR_BUFFER_BIT);
+                }
+                let _ = egl.swap_buffers(display, surface);
+
+                // Release context so render_frame callbacks can acquire it.
+                let _ = egl.make_current(display, None, None, None);
+
+                Ok(SendableCtx(render_ctx))
+            };
+
+            // If we're already on the GLib main thread (e.g. during GTK startup),
+            // run inline to avoid deadlocking on our own callback. Otherwise
+            // dispatch via MainContext::invoke (higher priority than idle_add_once,
+            // won't be starved by pending idle callbacks).
+            let main_ctx = glib::MainContext::default();
+            if main_ctx.is_owner() {
+                setup_egl().map(|s| s.0)?
+            } else {
+                let (tx, rx) = std::sync::mpsc::channel::<Result<SendableCtx, String>>();
+                main_ctx.invoke(move || {
+                    let _ = tx.send(setup_egl());
+                });
+                rx.recv_timeout(std::time::Duration::from_secs(5))
+                    .map_err(|_| {
+                        "Timed out waiting for GLib main thread EGL setup".to_string()
+                    })?
+                    .map(|s| s.0)?
+            }
+        } else {
+            // X11 path — safe to run on Tauri command thread (XInitThreads).
+            egl.make_current(
+                self.egl_display,
+                Some(self.egl_surface),
+                Some(self.egl_surface),
+                Some(self.egl_context),
+            )
+            .map_err(|e| format!("eglMakeCurrent: {:?}", e))?;
+
+            gl::load_with(|name| gl_get_proc_address(name) as *const _);
+
+            fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
+                gl_get_proc_address(name)
+            }
+
+            let render_ctx = RenderContext::new(
+                unsafe { &mut *mpv.ctx.as_ptr() },
+                vec![
+                    RenderParam::ApiType(RenderParamApiType::OpenGl),
+                    RenderParam::InitParams(OpenGLInitParams {
+                        get_proc_address,
+                        ctx: std::ptr::null_mut(),
+                    }),
+                ],
+            )
+            .map_err(|e| format!("mpv_render_context_create: {}", e))?;
+
+            // Clear the framebuffer to black before the first mpv frame arrives.
+            unsafe {
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+            let _ = egl.swap_buffers(self.egl_display, self.egl_surface);
+
+            // Release the EGL context from this thread so the GLib main thread
+            // can make it current in render_frame().
+            let _ = egl.make_current(self.egl_display, None, None, None);
+
+            render_ctx
+        };
+
+        // Common path: set up RenderInner and update callback.
         let mut inner = Box::new(RenderInner {
             ctx: render_ctx,
             egl_display: self.egl_display,
@@ -838,19 +960,6 @@ impl PlatformRenderer for LinuxGlRenderer {
         });
 
         self.render_inner = Some(inner);
-
-        // Clear the framebuffer to black before the first mpv frame arrives.
-        // Without this, the surface shows uninitialized GPU memory (green/purple garbage).
-        unsafe {
-            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
-        let _ = egl.swap_buffers(self.egl_display, self.egl_surface);
-
-        // Release the EGL context from this thread so the GLib main thread
-        // can make it current in render_frame(). EGL contexts are thread-local —
-        // only one thread can hold a context current at a time.
-        let _ = egl.make_current(self.egl_display, None, None, None);
 
         tracing::info!("[Linux renderer] render context attached");
         Ok(())
@@ -904,6 +1013,13 @@ impl PlatformRenderer for LinuxGlRenderer {
 
             wl.child_surface.commit();
             let _ = wl.conn.flush();
+
+            // Drain pending compositor events (buffer release, surface enter/leave)
+            // to keep the protocol state consistent and prevent queue overflow.
+            let mut dummy = WlGlobals;
+            if let Err(e) = wl.queue.dispatch_pending(&mut dummy) {
+                tracing::warn!("[Linux renderer] Wayland dispatch_pending failed: {}", e);
+            }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
             unsafe {
@@ -940,6 +1056,12 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
             wl.child_surface.commit();
             let _ = wl.conn.flush();
+
+            // Drain pending compositor events.
+            let mut dummy = WlGlobals;
+            if let Err(e) = wl.queue.dispatch_pending(&mut dummy) {
+                tracing::warn!("[Linux renderer] Wayland dispatch_pending failed: {}", e);
+            }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
             unsafe {
@@ -1074,17 +1196,35 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     // 1. Make the EGL context current FIRST — wl_egl_window_resize() requires
     //    the EGL surface to be current on the calling thread.
-    if egl
-        .make_current(
+    //
+    //    On Wayland, a single eglMakeCurrent failure can cascade (context lost
+    //    state persists). Retry once after releasing the context, and log the
+    //    EGL error code for diagnostics.
+    let make_current = || {
+        egl.make_current(
             inner.egl_display,
             Some(inner.egl_surface),
             Some(inner.egl_surface),
             Some(inner.egl_context),
         )
-        .is_err()
-    {
-        tracing::warn!("[Linux renderer] render_frame: eglMakeCurrent failed");
-        return;
+    };
+
+    if make_current().is_err() {
+        let err = egl.get_error();
+        tracing::warn!(
+            "[Linux renderer] render_frame: eglMakeCurrent failed (EGL error {:?}), retrying",
+            err
+        );
+        // Release any stale context state before retrying.
+        let _ = egl.make_current(inner.egl_display, None, None, None);
+        if make_current().is_err() {
+            let err2 = egl.get_error();
+            tracing::error!(
+                "[Linux renderer] render_frame: eglMakeCurrent retry failed (EGL error {:?}), skipping frame",
+                err2
+            );
+            return;
+        }
     }
 
     // 2. Apply any pending wl_egl_window resize AFTER making context current.
