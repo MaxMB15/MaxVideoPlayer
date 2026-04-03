@@ -68,7 +68,6 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv-linux.sh'
-              - '.github/workflows/build.yml'
             macos:
               - 'crates/tauri-plugin-mpv/src/macos.rs'
               - 'crates/tauri-plugin-mpv/src/renderer.rs'
@@ -85,7 +84,6 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv.sh'
-              - '.github/workflows/build.yml'
 
   # ── Tests (run on every push and PR) ────────────────────────────────────
   test:
