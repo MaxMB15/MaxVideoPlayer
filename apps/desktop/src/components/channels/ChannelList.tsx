@@ -136,7 +136,7 @@ export const ChannelList = () => {
 	useEffect(() => {
 		measureRoot();
 		// Re-measure after layout settles (fonts, flex, etc.)
-		requestAnimationFrame(measureRoot);
+		const rafId = requestAnimationFrame(measureRoot);
 
 		const el = rootRef.current;
 		const obs = el
@@ -146,6 +146,7 @@ export const ChannelList = () => {
 		window.addEventListener("resize", measureRoot);
 
 		return () => {
+			cancelAnimationFrame(rafId);
 			obs?.disconnect();
 			window.removeEventListener("resize", measureRoot);
 		};

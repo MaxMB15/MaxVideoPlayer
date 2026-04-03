@@ -2,7 +2,6 @@
 
 [![Build & Bundle](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/MaxMB15/MaxVideoPlayer/build.yml?branch=main&label=tests&job=test)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
-[![Coverage](https://MaxMB15.github.io/MaxVideoPlayer/coverage/badge.svg)](https://MaxMB15.github.io/MaxVideoPlayer/coverage/)
 [![Release](https://img.shields.io/github/v/release/MaxMB15/MaxVideoPlayer?include_prereleases&label=release)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 

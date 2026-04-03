@@ -24,8 +24,16 @@ export const GroupList = ({
 			{groups.map((name) => (
 				<div
 					key={name}
+					role="button"
+					tabIndex={0}
 					className="flex items-center justify-between p-2.5 rounded-lg bg-secondary hover:bg-accent transition-colors cursor-pointer"
 					onClick={() => onSelectGroup(name)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							onSelectGroup(name);
+						}
+					}}
 				>
 					<div className="flex items-center gap-2">
 						<span className="text-sm">{name}</span>

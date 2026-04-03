@@ -30,29 +30,35 @@ export const PinnedGroupsRow = ({
 			<ScrollArea className="w-full">
 				<div className="flex gap-2 pb-1">
 					{pinnedGroups.map((pin) => (
-						<button
+						<div
 							key={pin.groupName}
-							onClick={() => onSelectGroup(pin.groupName)}
-							className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs shrink-0 border transition-colors group ${
-								selectedGroup === pin.groupName
-									? "bg-primary text-primary-foreground border-primary"
-									: "bg-secondary text-secondary-foreground border-border hover:bg-accent"
-							}`}
+							className="flex items-center shrink-0 group"
 						>
-							<span>{pin.groupName}</span>
-							<span className="opacity-60 text-[10px]">
-								{getChannelCount(pin.groupName)}
-							</span>
-							<span
-								onClick={(e) => {
-									e.stopPropagation();
-									onUnpin(pin.groupName);
-								}}
-								className="opacity-0 group-hover:opacity-100 hover:text-destructive ml-0.5"
+							<button
+								onClick={() => onSelectGroup(pin.groupName)}
+								className={`flex items-center gap-2 px-3 py-1.5 rounded-l-lg text-xs border transition-colors ${
+									selectedGroup === pin.groupName
+										? "bg-primary text-primary-foreground border-primary"
+										: "bg-secondary text-secondary-foreground border-border hover:bg-accent"
+								}`}
+							>
+								<span>{pin.groupName}</span>
+								<span className="opacity-60 text-[10px]">
+									{getChannelCount(pin.groupName)}
+								</span>
+							</button>
+							<button
+								onClick={() => onUnpin(pin.groupName)}
+								className={`px-1.5 py-1.5 rounded-r-lg border border-l-0 text-xs opacity-0 group-hover:opacity-100 hover:text-destructive transition-all ${
+									selectedGroup === pin.groupName
+										? "border-primary bg-primary text-primary-foreground"
+										: "border-border bg-secondary hover:bg-accent"
+								}`}
+								aria-label={`Unpin ${pin.groupName}`}
 							>
 								<X className="h-3 w-3" />
-							</span>
-						</button>
+							</button>
+						</div>
 					))}
 				</div>
 			</ScrollArea>

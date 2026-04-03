@@ -229,7 +229,12 @@ export const CategoryManager = ({
 
 	const handleMoveGroup = async (groupName: string, targetCategory: string | null) => {
 		try {
-			await updateGroupHierarchyEntry(providerId, contentType, groupName, targetCategory, 0);
+			const siblingSortOrders = entries
+				.filter((e) => e.superCategory === targetCategory && e.groupName !== groupName)
+				.map((e) => e.sortOrder);
+			const newSortOrder =
+				siblingSortOrders.length > 0 ? Math.max(...siblingSortOrders) + 1 : 0;
+			await updateGroupHierarchyEntry(providerId, contentType, groupName, targetCategory, newSortOrder);
 			await load();
 			onHierarchyChanged();
 			setMovingGroup(null);
