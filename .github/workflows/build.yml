@@ -28,6 +28,65 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Detect which platform-specific files changed ─────────────────────────
+  # On PRs: uses dorny/paths-filter to check changed files.
+  # On push: outputs 'true' for both so builds always run.
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      linux: ${{ steps.push-all.outputs.linux || steps.filter.outputs.linux }}
+      macos: ${{ steps.push-all.outputs.macos || steps.filter.outputs.macos }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push — always build both platforms
+        id: push-all
+        if: github.event_name == 'push'
+        run: |
+          echo "linux=true" >> "$GITHUB_OUTPUT"
+          echo "macos=true" >> "$GITHUB_OUTPUT"
+
+      - name: PR — detect changed paths
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            linux:
+              - 'crates/tauri-plugin-mpv/src/linux.rs'
+              - 'crates/tauri-plugin-mpv/src/renderer.rs'
+              - 'crates/tauri-plugin-mpv/src/commands.rs'
+              - 'crates/tauri-plugin-mpv/src/engine.rs'
+              - 'crates/tauri-plugin-mpv/src/mpv.rs'
+              - 'crates/tauri-plugin-mpv/src/lib.rs'
+              - 'crates/tauri-plugin-mpv/Cargo.toml'
+              - 'crates/core/**'
+              - 'apps/desktop/src-tauri/**'
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/package.json'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/build-libmpv.sh'
+              - 'scripts/bundle-libmpv-linux.sh'
+              - '.github/workflows/build.yml'
+            macos:
+              - 'crates/tauri-plugin-mpv/src/macos.rs'
+              - 'crates/tauri-plugin-mpv/src/renderer.rs'
+              - 'crates/tauri-plugin-mpv/src/commands.rs'
+              - 'crates/tauri-plugin-mpv/src/engine.rs'
+              - 'crates/tauri-plugin-mpv/src/mpv.rs'
+              - 'crates/tauri-plugin-mpv/src/lib.rs'
+              - 'crates/tauri-plugin-mpv/Cargo.toml'
+              - 'crates/core/**'
+              - 'apps/desktop/src-tauri/**'
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/package.json'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/build-libmpv.sh'
+              - 'scripts/bundle-libmpv.sh'
+              - '.github/workflows/build.yml'
+
   # ── Tests (run on every push and PR) ────────────────────────────────────
   test:
     runs-on: ubuntu-latest
@@ -103,10 +162,10 @@ jobs:
           destination_dir: coverage
           keep_files: true
 
-  # ── macOS Desktop (push only — PRs run tests only) ──────────────────────
+  # ── macOS Desktop (push, or PRs with macOS-relevant changes) ─────────────
   build-macos:
-    if: github.event_name == 'push'
-    needs: [test]
+    if: needs.detect-changes.outputs.macos == 'true'
+    needs: [test, detect-changes]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -155,10 +214,10 @@ jobs:
             target/release/bundle/macos/*.app
           if-no-files-found: error
 
-  # ── Linux Desktop (push only — PRs run tests only) ─────────────────────
+  # ── Linux Desktop (push, or PRs with Linux-relevant changes) ────────────
   build-linux:
-    if: github.event_name == 'push'
-    needs: [test]
+    if: needs.detect-changes.outputs.linux == 'true'
+    needs: [test, detect-changes]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
