@@ -637,13 +637,13 @@ impl LinuxGlRenderer {
         // crash on double-init of a shared display. Check if already initialized
         // by querying EGL_VERSION; only initialize if not yet done.
         match egl.query_string(Some(egl_display), egl::VERSION) {
-            Some(ver) => {
+            Ok(ver) => {
                 tracing::debug!(
-                    "[Linux renderer] EGL display already initialized (version {}), skipping eglInitialize",
+                    "[Linux renderer] EGL display already initialized (version {:?}), skipping eglInitialize",
                     ver
                 );
             }
-            None => {
+            Err(_) => {
                 egl.initialize(egl_display)
                     .map_err(|e| format!("Wayland eglInitialize: {:?}", e))?;
             }
@@ -1195,16 +1195,16 @@ unsafe fn render_frame(inner_ptr: usize) {
     if make_current().is_err() {
         let err = egl.get_error();
         tracing::warn!(
-            "[Linux renderer] render_frame: eglMakeCurrent failed (EGL error 0x{:04X}), retrying",
-            err as u32
+            "[Linux renderer] render_frame: eglMakeCurrent failed (EGL error {:?}), retrying",
+            err
         );
         // Release any stale context state before retrying.
         let _ = egl.make_current(inner.egl_display, None, None, None);
         if make_current().is_err() {
             let err2 = egl.get_error();
             tracing::error!(
-                "[Linux renderer] render_frame: eglMakeCurrent retry failed (EGL error 0x{:04X}), skipping frame",
-                err2 as u32
+                "[Linux renderer] render_frame: eglMakeCurrent retry failed (EGL error {:?}), skipping frame",
+                err2
             );
             return;
         }
