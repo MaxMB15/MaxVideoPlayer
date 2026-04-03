@@ -10,6 +10,8 @@ import type {
 	WhatsonData,
 	WatchHistoryEntry,
 	SubtitleSearchResult,
+	GroupHierarchyEntry,
+	PinnedGroup,
 } from "./types";
 
 // --- MPV Player Commands ---
@@ -188,3 +190,112 @@ export const deleteHistoryEntry = (channelId: string): Promise<void> =>
 	invoke<void>("delete_history_entry", { channelId });
 
 export const clearWatchHistory = (): Promise<void> => invoke<void>("clear_watch_history");
+
+export const clearAllCaches = (): Promise<void> => invoke<void>("clear_all_caches");
+
+// --- Group Hierarchy Commands ---
+
+export const getGroupHierarchy = (
+	providerId: string,
+	contentType: string
+): Promise<GroupHierarchyEntry[]> =>
+	invoke<GroupHierarchyEntry[]>("get_group_hierarchy", { providerId, contentType });
+
+export const reorderGroupHierarchyEntry = (
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	newSortOrder: number
+): Promise<void> =>
+	invoke("reorder_group_hierarchy_entry", {
+		providerId,
+		contentType,
+		groupName,
+		newSortOrder,
+	});
+
+export const updateGroupHierarchyEntry = (
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	newSuperCategory: string | null,
+	newSortOrder: number
+): Promise<void> =>
+	invoke("update_group_hierarchy_entry", {
+		providerId,
+		contentType,
+		groupName,
+		newSuperCategory,
+		newSortOrder,
+	});
+
+export const deleteGroupHierarchy = (providerId: string, contentType: string): Promise<void> =>
+	invoke("delete_group_hierarchy", { providerId, contentType });
+
+export const pinGroup = (
+	providerId: string,
+	contentType: string,
+	groupName: string,
+	sortOrder: number
+): Promise<void> => invoke("pin_group", { providerId, contentType, groupName, sortOrder });
+
+export const unpinGroup = (
+	providerId: string,
+	contentType: string,
+	groupName: string
+): Promise<void> => invoke("unpin_group", { providerId, contentType, groupName });
+
+export const getPinnedGroups = (providerId: string, contentType: string): Promise<PinnedGroup[]> =>
+	invoke<PinnedGroup[]>("get_pinned_groups", { providerId, contentType });
+
+// --- Gemini API Commands ---
+
+export const getGeminiApiKey = (): Promise<string | null> =>
+	invoke<string | null>("get_gemini_api_key");
+
+export const setGeminiApiKey = (key: string): Promise<void> =>
+	invoke("set_gemini_api_key", { key });
+
+export const testGeminiApiKey = (key: string): Promise<boolean> =>
+	invoke<boolean>("test_gemini_api_key", { key });
+
+export const categorizeProvider = (
+	providerId: string,
+	contentType: string,
+	apiKey: string,
+	groupsWithSamples: [string, string[]][]
+): Promise<GroupHierarchyEntry[]> =>
+	invoke<GroupHierarchyEntry[]>("categorize_provider", {
+		providerId,
+		contentType,
+		apiKey,
+		groupsWithSamples,
+	});
+
+export const fixUncategorizedGroups = (
+	providerId: string,
+	contentType: string,
+	apiKey: string,
+	uncategorizedGroups: [string, string[]][],
+	existingCategories: string[]
+): Promise<GroupHierarchyEntry[]> =>
+	invoke<GroupHierarchyEntry[]>("fix_uncategorized_groups", {
+		providerId,
+		contentType,
+		apiKey,
+		uncategorizedGroups,
+		existingCategories,
+	});
+
+export const renameSuperCategory = (
+	providerId: string,
+	contentType: string,
+	oldName: string,
+	newName: string
+): Promise<void> => invoke("rename_super_category", { providerId, contentType, oldName, newName });
+
+export const deleteSuperCategory = (
+	providerId: string,
+	contentType: string,
+	categoryName: string
+): Promise<void> => invoke("delete_super_category", { providerId, contentType, categoryName });

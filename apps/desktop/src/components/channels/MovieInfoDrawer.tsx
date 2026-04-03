@@ -60,7 +60,7 @@ export const MovieInfoDrawer = ({
 			})
 			.catch(() => {})
 			.finally(() => setOmdbLoading(false));
-	}, [movie.id]);
+	}, [movie, prefetchedOmdbData]);
 
 	const handleClose = () => {
 		setVisible(false);

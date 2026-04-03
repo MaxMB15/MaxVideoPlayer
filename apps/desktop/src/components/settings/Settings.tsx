@@ -28,10 +28,15 @@ import {
 	getOpenSubtitlesApiKey,
 	setOpenSubtitlesApiKey,
 	testOpenSubtitlesApiKey,
+	getGeminiApiKey,
+	setGeminiApiKey,
+	testGeminiApiKey,
+	clearAllCaches,
 } from "@/lib/tauri";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
-type SaveStatus = "idle" | "saved";
+type SaveStatus = "idle" | "saved" | "error";
 type HistoryStatus = "idle" | "cleared";
 
 const DonationReset = () => {
@@ -89,10 +94,23 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const [openSubtitlesSaveError, setOpenSubtitlesSaveError] = useState<string | null>(null);
 	const openSubtitlesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Gemini state
+	const [geminiKey, setGeminiKey] = useState("");
+	const [geminiKeyVisible, setGeminiKeyVisible] = useState(false);
+	const [geminiSaveStatus, setGeminiSaveStatus] = useState<SaveStatus>("idle");
+	const [geminiTestStatus, setGeminiTestStatus] = useState<OmdbStatus>("idle");
+	const [geminiTesting, setGeminiTesting] = useState(false);
+	const geminiSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	// History state
 	const [historyStatus, setHistoryStatus] = useState<HistoryStatus>("idle");
 	const [historyError, setHistoryError] = useState<string | null>(null);
 	const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Cache state
+	const [cacheStatus, setCacheStatus] = useState<HistoryStatus>("idle");
+	const [cacheError, setCacheError] = useState<string | null>(null);
+	const cacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
 		getVersion()
@@ -107,10 +125,17 @@ export const Settings = ({ updateState }: SettingsProps) => {
 		getOpenSubtitlesApiKey().then((key) => {
 			if (key) setOpenSubtitlesKey(key);
 		});
+		getGeminiApiKey()
+			.then((key) => {
+				if (key) setGeminiKey(key);
+			})
+			.catch(() => {});
 		return () => {
 			if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 			if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
 			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
+			if (geminiSaveTimerRef.current) clearTimeout(geminiSaveTimerRef.current);
+			if (cacheTimerRef.current) clearTimeout(cacheTimerRef.current);
 		};
 	}, []);
 
@@ -176,13 +201,39 @@ export const Settings = ({ updateState }: SettingsProps) => {
 		}
 	};
 
+	const handleGeminiSave = async () => {
+		try {
+			await setGeminiApiKey(geminiKey);
+			setGeminiSaveStatus("saved");
+			setGeminiTestStatus("idle");
+			if (geminiSaveTimerRef.current) clearTimeout(geminiSaveTimerRef.current);
+			geminiSaveTimerRef.current = setTimeout(() => setGeminiSaveStatus("idle"), 2000);
+		} catch {
+			setGeminiSaveStatus("error");
+			if (geminiSaveTimerRef.current) clearTimeout(geminiSaveTimerRef.current);
+			geminiSaveTimerRef.current = setTimeout(() => setGeminiSaveStatus("idle"), 3000);
+		}
+	};
+
+	const handleGeminiTest = async () => {
+		setGeminiTesting(true);
+		setGeminiTestStatus("idle");
+		try {
+			const valid = await testGeminiApiKey(geminiKey);
+			setGeminiTestStatus(valid ? "valid" : "invalid");
+		} catch {
+			setGeminiTestStatus("invalid");
+		} finally {
+			setGeminiTesting(false);
+		}
+	};
+
 	const handleClearHistory = async () => {
-		if (
-			!window.confirm(
-				"Are you sure you want to clear all watch history? This cannot be undone."
-			)
-		)
-			return;
+		const confirmed = await ask(
+			"Are you sure you want to clear all watch history? This cannot be undone.",
+			{ title: "Clear History", kind: "warning" }
+		);
+		if (!confirmed) return;
 		try {
 			await clearWatchHistory();
 			setHistoryStatus("cleared");
@@ -191,6 +242,23 @@ export const Settings = ({ updateState }: SettingsProps) => {
 			historyTimerRef.current = setTimeout(() => setHistoryStatus("idle"), 2000);
 		} catch {
 			setHistoryError("Failed to clear history. Please try again.");
+		}
+	};
+
+	const handleClearCaches = async () => {
+		const confirmed = await ask(
+			"Clear all cached data (OMDB, MDBList, OpenSubtitles, EPG)? This cannot be undone.",
+			{ title: "Clear Caches", kind: "warning" }
+		);
+		if (!confirmed) return;
+		try {
+			await clearAllCaches();
+			setCacheStatus("cleared");
+			setCacheError(null);
+			if (cacheTimerRef.current) clearTimeout(cacheTimerRef.current);
+			cacheTimerRef.current = setTimeout(() => setCacheStatus("idle"), 2000);
+		} catch {
+			setCacheError("Failed to clear caches. Please try again.");
 		}
 	};
 
@@ -254,6 +322,97 @@ export const Settings = ({ updateState }: SettingsProps) => {
 								step={5}
 								onValueChange={setDefaultVolume}
 							/>
+						</div>
+					</CardContent>
+				</Card>
+
+				{/* AI section */}
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-base">AI</CardTitle>
+					</CardHeader>
+					<CardContent className="space-y-4">
+						<div>
+							<p className="text-sm font-medium mb-1">Gemini API Key</p>
+							<p className="text-xs text-muted-foreground mb-2">
+								Used for automatic channel categorization
+							</p>
+							<div className="flex items-center gap-2">
+								<div className="relative flex-1">
+									<Input
+										type={geminiKeyVisible ? "text" : "password"}
+										placeholder="Enter Gemini API key…"
+										value={geminiKey}
+										onChange={(e) => {
+											setGeminiKey(e.target.value);
+											setGeminiTestStatus("idle");
+											setGeminiSaveStatus("idle");
+										}}
+										className="pr-10"
+									/>
+									<button
+										type="button"
+										className="absolute inset-y-0 right-2 flex items-center text-muted-foreground hover:text-foreground"
+										onClick={() => setGeminiKeyVisible((v) => !v)}
+										aria-label={geminiKeyVisible ? "Hide key" : "Show key"}
+									>
+										{geminiKeyVisible ? (
+											<EyeOff className="h-4 w-4" />
+										) : (
+											<Eye className="h-4 w-4" />
+										)}
+									</button>
+								</div>
+								<Button
+									size="sm"
+									variant="secondary"
+									onClick={handleGeminiSave}
+									disabled={!geminiKey.trim()}
+								>
+									{geminiSaveStatus === "saved" ? (
+										<span className="flex items-center gap-1 text-green-500">
+											<CheckCircle className="h-4 w-4" /> Saved
+										</span>
+									) : geminiSaveStatus === "error" ? (
+										<span className="text-destructive">Failed</span>
+									) : (
+										"Save"
+									)}
+								</Button>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={handleGeminiTest}
+									disabled={!geminiKey.trim() || geminiTesting}
+								>
+									{geminiTesting ? "Testing…" : "Test"}
+								</Button>
+							</div>
+							<div className="mt-2 text-xs">
+								{geminiTestStatus === "valid" && (
+									<span className="flex items-center gap-1 text-green-500">
+										<CheckCircle className="h-3 w-3" /> Valid key
+									</span>
+								)}
+								{geminiTestStatus === "invalid" && (
+									<span className="flex items-center gap-1 text-destructive">
+										<XCircle className="h-3 w-3" /> Invalid key
+									</span>
+								)}
+								{geminiTestStatus === "idle" && !geminiKey && (
+									<span className="text-muted-foreground">
+										Get a key at{" "}
+										<a
+											href="https://aistudio.google.com/apikey"
+											target="_blank"
+											rel="noreferrer"
+											className="underline hover:text-foreground"
+										>
+											aistudio.google.com
+										</a>
+									</span>
+								)}
+							</div>
 						</div>
 					</CardContent>
 				</Card>
@@ -478,6 +637,32 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							{historyError && (
 								<p className="text-xs text-destructive">{historyError}</p>
 							)}
+						</div>
+					</CardContent>
+				</Card>
+
+				{/* Cache section */}
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-base">Cache</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<div className="space-y-2">
+							<p className="text-xs text-muted-foreground">
+								Clears all cached metadata (OMDB, MDBList, OpenSubtitles, WhatsonTV,
+								EPG). Channel data and settings are not affected.
+							</p>
+							<div className="flex items-center gap-4">
+								<Button variant="destructive" size="sm" onClick={handleClearCaches}>
+									Clear All Caches…
+								</Button>
+								{cacheStatus === "cleared" && (
+									<span className="flex items-center gap-1 text-xs text-green-500">
+										<CheckCircle className="h-3 w-3" /> Caches cleared
+									</span>
+								)}
+							</div>
+							{cacheError && <p className="text-xs text-destructive">{cacheError}</p>}
 						</div>
 					</CardContent>
 				</Card>

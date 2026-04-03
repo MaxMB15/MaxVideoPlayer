@@ -6,12 +6,18 @@ import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
 import { ChannelCard, ROW_CARD_LEFT_WIDTH } from "./ChannelCard";
+import { useGroupHierarchy } from "@/hooks/useGroupHierarchy";
+import { RecentlyPlayedRow } from "./RecentlyPlayedRow";
+import { PinnedGroupsRow } from "./PinnedGroupsRow";
+import { CategoryBrowser } from "./CategoryBrowser";
+import { GroupList } from "./GroupList";
+import { Breadcrumb } from "./Breadcrumb";
+import { CategoryManager } from "./CategoryManager";
 import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { HistoryTab } from "./HistoryTab";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
-import { usePlatform } from "@/hooks/usePlatform";
 import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
 import type {
 	Channel,
@@ -80,8 +86,7 @@ const EpgResultLogo = ({ url }: { url?: string }) => {
 };
 
 export const ChannelList = () => {
-	const { channels, loading, toggleFavorite } = useChannels();
-	const { layoutMode } = usePlatform();
+	const { channels, loading, toggleFavorite, providers } = useChannels();
 	const navigate = useNavigate();
 
 	const [activeTab, setActiveTab] = useState<Tab>("live");
@@ -89,6 +94,19 @@ export const ChannelList = () => {
 	// Debounced search — updated 250ms after user stops typing to avoid per-keystroke re-renders
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+	// Hierarchy navigation state
+	const [navState, setNavState] = useState<
+		| { level: "home" }
+		| { level: "category"; name: string }
+		| { level: "group"; name: string; parentCategory?: string }
+	>({ level: "home" });
+	const [showCategoryManager, setShowCategoryManager] = useState(false);
+
+	const activeProviderId = providers.length > 0 ? providers[0].id : null;
+	const contentType =
+		activeTab === "movie" ? "movie" : activeTab === "series" ? "series" : "live";
+	const hierarchy = useGroupHierarchy(activeProviderId, contentType);
 	const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 	const [seriesModalData, setSeriesModalData] = useState<{
 		showTitle: string;
@@ -102,23 +120,42 @@ export const ChannelList = () => {
 	// EPG search: one result per channel (earliest matching program)
 	const [epgSearchResults, setEpgSearchResults] = useState<EpgSearchResult[]>([]);
 
-	// Container width → dynamic EPG window
+	// Container width → dynamic EPG window + grid column calculation
 	const [containerWidth, setContainerWidth] = useState(0);
 	/** Root div ref — always in DOM; drives ResizeObserver for dynamic EPG window. */
 	const rootRef = useRef<HTMLDivElement>(null);
 	/** Virtualizer scroll ref — kept for TanStack Virtual scroll element. */
 	const parentRef = useRef<HTMLDivElement>(null);
 
-	// Measure container width with ResizeObserver on the root div (always in DOM,
-	// unlike parentRef which is only rendered in the virtualizer path).
-	useEffect(() => {
+	const measureRoot = useCallback(() => {
 		const el = rootRef.current;
-		if (!el) return;
-		const obs = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
-		obs.observe(el);
-		setContainerWidth(el.clientWidth);
-		return () => obs.disconnect();
+		if (el) setContainerWidth(el.clientWidth);
 	}, []);
+
+	// Measure container width: ResizeObserver on root + window resize fallback
+	useEffect(() => {
+		measureRoot();
+		// Re-measure after layout settles (fonts, flex, etc.)
+		const rafId = requestAnimationFrame(measureRoot);
+
+		const el = rootRef.current;
+		const obs = el
+			? new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width))
+			: null;
+		if (el && obs) obs.observe(el);
+		window.addEventListener("resize", measureRoot);
+
+		return () => {
+			cancelAnimationFrame(rafId);
+			obs?.disconnect();
+			window.removeEventListener("resize", measureRoot);
+		};
+	}, [measureRoot]);
+
+	// Re-measure when switching tabs (the grid area may have a different width)
+	useEffect(() => {
+		measureRoot();
+	}, [activeTab, measureRoot]);
 
 	// Compute dynamic EPG display window: now line at 1/3 mark, 100–200 px per hour
 	const { windowStart, windowEnd } = useMemo(() => {
@@ -212,13 +249,16 @@ export const ChannelList = () => {
 		setDebouncedSearch("");
 		setShowFavoritesOnly(false);
 		setEpgSearchResults([]);
+		setNavState({ level: "home" });
 	};
+
+	const effectiveCategory = navState.level === "group" ? navState.name : selectedCategory;
 
 	// Use debouncedSearch for filtering — prevents per-keystroke re-renders of virtualizer
 	const filtered = useMemo(() => {
 		let result = activeChannels;
-		if (selectedCategory && activeTab !== "series" && activeTab !== "favorites") {
-			result = result.filter((ch) => ch.groupTitle === selectedCategory);
+		if (effectiveCategory && activeTab !== "series" && activeTab !== "favorites") {
+			result = result.filter((ch) => ch.groupTitle === effectiveCategory);
 		}
 		if (debouncedSearch.trim()) {
 			const lower = debouncedSearch.toLowerCase();
@@ -228,7 +268,7 @@ export const ChannelList = () => {
 			result = result.filter((ch) => ch.isFavorite === true);
 		}
 		return result;
-	}, [activeChannels, selectedCategory, debouncedSearch, activeTab, showFavoritesOnly]);
+	}, [activeChannels, effectiveCategory, debouncedSearch, activeTab, showFavoritesOnly]);
 
 	// Fetch EPG for all live channels: 2h past + 4h future = 6h window (generous for wider displays)
 	useEffect(() => {
@@ -344,11 +384,26 @@ export const ChannelList = () => {
 	const handleHistoryPlay = useCallback(
 		(entry: WatchHistoryEntry) => {
 			if (entry.contentType === "series") {
-				const eps = byType.series.filter(
-					(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === entry.channelName
+				// Derive series title: try matching channel by ID first, then regex extraction
+				const ch = byType.series.find((c) => c.id === entry.channelId);
+				const seriesName = ch?.seriesTitle ?? showTitle(entry.channelName);
+				// Find the series container to handle Xtream lazy-load
+				const seriesContainer = byType.series.find(
+					(s) => (s.seriesTitle ?? showTitle(s.name)) === seriesName
 				);
-				if (eps.length > 0) {
-					setSeriesModalData({ showTitle: entry.channelName, episodes: eps });
+				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
+					setSeriesLoading(true);
+					getXtreamSeriesEpisodes(seriesContainer.id)
+						.then((eps) => setSeriesModalData({ showTitle: seriesName, episodes: eps }))
+						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
+						.finally(() => setSeriesLoading(false));
+				} else {
+					const eps = byType.series.filter(
+						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === seriesName
+					);
+					if (eps.length > 0) {
+						setSeriesModalData({ showTitle: seriesName, episodes: eps });
+					}
 				}
 			} else if (entry.contentType === "movie") {
 				const movie = byType.movie.find((ch) => ch.name === entry.channelName);
@@ -374,7 +429,16 @@ export const ChannelList = () => {
 	}, [filtered]);
 
 	const isGrid = activeTab !== "live";
-	const columnsPerRow = isGrid ? (layoutMode === "tv" ? 6 : 6) : 1;
+	// Dynamic grid columns: fit as many ~180 px-wide cards as possible, stretch via 1fr.
+	const gridWidth = (containerWidth > 0 ? containerWidth : 800) - 24; // minus px-3 padding
+	const GAP_PX = 12;
+	const MIN_CARD_W = 180;
+	const columnsPerRow = isGrid
+		? Math.max(2, Math.floor((gridWidth + GAP_PX) / (MIN_CARD_W + GAP_PX)))
+		: 1;
+	// Card height: image (aspect 2:1 = width/2) + title (~28px) + margin (~10px)
+	const cardWidth = isGrid ? (gridWidth - GAP_PX * (columnsPerRow - 1)) / columnsPerRow : 0;
+	const gridRowHeight = isGrid ? Math.round(cardWidth / 2 + 38) : 48;
 	const rowCount =
 		activeTab === "favorites" || activeTab === "history"
 			? 0
@@ -383,12 +447,18 @@ export const ChannelList = () => {
 	const virtualizer = useVirtualizer({
 		count: rowCount,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => (isGrid ? 145 : 48),
+		estimateSize: () => gridRowHeight,
 		overscan: 4,
 	});
 
 	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
 	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
+	// Show channel list only when: no hierarchy (flat mode), or drilled into a group, or on favorites/history
+	const showChannelList =
+		!hierarchy.hasHierarchy ||
+		navState.level === "group" ||
+		activeTab === "favorites" ||
+		activeTab === "history";
 	const nowSec = Math.floor(Date.now() / 1000);
 
 	// Grid marks for sticky header and background gridlines (uses same window as ChannelCard)
@@ -491,22 +561,146 @@ export const ChannelList = () => {
 				)}
 			</div>
 
-			{/* Category filter */}
-			{categories.length > 1 &&
-				activeTab !== "series" &&
-				activeTab !== "favorites" &&
-				activeTab !== "history" && (
-					<div className="shrink-0 px-3 pt-2.5">
-						<CategoryFilter
-							categories={categories}
-							selected={selectedCategory}
-							onSelect={setSelectedCategory}
+			{/* Hierarchy navigation — replaces flat CategoryFilter */}
+			{activeTab !== "favorites" && activeTab !== "history" && hierarchy.loaded && (
+				<div className={showChannelList ? "shrink-0" : "flex-1 overflow-y-auto"}>
+					{navState.level === "home" && (
+						<>
+							<RecentlyPlayedRow
+								contentType={contentType as "live" | "movie" | "series"}
+								onPlay={handleHistoryPlay}
+								channels={channels}
+							/>
+							<PinnedGroupsRow
+								pinnedGroups={hierarchy.pinnedGroups}
+								categories={categories}
+								selectedGroup={null}
+								onSelectGroup={(name) => setNavState({ level: "group", name })}
+								onUnpin={hierarchy.unpinGroup}
+							/>
+							{hierarchy.hasHierarchy ? (
+								<CategoryBrowser
+									superCategories={hierarchy.superCategories.map((name) => {
+										const groups = hierarchy.getGroupsForCategory(name);
+										return {
+											name,
+											groupCount: groups.length,
+											channelCount: groups.reduce(
+												(sum, g) =>
+													sum +
+													(categories.find((c) => c.name === g)
+														?.channelCount ?? 0),
+												0
+											),
+										};
+									})}
+									topLevelGroups={hierarchy.topLevelGroups.map((name) => ({
+										name,
+										channelCount:
+											categories.find((c) => c.name === name)?.channelCount ??
+											0,
+									}))}
+									onSelectCategory={(name) =>
+										setNavState({ level: "category", name })
+									}
+									onSelectGroup={(name) => setNavState({ level: "group", name })}
+									onManage={() => setShowCategoryManager(true)}
+								/>
+							) : categories.length > 1 ? (
+								<div className="px-3 pt-2.5">
+									<CategoryFilter
+										categories={categories}
+										selected={selectedCategory}
+										onSelect={setSelectedCategory}
+									/>
+								</div>
+							) : null}
+							{!hierarchy.hasHierarchy &&
+								hierarchy.entries.length === 0 &&
+								categories.length > 1 && (
+									<div className="mx-4 mt-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+										<p className="text-muted-foreground">
+											Channels not categorized yet.
+										</p>
+										<button
+											onClick={() => setShowCategoryManager(true)}
+											className="text-primary hover:underline text-xs mt-1"
+										>
+											Use AI to organize channels?
+										</button>
+									</div>
+								)}
+						</>
+					)}
+					{navState.level === "category" && (
+						<>
+							<Breadcrumb
+								path={[
+									{
+										label: "All Categories",
+										onClick: () => setNavState({ level: "home" }),
+									},
+									{ label: navState.name },
+								]}
+							/>
+							<GroupList
+								groups={hierarchy
+									.getGroupsForCategory(navState.name)
+									.filter(
+										(g) =>
+											!debouncedSearch ||
+											g.toLowerCase().includes(debouncedSearch.toLowerCase())
+									)}
+								categories={categories}
+								onSelectGroup={(name) =>
+									setNavState({
+										level: "group",
+										name,
+										parentCategory: navState.name,
+									})
+								}
+								isPinned={hierarchy.isPinned}
+								onTogglePin={(name) =>
+									hierarchy.isPinned(name)
+										? hierarchy.unpinGroup(name)
+										: hierarchy.pinGroup(name)
+								}
+							/>
+						</>
+					)}
+					{navState.level === "group" && (
+						<Breadcrumb
+							path={[
+								...(navState.parentCategory
+									? [
+											{
+												label: "All Categories",
+												onClick: () => setNavState({ level: "home" }),
+											},
+											{
+												label: navState.parentCategory,
+												onClick: () =>
+													setNavState({
+														level: "category",
+														name: navState.parentCategory!,
+													}),
+											},
+										]
+									: [
+											{
+												label: "All Categories",
+												onClick: () => setNavState({ level: "home" }),
+											},
+										]),
+								{ label: navState.name },
+							]}
 						/>
-					</div>
-				)}
+					)}
+				</div>
+			)}
 
 			{/* Result count */}
-			{activeTab !== "history" && !isLiveSearch && (
+			{activeTab !== "history" && !isLiveSearch && showChannelList && (
 				<div className="shrink-0 px-3 pt-2 pb-1">
 					<span className="text-xs text-muted-foreground">
 						{filtered.length.toLocaleString()} {countLabel}
@@ -514,8 +708,8 @@ export const ChannelList = () => {
 				</div>
 			)}
 
-			{/* Sticky time-axis header — shown any time we're on the Live tab */}
-			{activeTab === "live" && (
+			{/* Sticky time-axis header — only when channel list is visible */}
+			{activeTab === "live" && showChannelList && (
 				<div className="shrink-0 flex items-center px-3 pb-1 border-b border-border/15">
 					{/* Left spacer: matches ROW_CARD_LEFT_WIDTH in RowCard */}
 					<div style={{ width: `${ROW_CARD_LEFT_WIDTH}px` }} className="shrink-0" />
@@ -643,7 +837,9 @@ export const ChannelList = () => {
 									</h3>
 									<div
 										className="grid gap-3"
-										style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}
+										style={{
+											gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))`,
+										}}
 									>
 										{favoritesByType.movie.map((ch) => (
 											<ChannelCard
@@ -664,7 +860,9 @@ export const ChannelList = () => {
 									</h3>
 									<div
 										className="grid gap-3"
-										style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}
+										style={{
+											gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))`,
+										}}
 									>
 										{favoritesByType.series.map((ch) => (
 											<ChannelCard
@@ -774,9 +972,13 @@ export const ChannelList = () => {
 						</p>
 					)}
 				</div>
-			) : (
+			) : !showChannelList ? null : (
 				/* Virtualised list — live/movie/series tabs */
-				<div ref={parentRef} className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
+				<div
+					key={columnsPerRow}
+					ref={parentRef}
+					className="flex-1 overflow-auto scrollbar-hide px-3 pb-3"
+				>
 					{filtered.length === 0 && showFavoritesOnly ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
 							<Heart className="h-10 w-10 text-muted-foreground/30" />
@@ -879,6 +1081,18 @@ export const ChannelList = () => {
 							})}
 						</div>
 					)}
+				</div>
+			)}
+
+			{showCategoryManager && activeProviderId && (
+				<div className="absolute inset-0 z-50 bg-background">
+					<CategoryManager
+						providerId={activeProviderId}
+						contentType={contentType}
+						channels={channels}
+						onClose={() => setShowCategoryManager(false)}
+						onHierarchyChanged={() => hierarchy.reload()}
+					/>
 				</div>
 			)}
 		</div>
