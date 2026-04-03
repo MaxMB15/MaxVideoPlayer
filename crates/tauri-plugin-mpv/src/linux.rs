@@ -829,60 +829,69 @@ impl PlatformRenderer for LinuxGlRenderer {
             struct SendableCtx(RenderContext);
             unsafe impl Send for SendableCtx {}
 
-            let (tx, rx) = std::sync::mpsc::channel::<Result<SendableCtx, String>>();
-
-            glib::idle_add_once(move || {
+            let setup_egl = move || -> Result<SendableCtx, String> {
                 let egl = egl_instance();
-                let result = (|| -> Result<SendableCtx, String> {
-                    // SAFETY: reconstruct EGL handles from usize (same as detach()).
-                    let display: egl::Display =
-                        unsafe { std::mem::transmute(egl_display_usize as *mut c_void) };
-                    let surface: egl::Surface =
-                        unsafe { std::mem::transmute(egl_surface_usize as *mut c_void) };
-                    let context: egl::Context =
-                        unsafe { std::mem::transmute(egl_context_usize as *mut c_void) };
 
-                    egl.make_current(display, Some(surface), Some(surface), Some(context))
-                        .map_err(|e| format!("eglMakeCurrent (GLib thread): {:?}", e))?;
+                // SAFETY: reconstruct EGL handles from usize (same as detach()).
+                let display: egl::Display =
+                    unsafe { std::mem::transmute(egl_display_usize as *mut c_void) };
+                let surface: egl::Surface =
+                    unsafe { std::mem::transmute(egl_surface_usize as *mut c_void) };
+                let context: egl::Context =
+                    unsafe { std::mem::transmute(egl_context_usize as *mut c_void) };
 
-                    gl::load_with(|name| gl_get_proc_address(name) as *const _);
+                egl.make_current(display, Some(surface), Some(surface), Some(context))
+                    .map_err(|e| format!("eglMakeCurrent (GLib thread): {:?}", e))?;
 
-                    fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
-                        gl_get_proc_address(name)
-                    }
+                gl::load_with(|name| gl_get_proc_address(name) as *const _);
 
-                    let render_ctx = RenderContext::new(
-                        unsafe { &mut *(mpv_raw as *mut _) },
-                        vec![
-                            RenderParam::ApiType(RenderParamApiType::OpenGl),
-                            RenderParam::InitParams(OpenGLInitParams {
-                                get_proc_address,
-                                ctx: std::ptr::null_mut(),
-                            }),
-                        ],
-                    )
-                    .map_err(|e| format!("mpv_render_context_create: {}", e))?;
+                fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
+                    gl_get_proc_address(name)
+                }
 
-                    // Clear to black before the first mpv frame arrives.
-                    unsafe {
-                        gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-                        gl::Clear(gl::COLOR_BUFFER_BIT);
-                    }
-                    let _ = egl.swap_buffers(display, surface);
+                let render_ctx = RenderContext::new(
+                    unsafe { &mut *(mpv_raw as *mut _) },
+                    vec![
+                        RenderParam::ApiType(RenderParamApiType::OpenGl),
+                        RenderParam::InitParams(OpenGLInitParams {
+                            get_proc_address,
+                            ctx: std::ptr::null_mut(),
+                        }),
+                    ],
+                )
+                .map_err(|e| format!("mpv_render_context_create: {}", e))?;
 
-                    // Release context so render_frame callbacks can acquire it.
-                    let _ = egl.make_current(display, None, None, None);
+                // Clear to black before the first mpv frame arrives.
+                unsafe {
+                    gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                    gl::Clear(gl::COLOR_BUFFER_BIT);
+                }
+                let _ = egl.swap_buffers(display, surface);
 
-                    Ok(SendableCtx(render_ctx))
-                })();
-                let _ = tx.send(result);
-            });
+                // Release context so render_frame callbacks can acquire it.
+                let _ = egl.make_current(display, None, None, None);
 
-            rx.recv_timeout(std::time::Duration::from_secs(5))
-                .map_err(|_| {
-                    "Timed out waiting for GLib main thread EGL setup".to_string()
-                })?
-                .map(|s| s.0)?
+                Ok(SendableCtx(render_ctx))
+            };
+
+            // If we're already on the GLib main thread (e.g. during GTK startup),
+            // run inline to avoid deadlocking on our own callback. Otherwise
+            // dispatch via MainContext::invoke (higher priority than idle_add_once,
+            // won't be starved by pending idle callbacks).
+            let main_ctx = glib::MainContext::default();
+            if main_ctx.is_owner() {
+                setup_egl().map(|s| s.0)?
+            } else {
+                let (tx, rx) = std::sync::mpsc::channel::<Result<SendableCtx, String>>();
+                main_ctx.invoke(move || {
+                    let _ = tx.send(setup_egl());
+                });
+                rx.recv_timeout(std::time::Duration::from_secs(5))
+                    .map_err(|_| {
+                        "Timed out waiting for GLib main thread EGL setup".to_string()
+                    })?
+                    .map(|s| s.0)?
+            }
         } else {
             // X11 path — safe to run on Tauri command thread (XInitThreads).
             egl.make_current(
@@ -1008,7 +1017,9 @@ impl PlatformRenderer for LinuxGlRenderer {
             // Drain pending compositor events (buffer release, surface enter/leave)
             // to keep the protocol state consistent and prevent queue overflow.
             let mut dummy = WlGlobals;
-            let _ = wl.queue.dispatch_pending(&mut dummy);
+            if let Err(e) = wl.queue.dispatch_pending(&mut dummy) {
+                tracing::warn!("[Linux renderer] Wayland dispatch_pending failed: {}", e);
+            }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
             unsafe {
@@ -1048,7 +1059,9 @@ impl PlatformRenderer for LinuxGlRenderer {
 
             // Drain pending compositor events.
             let mut dummy = WlGlobals;
-            let _ = wl.queue.dispatch_pending(&mut dummy);
+            if let Err(e) = wl.queue.dispatch_pending(&mut dummy) {
+                tracing::warn!("[Linux renderer] Wayland dispatch_pending failed: {}", e);
+            }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
             unsafe {
