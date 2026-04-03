@@ -643,7 +643,11 @@ impl LinuxGlRenderer {
                     ver
                 );
             }
-            Err(_) => {
+            Err(e) => {
+                tracing::debug!(
+                    "[Linux renderer] EGL display not yet initialized ({:?}), calling eglInitialize",
+                    e
+                );
                 egl.initialize(egl_display)
                     .map_err(|e| format!("Wayland eglInitialize: {:?}", e))?;
             }
