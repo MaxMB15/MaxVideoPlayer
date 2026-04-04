@@ -47,12 +47,22 @@ use wayland_egl::WlEglSurface;
 // EGL instance (cached, loaded once per process)
 // ---------------------------------------------------------------------------
 
-fn egl_instance() -> &'static egl::DynamicInstance<egl::EGL1_4> {
-    static INSTANCE: OnceLock<egl::DynamicInstance<egl::EGL1_4>> = OnceLock::new();
-    INSTANCE.get_or_init(|| unsafe {
+/// Try to load libEGL.so, returning an error instead of panicking if it fails.
+/// Must be called once before any `egl_instance()` usage to ensure the OnceLock
+/// is populated with a successful result.
+fn try_load_egl() -> Result<&'static egl::DynamicInstance<egl::EGL1_4>, String> {
+    static INSTANCE: OnceLock<Result<egl::DynamicInstance<egl::EGL1_4>, String>> = OnceLock::new();
+    let result = INSTANCE.get_or_init(|| unsafe {
         egl::DynamicInstance::<egl::EGL1_4>::load_required()
-            .expect("Failed to load EGL — is libEGL.so installed?")
-    })
+            .map_err(|e| format!("Failed to load EGL (libEGL.so): {}", e))
+    });
+    result.as_ref().map_err(|e| e.clone())
+}
+
+fn egl_instance() -> &'static egl::DynamicInstance<egl::EGL1_4> {
+    // Safe to unwrap: try_load_egl() must have succeeded before any code path
+    // reaches here (LinuxGlRenderer::new checks it first).
+    try_load_egl().expect("egl_instance() called before successful try_load_egl()")
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +308,13 @@ impl LinuxGlRenderer {
     /// Create an EGL-backed renderer within the Tauri window.
     /// Dispatches to the X11 or Wayland path based on the raw window handle.
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+        // Verify EGL is available before doing any work. This returns Err
+        // instead of panicking, so the caller can fall back gracefully.
+        try_load_egl().map_err(|e| {
+            tracing::error!("[Linux renderer] {}", e);
+            e
+        })?;
+
         let csd_offset = Self::query_csd_offsets(app);
 
         let window = app
