@@ -10,11 +10,17 @@ vi.mock("@tauri-apps/plugin-process", () => ({
 	relaunch: vi.fn(),
 }));
 
+vi.mock("@/lib/tauri", () => ({
+	getInstallInfo: vi.fn().mockResolvedValue({ installType: "native", releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest" }),
+}));
+
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getInstallInfo } from "@/lib/tauri";
 
 const mockCheck = vi.mocked(check);
 const mockRelaunch = vi.mocked(relaunch);
+const mockGetInstallInfo = vi.mocked(getInstallInfo);
 
 const fakeUpdate = (overrides: Record<string, unknown> = {}) => ({
 	version: "2.0.0",
@@ -234,5 +240,36 @@ describe("useUpdateChecker", () => {
 
 		expect(result.current.installing).toBe(false);
 		expect(result.current.error).toBeNull();
+	});
+
+	// ── deb install: manual update required ────────────────────────────
+
+	it("sets manualUpdateRequired for deb installs", async () => {
+		mockGetInstallInfo.mockResolvedValue({ installType: "deb", releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest" });
+		mockCheck.mockResolvedValue(fakeUpdate() as never);
+
+		const { result } = renderHook(() => useUpdateChecker());
+		await waitFor(() => expect(result.current.update).toBeTruthy());
+
+		expect(result.current.manualUpdateRequired).toBe(true);
+		expect(result.current.releaseUrl).toBe("https://github.com/MaxMB15/MaxVideoPlayer/releases/latest");
+	});
+
+	it("opens release URL instead of downloading for deb installs", async () => {
+		mockGetInstallInfo.mockResolvedValue({ installType: "deb", releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest" });
+		const downloadAndInstall = vi.fn();
+		mockCheck.mockResolvedValue(fakeUpdate({ downloadAndInstall }) as never);
+		const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+		const { result } = renderHook(() => useUpdateChecker());
+		await waitFor(() => expect(result.current.update).toBeTruthy());
+
+		await act(async () => {
+			result.current.install();
+		});
+
+		expect(openSpy).toHaveBeenCalledWith("https://github.com/MaxMB15/MaxVideoPlayer/releases/latest", "_blank");
+		expect(downloadAndInstall).not.toHaveBeenCalled();
+		openSpy.mockRestore();
 	});
 });

@@ -17,6 +17,8 @@ const makeState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
 	installing: false,
 	progress: null,
 	error: null,
+	manualUpdateRequired: false,
+	releaseUrl: null,
 	dismiss: vi.fn(),
 	install: vi.fn(),
 	checkForUpdates: vi.fn().mockResolvedValue(null),
@@ -176,5 +178,27 @@ describe("UpdateBanner", () => {
 		const state = makeState({ update: fakeUpdate() as never, error: null });
 		render(<UpdateBanner state={state} />);
 		expect(screen.queryByText(/Update failed/)).toBeNull();
+	});
+
+	// ── Manual update (deb) ───────────────────────────────────────────
+
+	it("shows Download button instead of Install for deb installs", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			manualUpdateRequired: true,
+			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText("Download")).toBeTruthy();
+		expect(screen.queryByText("Install")).toBeNull();
+	});
+
+	it("shows manual update message for deb installs", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			manualUpdateRequired: true,
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText(/Download the latest .deb/)).toBeTruthy();
 	});
 });

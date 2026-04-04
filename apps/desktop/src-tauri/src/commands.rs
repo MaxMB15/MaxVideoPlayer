@@ -7,6 +7,7 @@ use mvp_core::iptv::xtream::{fetch_xtream_channels, fetch_xtream_series_episodes
 use mvp_core::models::channel::Channel;
 use mvp_core::models::playlist::{Provider, ProviderType};
 use std::sync::Mutex;
+use serde::Serialize;
 use tauri::{command, AppHandle, Manager, Runtime, State};
 use tauri_plugin_store::StoreExt;
 
@@ -1161,4 +1162,31 @@ pub async fn delete_super_category(
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
     cache.delete_super_category(&provider_id, &content_type, &category_name)
         .map_err(|e| e.to_string())
+}
+
+/// Returns the Linux installation type so the frontend can decide whether
+/// the Tauri updater will work (it only supports AppImage on Linux).
+#[derive(Serialize)]
+pub struct InstallInfo {
+    /// "appimage", "deb", or "unknown"
+    pub install_type: String,
+    /// The release download URL for manual updates (deb/rpm users).
+    pub release_url: String,
+}
+
+#[command]
+pub fn get_install_info() -> InstallInfo {
+    let install_type = if cfg!(target_os = "linux") {
+        if std::env::var("APPIMAGE").is_ok() {
+            "appimage"
+        } else {
+            "deb"
+        }
+    } else {
+        "native"
+    };
+    InstallInfo {
+        install_type: install_type.to_string(),
+        release_url: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest".to_string(),
+    }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getInstallInfo } from "@/lib/tauri";
 
 export interface UpdateState {
 	update: Update | null;
@@ -8,6 +9,10 @@ export interface UpdateState {
 	installing: boolean;
 	progress: number | null;
 	error: string | null;
+	/** true when update exists but auto-install is unsupported (deb/rpm) */
+	manualUpdateRequired: boolean;
+	/** URL to the releases page for manual download */
+	releaseUrl: string | null;
 	dismiss: () => void;
 	install: () => void;
 	checkForUpdates: () => Promise<Update | null>;
@@ -19,6 +24,11 @@ export const useUpdateChecker = (): UpdateState => {
 	const [installing, setInstalling] = useState(false);
 	const [progress, setProgress] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [manualUpdateRequired, setManualUpdateRequired] = useState(false);
+	const [releaseUrl, setReleaseUrl] = useState<string | null>(null);
+
+	// Cache install info so we only call it once
+	const installInfoRef = useRef<{ installType: string; releaseUrl: string } | null>(null);
 
 	// Share a single in-flight promise so concurrent callers (mount + splash)
 	// all wait for the same check() call instead of one getting null.
@@ -31,8 +41,21 @@ export const useUpdateChecker = (): UpdateState => {
 			setChecking(true);
 			setError(null);
 			try {
+				// Fetch install info once
+				if (!installInfoRef.current) {
+					installInfoRef.current = await getInstallInfo();
+				}
+
 				const result = (await check({ timeout: 5_000 })) ?? null;
 				setUpdate(result);
+
+				if (result && installInfoRef.current.installType === "deb") {
+					setManualUpdateRequired(true);
+					setReleaseUrl(installInfoRef.current.releaseUrl);
+				} else {
+					setManualUpdateRequired(false);
+				}
+
 				return result;
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
@@ -64,10 +87,20 @@ export const useUpdateChecker = (): UpdateState => {
 		return () => clearInterval(id);
 	}, [checkForUpdates]);
 
-	const dismiss = useCallback(() => setUpdate(null), []);
+	const dismiss = useCallback(() => {
+		setUpdate(null);
+		setManualUpdateRequired(false);
+	}, []);
 
 	const install = useCallback(async () => {
 		if (!update) return;
+
+		// For deb/rpm installs, open the releases page instead of attempting auto-update
+		if (manualUpdateRequired && releaseUrl) {
+			window.open(releaseUrl, "_blank");
+			return;
+		}
+
 		setInstalling(true);
 		setProgress(0);
 		setError(null);
@@ -90,7 +123,18 @@ export const useUpdateChecker = (): UpdateState => {
 			setInstalling(false);
 			setProgress(null);
 		}
-	}, [update]);
+	}, [update, manualUpdateRequired, releaseUrl]);
 
-	return { update, checking, installing, progress, error, dismiss, install, checkForUpdates };
+	return {
+		update,
+		checking,
+		installing,
+		progress,
+		error,
+		manualUpdateRequired,
+		releaseUrl,
+		dismiss,
+		install,
+		checkForUpdates,
+	};
 };
