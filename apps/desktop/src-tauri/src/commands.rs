@@ -1231,10 +1231,14 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
 
     let total_size = response.content_length().unwrap_or(0);
     let extension = if info.install_type == "rpm" { "rpm" } else { "deb" };
-    let tmp_path = std::env::temp_dir().join(format!("maxvideoplayer_update.{extension}"));
-
-    let mut file = tokio::fs::File::create(&tmp_path).await
+    use tempfile::Builder;
+    let temp_file = Builder::new()
+        .prefix("maxvideoplayer_update.")
+        .suffix(&format!(".{extension}"))
+        .tempfile_in(std::env::temp_dir())
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
+    let tmp_path = temp_file.path().to_path_buf();
+    let mut file = tokio::fs::File::from_std(temp_file.into_file());
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
