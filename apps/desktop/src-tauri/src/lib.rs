@@ -12,7 +12,7 @@ fn install_crash_handler() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| unsafe {
-        extern "C" fn crash_handler(sig: libc::c_int) {
+        unsafe extern "C" fn crash_handler(sig: libc::c_int) {
             // Write directly to stderr -no allocations, no locks.
             let msg = match sig {
                 11 => b"[CRASH] SIGSEGV -segmentation fault in MaxVideoPlayer.\n\
