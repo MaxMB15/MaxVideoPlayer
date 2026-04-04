@@ -303,9 +303,8 @@ export const deleteSuperCategory = (
 // --- Install Info ---
 
 export interface InstallInfo {
-	installType: string; // "appimage" | "deb" | "native"
+	installType: string; // "appimage" | "package" | "native"
 	releaseUrl: string;
 }
 
-export const getInstallInfo = (): Promise<InstallInfo> =>
-	invoke<InstallInfo>("get_install_info");
+export const getInstallInfo = (): Promise<InstallInfo> => invoke<InstallInfo>("get_install_info");

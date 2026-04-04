@@ -1180,9 +1180,11 @@ pub fn get_install_info() -> InstallInfo {
         if std::env::var("APPIMAGE").is_ok() {
             "appimage"
         } else {
-            "deb"
+            // Installed via .deb, .rpm, or other system package — auto-update unsupported
+            "package"
         }
     } else {
+        // macOS and Windows updaters work natively
         "native"
     };
     InstallInfo {

@@ -182,7 +182,7 @@ describe("UpdateBanner", () => {
 
 	// ── Manual update (deb) ───────────────────────────────────────────
 
-	it("shows Download button instead of Install for deb installs", () => {
+	it("shows Download button instead of Install for package installs", () => {
 		const state = makeState({
 			update: fakeUpdate() as never,
 			manualUpdateRequired: true,
@@ -193,12 +193,12 @@ describe("UpdateBanner", () => {
 		expect(screen.queryByText("Install")).toBeNull();
 	});
 
-	it("shows manual update message for deb installs", () => {
+	it("shows manual update message for package installs", () => {
 		const state = makeState({
 			update: fakeUpdate() as never,
 			manualUpdateRequired: true,
 		});
 		render(<UpdateBanner state={state} />);
-		expect(screen.getByText(/Download the latest .deb/)).toBeTruthy();
+		expect(screen.getByText(/Visit the releases page/)).toBeTruthy();
 	});
 });

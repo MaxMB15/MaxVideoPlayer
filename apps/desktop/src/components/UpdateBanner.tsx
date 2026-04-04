@@ -38,7 +38,7 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 					</p>
 				) : manualUpdateRequired ? (
 					<p className="text-xs text-muted-foreground mt-0.5">
-						Download the latest .deb from the releases page to update.
+						Visit the releases page to download the latest version for your system.
 					</p>
 				) : (
 					<p className="text-xs text-muted-foreground mt-0.5 truncate">

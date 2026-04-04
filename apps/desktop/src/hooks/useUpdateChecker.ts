@@ -49,7 +49,7 @@ export const useUpdateChecker = (): UpdateState => {
 				const result = (await check({ timeout: 5_000 })) ?? null;
 				setUpdate(result);
 
-				if (result && installInfoRef.current.installType === "deb") {
+				if (result && installInfoRef.current.installType === "package") {
 					setManualUpdateRequired(true);
 					setReleaseUrl(installInfoRef.current.releaseUrl);
 				} else {
