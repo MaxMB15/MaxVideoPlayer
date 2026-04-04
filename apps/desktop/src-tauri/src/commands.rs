@@ -1166,6 +1166,7 @@ pub async fn delete_super_category(
 
 /// Returns the installation type so the frontend knows which update path to use.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallInfo {
     /// "appimage" | "deb" | "rpm" | "native"
     pub install_type: String,
@@ -1183,7 +1184,8 @@ pub fn get_install_info() -> InstallInfo {
         } else if std::path::Path::new("/usr/bin/rpm").exists() {
             "rpm"
         } else {
-            "deb" // default fallback for unknown Linux package managers
+            // Unknown layout (e.g. Nix, Arch without dpkg): use Tauri updater path, not deb/rpm package install
+            "native"
         }
     } else {
         // macOS and Windows updaters work natively
@@ -1253,7 +1255,8 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
         downloaded += chunk.len() as u64;
 
         if total_size > 0 {
-            let percent = ((downloaded as f64 / total_size as f64) * 100.0) as u8;
+            let percent = ((downloaded as f64 / total_size as f64) * 100.0)
+                .clamp(0.0, 100.0) as u8;
             if percent != last_percent {
                 last_percent = percent;
                 let _ = app.emit("package-update://progress", serde_json::json!({ "percent": percent }));
@@ -1263,17 +1266,24 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
     file.flush().await.map_err(|e| format!("Flush error: {e}"))?;
     drop(file);
 
-    // 3. Install via pkexec
-    let install_cmd = match info.install_type.as_str() {
-        "deb" => vec!["pkexec", "dpkg", "-i", tmp_path.to_str().unwrap()],
-        "rpm" => vec!["pkexec", "rpm", "-U", tmp_path.to_str().unwrap()],
+    // 3. Install via pkexec (async so we do not block the Tokio worker for the whole GUI prompt)
+    let output = match info.install_type.as_str() {
+        "deb" => tokio::process::Command::new("pkexec")
+            .arg("dpkg")
+            .arg("-i")
+            .arg(&tmp_path)
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run installer: {e}"))?,
+        "rpm" => tokio::process::Command::new("pkexec")
+            .arg("rpm")
+            .arg("-U")
+            .arg(&tmp_path)
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run installer: {e}"))?,
         _ => unreachable!(),
     };
-
-    let output = std::process::Command::new(install_cmd[0])
-        .args(&install_cmd[1..])
-        .output()
-        .map_err(|e| format!("Failed to run installer: {e}"))?;
 
     // Clean up temp file
     let _ = std::fs::remove_file(&tmp_path);

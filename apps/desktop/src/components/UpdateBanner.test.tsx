@@ -19,7 +19,7 @@ const makeState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
 	error: null,
 	packageInstall: false,
 	dismiss: vi.fn(),
-	install: vi.fn(),
+	install: vi.fn().mockResolvedValue(undefined),
 	checkForUpdates: vi.fn().mockResolvedValue(null),
 	...overrides,
 });

@@ -13,7 +13,7 @@ export interface UpdateState {
 	/** true when using package manager update (deb/rpm) instead of Tauri updater */
 	packageInstall: boolean;
 	dismiss: () => void;
-	install: () => void;
+	install: () => Promise<void>;
 	checkForUpdates: () => Promise<Update | null>;
 }
 
@@ -114,7 +114,11 @@ export const useUpdateChecker = (): UpdateState => {
 						total = event.data.contentLength ?? undefined;
 					} else if (event.event === "Progress") {
 						downloaded += event.data.chunkLength;
-						if (total) setProgress(Math.round((downloaded / total) * 100));
+						if (total) {
+							setProgress(
+								Math.min(100, Math.round((downloaded / total) * 100))
+							);
+						}
 					}
 				});
 			}

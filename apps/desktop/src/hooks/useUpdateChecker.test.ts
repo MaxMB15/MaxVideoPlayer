@@ -156,7 +156,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.update).toBeTruthy());
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		expect(downloadAndInstall).toHaveBeenCalledTimes(1);
@@ -175,7 +175,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.update).toBeTruthy());
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		expect(result.current.progress).toBe(100);
@@ -193,7 +193,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.update).toBeTruthy());
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		expect(result.current.error).toBe(
@@ -212,7 +212,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.update).toBe(update));
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		// update must NOT be cleared — user needs the banner to retry
@@ -232,13 +232,13 @@ describe("useUpdateChecker", () => {
 
 		// First attempt — fails
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 		expect(result.current.error).toContain("first fail");
 
 		// Retry — error should clear, then relaunch
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 		expect(mockRelaunch).toHaveBeenCalled();
 	});
@@ -248,7 +248,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.checking).toBe(false));
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		expect(result.current.installing).toBe(false);
@@ -295,7 +295,7 @@ describe("useUpdateChecker", () => {
 		await waitFor(() => expect(result.current.update).toBeTruthy());
 
 		await act(async () => {
-			result.current.install();
+			await result.current.install();
 		});
 
 		expect(mockPackageUpdate).toHaveBeenCalledTimes(1);
