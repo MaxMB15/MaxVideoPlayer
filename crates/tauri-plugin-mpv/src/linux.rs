@@ -47,9 +47,12 @@ use wayland_egl::WlEglSurface;
 // EGL instance (cached, loaded once per process)
 // ---------------------------------------------------------------------------
 
-/// Try to load libEGL.so, returning an error instead of panicking if it fails.
-/// Must be called once before any `egl_instance()` usage to ensure the OnceLock
-/// is populated with a successful result.
+/// Load `libEGL.so` and cache the outcome (success or error string) for the process.
+///
+/// [`LinuxGlRenderer::new`] calls this first and returns `Err` on failure so the app can
+/// fall back (e.g. separate mpv window) without panicking. `egl_instance()` reads the same
+/// cache; it panics only if EGL never loaded successfully—an invariant normally established
+/// by a successful `new`.
 fn try_load_egl() -> Result<&'static egl::DynamicInstance<egl::EGL1_4>, String> {
     static INSTANCE: OnceLock<Result<egl::DynamicInstance<egl::EGL1_4>, String>> = OnceLock::new();
     let result = INSTANCE.get_or_init(|| unsafe {
@@ -60,9 +63,13 @@ fn try_load_egl() -> Result<&'static egl::DynamicInstance<egl::EGL1_4>, String> 
 }
 
 fn egl_instance() -> &'static egl::DynamicInstance<egl::EGL1_4> {
-    // Safe to unwrap: try_load_egl() must have succeeded before any code path
-    // reaches here (LinuxGlRenderer::new checks it first).
-    try_load_egl().expect("egl_instance() called before successful try_load_egl()")
+    match try_load_egl() {
+        Ok(instance) => instance,
+        Err(err) => panic!(
+            "egl_instance() called when EGL is unavailable (expected after successful LinuxGlRenderer::new): {}",
+            err
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
