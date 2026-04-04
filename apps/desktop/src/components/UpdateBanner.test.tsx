@@ -17,8 +17,9 @@ const makeState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
 	installing: false,
 	progress: null,
 	error: null,
+	packageInstall: false,
 	dismiss: vi.fn(),
-	install: vi.fn(),
+	install: vi.fn().mockResolvedValue(undefined),
 	checkForUpdates: vi.fn().mockResolvedValue(null),
 	...overrides,
 });
@@ -145,6 +146,28 @@ describe("UpdateBanner", () => {
 
 		const progressBar = container.querySelector('[style*="width: 75%"]');
 		expect(progressBar).toBeTruthy();
+	});
+
+	// ── Package install (deb/rpm) ─────────────────────────────────────
+
+	it("shows password required hint when package download completes", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			installing: true,
+			progress: 100,
+			packageInstall: true,
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText(/password required/)).toBeTruthy();
+	});
+
+	it("shows Install button for package installs (same as native)", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			packageInstall: true,
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText("Install")).toBeTruthy();
 	});
 
 	// ── Error state ───────────────────────────────────────────────────
