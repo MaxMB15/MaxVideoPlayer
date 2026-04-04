@@ -5,6 +5,51 @@ use mvp_core::cache::store::CacheStore;
 use std::sync::Mutex;
 use tauri::Manager;
 
+/// Install a SIGSEGV/SIGABRT handler that logs context before crashing.
+/// This helps diagnose GL driver crashes that produce no Rust-level output.
+#[cfg(target_os = "linux")]
+fn install_crash_handler() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| unsafe {
+        extern "C" fn crash_handler(sig: libc::c_int) {
+            // Write directly to stderr -no allocations, no locks.
+            let msg = match sig {
+                11 => b"[CRASH] SIGSEGV -segmentation fault in MaxVideoPlayer.\n\
+                         This typically indicates a GPU driver crash in the EGL/OpenGL rendering pipeline.\n\
+                         Try running with: GDK_BACKEND=x11 max-video-player\n\
+                         Or set MVP_DISABLE_EMBEDDED_RENDERER=1 to use fallback rendering.\n" as &[u8],
+                6  => b"[CRASH] SIGABRT -abort signal in MaxVideoPlayer.\n" as &[u8],
+                _  => b"[CRASH] Fatal signal in MaxVideoPlayer.\n" as &[u8],
+            };
+            libc::write(2, msg.as_ptr() as *const _, msg.len());
+
+            // Re-raise with default handler to get the core dump / exit code.
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+
+        libc::signal(libc::SIGSEGV, crash_handler as libc::sighandler_t);
+        libc::signal(libc::SIGABRT, crash_handler as libc::sighandler_t);
+    });
+}
+
+/// Log system display environment info for diagnostics.
+#[cfg(target_os = "linux")]
+fn log_display_environment() {
+    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into());
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "unset".into());
+    let x11_display = std::env::var("DISPLAY").unwrap_or_else(|_| "unset".into());
+    let gdk_backend = std::env::var("GDK_BACKEND").unwrap_or_else(|_| "auto".into());
+    let disable_embedded = std::env::var("MVP_DISABLE_EMBEDDED_RENDERER").unwrap_or_else(|_| "0".into());
+    let webkit_dmabuf = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into());
+
+    tracing::info!(
+        "[diagnostics] session={} wayland={} x11={} gdk_backend={} disable_embedded={} webkit_dmabuf={}",
+        session_type, wayland_display, x11_display, gdk_backend, disable_embedded, webkit_dmabuf
+    );
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -15,6 +60,12 @@ pub fn run() {
                 .add_directive("mvp_core=debug".parse().unwrap()),
         )
         .init();
+
+    #[cfg(target_os = "linux")]
+    {
+        install_crash_handler();
+        log_display_environment();
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())

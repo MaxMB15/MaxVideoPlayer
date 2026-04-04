@@ -315,6 +315,11 @@ impl LinuxGlRenderer {
     /// Create an EGL-backed renderer within the Tauri window.
     /// Dispatches to the X11 or Wayland path based on the raw window handle.
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+        // Allow users to force fallback rendering via environment variable.
+        if std::env::var("MVP_DISABLE_EMBEDDED_RENDERER").unwrap_or_default() == "1" {
+            return Err("Embedded renderer disabled via MVP_DISABLE_EMBEDDED_RENDERER=1".to_string());
+        }
+
         // Verify EGL is available before doing any work. This returns Err
         // instead of panicking, so the caller can fall back gracefully.
         try_load_egl().map_err(|e| {
@@ -543,6 +548,9 @@ impl LinuxGlRenderer {
             .create_context(egl_display, config, None, &context_attribs)
             .map_err(|e| format!("eglCreateContext: {:?}", e))?;
 
+        // Log EGL/GL diagnostics to help debug driver issues.
+        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "X11");
+
         tracing::info!(
             "[Linux renderer] X11 child window + EGL context created (OpenGL Core 3.2)"
         );
@@ -734,6 +742,9 @@ impl LinuxGlRenderer {
             .create_context(egl_display, config, None, &context_attribs)
             .map_err(|e| format!("Wayland eglCreateContext: {:?}", e))?;
 
+        // Log EGL/GL diagnostics to help debug driver issues.
+        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "Wayland");
+
         tracing::info!(
             "[Linux renderer] Wayland subsurface + wl_egl_window + EGL context created (OpenGL Core 3.2)"
         );
@@ -806,6 +817,78 @@ impl LinuxGlRenderer {
         );
         unsafe { egl.get_display(wl_display_ptr) }
             .ok_or_else(|| "Wayland: eglGetDisplay returned NO_DISPLAY".to_string())
+    }
+
+    /// Log EGL vendor/version and GL renderer info for diagnostics.
+    /// Makes the context current temporarily, queries strings, then releases.
+    fn log_egl_diagnostics(
+        egl: &egl::DynamicInstance<egl::EGL1_4>,
+        display: egl::Display,
+        surface: egl::Surface,
+        context: egl::Context,
+        backend: &str,
+    ) {
+        let egl_vendor = egl.query_string(Some(display), egl::VENDOR)
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "unknown".into());
+        let egl_version = egl.query_string(Some(display), egl::VERSION)
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "unknown".into());
+        let egl_apis = egl.query_string(Some(display), egl::CLIENT_APIS)
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "unknown".into());
+
+        tracing::info!(
+            "[Linux renderer] EGL info ({}): vendor={} version={} apis={}",
+            backend, egl_vendor, egl_version, egl_apis
+        );
+
+        // Temporarily make context current to query GL strings.
+        if egl.make_current(display, Some(surface), Some(surface), Some(context)).is_ok() {
+            gl::load_with(|name| gl_get_proc_address(name) as *const _);
+            unsafe {
+                let gl_renderer = gl::GetString(gl::RENDERER);
+                let gl_version = gl::GetString(gl::VERSION);
+                let gl_vendor = gl::GetString(gl::VENDOR);
+
+                let renderer_str = if !gl_renderer.is_null() {
+                    std::ffi::CStr::from_ptr(gl_renderer as *const _).to_string_lossy().into_owned()
+                } else {
+                    "null".into()
+                };
+                let version_str = if !gl_version.is_null() {
+                    std::ffi::CStr::from_ptr(gl_version as *const _).to_string_lossy().into_owned()
+                } else {
+                    "null".into()
+                };
+                let vendor_str = if !gl_vendor.is_null() {
+                    std::ffi::CStr::from_ptr(gl_vendor as *const _).to_string_lossy().into_owned()
+                } else {
+                    "null".into()
+                };
+
+                tracing::info!(
+                    "[Linux renderer] GL info ({}): renderer={} version={} vendor={}",
+                    backend, renderer_str, version_str, vendor_str
+                );
+
+                // Check for GL errors after context setup — a non-zero error
+                // here indicates the context is in a bad state.
+                let err = gl::GetError();
+                if err != gl::NO_ERROR {
+                    tracing::warn!(
+                        "[Linux renderer] GL error after context setup: 0x{:04X}",
+                        err
+                    );
+                }
+            }
+            let _ = egl.make_current(display, None, None, None);
+        } else {
+            tracing::warn!(
+                "[Linux renderer] Could not make context current for GL diagnostics ({})",
+                backend
+            );
+        }
     }
 
     /// Set a callback that fires exactly once when the first video frame is rendered.
@@ -890,7 +973,30 @@ impl PlatformRenderer for LinuxGlRenderer {
                     gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                     gl::Clear(gl::COLOR_BUFFER_BIT);
                 }
-                let _ = egl.swap_buffers(display, surface);
+                let swap_ok = egl.swap_buffers(display, surface);
+
+                // GL validation probe: check for errors after initial render setup.
+                // A failure here means the GL pipeline is broken and we should bail
+                // to fallback rather than waiting for a crash in render_frame.
+                let gl_err = unsafe { gl::GetError() };
+                if gl_err != gl::NO_ERROR {
+                    tracing::error!(
+                        "[Linux renderer] GL error after initial clear (Wayland): 0x{:04X}",
+                        gl_err
+                    );
+                }
+                if swap_ok.is_err() {
+                    let egl_err = egl.get_error();
+                    let msg = format!(
+                        "eglSwapBuffers failed during attach probe (Wayland): EGL error {:?}",
+                        egl_err
+                    );
+                    tracing::error!("[Linux renderer] {}", msg);
+                    let _ = egl.make_current(display, None, None, None);
+                    return Err(msg);
+                }
+
+                tracing::info!("[Linux renderer] GL validation probe passed (Wayland)");
 
                 // Release context so render_frame callbacks can acquire it.
                 let _ = egl.make_current(display, None, None, None);
@@ -949,7 +1055,28 @@ impl PlatformRenderer for LinuxGlRenderer {
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
-            let _ = egl.swap_buffers(self.egl_display, self.egl_surface);
+            let swap_ok = egl.swap_buffers(self.egl_display, self.egl_surface);
+
+            // GL validation probe: check for errors after initial render setup.
+            let gl_err = unsafe { gl::GetError() };
+            if gl_err != gl::NO_ERROR {
+                tracing::error!(
+                    "[Linux renderer] GL error after initial clear (X11): 0x{:04X}",
+                    gl_err
+                );
+            }
+            if swap_ok.is_err() {
+                let egl_err = egl.get_error();
+                let msg = format!(
+                    "eglSwapBuffers failed during attach probe (X11): EGL error {:?}",
+                    egl_err
+                );
+                tracing::error!("[Linux renderer] {}", msg);
+                let _ = egl.make_current(self.egl_display, None, None, None);
+                return Err(msg);
+            }
+
+            tracing::info!("[Linux renderer] GL validation probe passed (X11)");
 
             // Release the EGL context from this thread so the GLib main thread
             // can make it current in render_frame().
@@ -1210,6 +1337,7 @@ impl Drop for LinuxGlRenderer {
 /// Safety: caller must verify `valid = true`; `inner_ptr` must be live.
 unsafe fn render_frame(inner_ptr: usize) {
     static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static CONSECUTIVE_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let inner = &mut *(inner_ptr as *mut RenderInner);
 
     if !inner.video_active.load(Ordering::Acquire) {
@@ -1235,17 +1363,18 @@ unsafe fn render_frame(inner_ptr: usize) {
 
     if make_current().is_err() {
         let err = egl.get_error();
+        let failures = CONSECUTIVE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
         tracing::warn!(
-            "[Linux renderer] render_frame: eglMakeCurrent failed (EGL error {:?}), retrying",
-            err
+            "[Linux renderer] render_frame: eglMakeCurrent failed (EGL error {:?}, failure #{}) retrying",
+            err, failures
         );
         // Release any stale context state before retrying.
         let _ = egl.make_current(inner.egl_display, None, None, None);
         if make_current().is_err() {
             let err2 = egl.get_error();
             tracing::error!(
-                "[Linux renderer] render_frame: eglMakeCurrent retry failed (EGL error {:?}), skipping frame",
-                err2
+                "[Linux renderer] render_frame: eglMakeCurrent retry failed (EGL error {:?}, failure #{}), skipping frame",
+                err2, failures
             );
             return;
         }
@@ -1292,12 +1421,25 @@ unsafe fn render_frame(inner_ptr: usize) {
     };
 
     if should_render {
+        tracing::trace!("[Linux renderer] rendering frame (fbo=0, {}x{})...", w, h);
         if let Err(e) = rc.render::<*mut c_void>(0, w, h, true) {
-            tracing::trace!("[Linux renderer] render error: {}", e);
+            let failures = CONSECUTIVE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::error!("[Linux renderer] rc.render() failed (failure #{}): {}", failures, e);
             return;
         }
-        let _ = egl.swap_buffers(inner.egl_display, inner.egl_surface);
+        if egl.swap_buffers(inner.egl_display, inner.egl_surface).is_err() {
+            let egl_err = egl.get_error();
+            let failures = CONSECUTIVE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::error!(
+                "[Linux renderer] eglSwapBuffers failed (EGL error {:?}, failure #{})",
+                egl_err, failures
+            );
+            return;
+        }
         rc.report_swap();
+
+        // Reset failure counter on success.
+        CONSECUTIVE_FAILURES.store(0, Ordering::Relaxed);
 
         let n = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
         if n < 5 || n % 60 == 0 {

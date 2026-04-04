@@ -2537,6 +2537,7 @@ version = "0.4.2"
 dependencies = [
  "chrono",
  "futures-util",
+ "libc",
  "mvp-core",
  "reqwest 0.12.28",
  "serde",
