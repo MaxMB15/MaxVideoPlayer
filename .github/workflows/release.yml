@@ -387,11 +387,17 @@ jobs:
                   "signature": linux_sig,
                   "url": f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}/MaxVideoPlayer_linux.tar.gz"
               }
+          base_url = f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}"
+          packages = {
+              "linux-deb-x86_64": f"{base_url}/MaxVideoPlayer_{version}_amd64.deb",
+              "linux-rpm-x86_64": f"{base_url}/MaxVideoPlayer-{version}-1.x86_64.rpm",
+          }
           data = {
               "version": version,
               "notes": "See the CHANGELOG for details.",
               "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "platforms": platforms
+              "platforms": platforms,
+              "packages": packages
           }
           with open("latest.json", "w") as f:
               json.dump(data, f, indent=2)

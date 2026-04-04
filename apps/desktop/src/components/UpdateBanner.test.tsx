@@ -17,8 +17,7 @@ const makeState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
 	installing: false,
 	progress: null,
 	error: null,
-	manualUpdateRequired: false,
-	releaseUrl: null,
+	packageInstall: false,
 	dismiss: vi.fn(),
 	install: vi.fn(),
 	checkForUpdates: vi.fn().mockResolvedValue(null),
@@ -149,6 +148,28 @@ describe("UpdateBanner", () => {
 		expect(progressBar).toBeTruthy();
 	});
 
+	// ── Package install (deb/rpm) ─────────────────────────────────────
+
+	it("shows password required hint when package download completes", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			installing: true,
+			progress: 100,
+			packageInstall: true,
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText(/password required/)).toBeTruthy();
+	});
+
+	it("shows Install button for package installs (same as native)", () => {
+		const state = makeState({
+			update: fakeUpdate() as never,
+			packageInstall: true,
+		});
+		render(<UpdateBanner state={state} />);
+		expect(screen.getByText("Install")).toBeTruthy();
+	});
+
 	// ── Error state ───────────────────────────────────────────────────
 
 	it("displays error message when error is set", () => {
@@ -178,27 +199,5 @@ describe("UpdateBanner", () => {
 		const state = makeState({ update: fakeUpdate() as never, error: null });
 		render(<UpdateBanner state={state} />);
 		expect(screen.queryByText(/Update failed/)).toBeNull();
-	});
-
-	// ── Manual update (deb) ───────────────────────────────────────────
-
-	it("shows Download button instead of Install for package installs", () => {
-		const state = makeState({
-			update: fakeUpdate() as never,
-			manualUpdateRequired: true,
-			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
-		});
-		render(<UpdateBanner state={state} />);
-		expect(screen.getByText("Download")).toBeTruthy();
-		expect(screen.queryByText("Install")).toBeNull();
-	});
-
-	it("shows manual update message for package installs", () => {
-		const state = makeState({
-			update: fakeUpdate() as never,
-			manualUpdateRequired: true,
-		});
-		render(<UpdateBanner state={state} />);
-		expect(screen.getByText(/Visit the releases page/)).toBeTruthy();
 	});
 });

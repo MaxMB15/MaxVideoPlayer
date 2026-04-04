@@ -10,22 +10,26 @@ vi.mock("@tauri-apps/plugin-process", () => ({
 	relaunch: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+	listen: vi.fn().mockResolvedValue(vi.fn()),
+}));
+
 vi.mock("@/lib/tauri", () => ({
-	getInstallInfo: vi
-		.fn()
-		.mockResolvedValue({
-			installType: "native",
-			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
-		}),
+	getInstallInfo: vi.fn().mockResolvedValue({
+		installType: "native",
+		releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
+	}),
+	packageUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { getInstallInfo } from "@/lib/tauri";
+import { getInstallInfo, packageUpdate } from "@/lib/tauri";
 
 const mockCheck = vi.mocked(check);
 const mockRelaunch = vi.mocked(relaunch);
 const mockGetInstallInfo = vi.mocked(getInstallInfo);
+const mockPackageUpdate = vi.mocked(packageUpdate);
 
 const fakeUpdate = (overrides: Record<string, unknown> = {}) => ({
 	version: "2.0.0",
@@ -39,6 +43,10 @@ describe("useUpdateChecker", () => {
 	beforeEach(() => {
 		mockCheck.mockResolvedValue(null);
 		mockRelaunch.mockResolvedValue(undefined);
+		mockGetInstallInfo.mockResolvedValue({
+			installType: "native",
+			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
+		});
 	});
 
 	afterEach(() => {
@@ -247,11 +255,11 @@ describe("useUpdateChecker", () => {
 		expect(result.current.error).toBeNull();
 	});
 
-	// ── package install: manual update required ───────────────────────
+	// ── package install (deb/rpm) ──────────────────────────────────────
 
-	it("sets manualUpdateRequired for package installs (deb/rpm)", async () => {
+	it("sets packageInstall for deb installs", async () => {
 		mockGetInstallInfo.mockResolvedValue({
-			installType: "package",
+			installType: "deb",
 			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
 		});
 		mockCheck.mockResolvedValue(fakeUpdate() as never);
@@ -259,20 +267,29 @@ describe("useUpdateChecker", () => {
 		const { result } = renderHook(() => useUpdateChecker());
 		await waitFor(() => expect(result.current.update).toBeTruthy());
 
-		expect(result.current.manualUpdateRequired).toBe(true);
-		expect(result.current.releaseUrl).toBe(
-			"https://github.com/MaxMB15/MaxVideoPlayer/releases/latest"
-		);
+		expect(result.current.packageInstall).toBe(true);
 	});
 
-	it("opens release URL instead of downloading for package installs", async () => {
+	it("sets packageInstall for rpm installs", async () => {
 		mockGetInstallInfo.mockResolvedValue({
-			installType: "package",
+			installType: "rpm",
+			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
+		});
+		mockCheck.mockResolvedValue(fakeUpdate() as never);
+
+		const { result } = renderHook(() => useUpdateChecker());
+		await waitFor(() => expect(result.current.update).toBeTruthy());
+
+		expect(result.current.packageInstall).toBe(true);
+	});
+
+	it("calls packageUpdate instead of downloadAndInstall for deb installs", async () => {
+		mockGetInstallInfo.mockResolvedValue({
+			installType: "deb",
 			releaseUrl: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
 		});
 		const downloadAndInstall = vi.fn();
 		mockCheck.mockResolvedValue(fakeUpdate({ downloadAndInstall }) as never);
-		const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
 		const { result } = renderHook(() => useUpdateChecker());
 		await waitFor(() => expect(result.current.update).toBeTruthy());
@@ -281,11 +298,8 @@ describe("useUpdateChecker", () => {
 			result.current.install();
 		});
 
-		expect(openSpy).toHaveBeenCalledWith(
-			"https://github.com/MaxMB15/MaxVideoPlayer/releases/latest",
-			"_blank"
-		);
+		expect(mockPackageUpdate).toHaveBeenCalledTimes(1);
 		expect(downloadAndInstall).not.toHaveBeenCalled();
-		openSpy.mockRestore();
+		expect(mockRelaunch).toHaveBeenCalledTimes(1);
 	});
 });

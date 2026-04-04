@@ -76,6 +76,7 @@ pub fn run() {
             commands::rename_super_category,
             commands::delete_super_category,
             commands::get_install_info,
+            commands::package_update,
         ])
         .setup(|app| {
             let app_dir = app

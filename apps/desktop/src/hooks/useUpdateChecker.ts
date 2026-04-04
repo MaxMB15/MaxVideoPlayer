@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { getInstallInfo } from "@/lib/tauri";
+import { listen } from "@tauri-apps/api/event";
+import { getInstallInfo, packageUpdate } from "@/lib/tauri";
 
 export interface UpdateState {
 	update: Update | null;
@@ -9,10 +10,8 @@ export interface UpdateState {
 	installing: boolean;
 	progress: number | null;
 	error: string | null;
-	/** true when update exists but auto-install is unsupported (deb/rpm) */
-	manualUpdateRequired: boolean;
-	/** URL to the releases page for manual download */
-	releaseUrl: string | null;
+	/** true when using package manager update (deb/rpm) instead of Tauri updater */
+	packageInstall: boolean;
 	dismiss: () => void;
 	install: () => void;
 	checkForUpdates: () => Promise<Update | null>;
@@ -24,8 +23,7 @@ export const useUpdateChecker = (): UpdateState => {
 	const [installing, setInstalling] = useState(false);
 	const [progress, setProgress] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [manualUpdateRequired, setManualUpdateRequired] = useState(false);
-	const [releaseUrl, setReleaseUrl] = useState<string | null>(null);
+	const [packageInstall, setPackageInstall] = useState(false);
 
 	// Cache install info so we only call it once
 	const installInfoRef = useRef<{ installType: string; releaseUrl: string } | null>(null);
@@ -49,12 +47,8 @@ export const useUpdateChecker = (): UpdateState => {
 				const result = (await check({ timeout: 5_000 })) ?? null;
 				setUpdate(result);
 
-				if (result && installInfoRef.current.installType === "package") {
-					setManualUpdateRequired(true);
-					setReleaseUrl(installInfoRef.current.releaseUrl);
-				} else {
-					setManualUpdateRequired(false);
-				}
+				const type = installInfoRef.current.installType;
+				setPackageInstall(type === "deb" || type === "rpm");
 
 				return result;
 			} catch (err) {
@@ -89,32 +83,41 @@ export const useUpdateChecker = (): UpdateState => {
 
 	const dismiss = useCallback(() => {
 		setUpdate(null);
-		setManualUpdateRequired(false);
+		setPackageInstall(false);
 	}, []);
 
 	const install = useCallback(async () => {
 		if (!update) return;
 
-		// For deb/rpm installs, open the releases page instead of attempting auto-update
-		if (manualUpdateRequired && releaseUrl) {
-			window.open(releaseUrl, "_blank");
-			return;
-		}
-
 		setInstalling(true);
 		setProgress(0);
 		setError(null);
+
 		try {
-			let downloaded = 0;
-			let total: number | undefined;
-			await update.downloadAndInstall((event) => {
-				if (event.event === "Started") {
-					total = event.data.contentLength ?? undefined;
-				} else if (event.event === "Progress") {
-					downloaded += event.data.chunkLength;
-					if (total) setProgress(Math.round((downloaded / total) * 100));
+			if (packageInstall) {
+				// deb/rpm: use our custom package update command
+				const unlisten = await listen<{ percent: number }>(
+					"package-update://progress",
+					(event) => setProgress(event.payload.percent)
+				);
+				try {
+					await packageUpdate();
+				} finally {
+					unlisten();
 				}
-			});
+			} else {
+				// AppImage/macOS/Windows: use Tauri's built-in updater
+				let downloaded = 0;
+				let total: number | undefined;
+				await update.downloadAndInstall((event) => {
+					if (event.event === "Started") {
+						total = event.data.contentLength ?? undefined;
+					} else if (event.event === "Progress") {
+						downloaded += event.data.chunkLength;
+						if (total) setProgress(Math.round((downloaded / total) * 100));
+					}
+				});
+			}
 			await relaunch();
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -123,7 +126,7 @@ export const useUpdateChecker = (): UpdateState => {
 			setInstalling(false);
 			setProgress(null);
 		}
-	}, [update, manualUpdateRequired, releaseUrl]);
+	}, [update, packageInstall]);
 
 	return {
 		update,
@@ -131,8 +134,7 @@ export const useUpdateChecker = (): UpdateState => {
 		installing,
 		progress,
 		error,
-		manualUpdateRequired,
-		releaseUrl,
+		packageInstall,
 		dismiss,
 		install,
 		checkForUpdates,

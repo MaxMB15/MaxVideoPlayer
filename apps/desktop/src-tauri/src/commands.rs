@@ -1164,13 +1164,12 @@ pub async fn delete_super_category(
         .map_err(|e| e.to_string())
 }
 
-/// Returns the Linux installation type so the frontend can decide whether
-/// the Tauri updater will work (it only supports AppImage on Linux).
+/// Returns the installation type so the frontend knows which update path to use.
 #[derive(Serialize)]
 pub struct InstallInfo {
-    /// "appimage", "deb", or "unknown"
+    /// "appimage" | "deb" | "rpm" | "native"
     pub install_type: String,
-    /// The release download URL for manual updates (deb/rpm users).
+    /// The release download URL for manual updates.
     pub release_url: String,
 }
 
@@ -1179,9 +1178,12 @@ pub fn get_install_info() -> InstallInfo {
     let install_type = if cfg!(target_os = "linux") {
         if std::env::var("APPIMAGE").is_ok() {
             "appimage"
+        } else if std::path::Path::new("/usr/bin/dpkg").exists() {
+            "deb"
+        } else if std::path::Path::new("/usr/bin/rpm").exists() {
+            "rpm"
         } else {
-            // Installed via .deb, .rpm, or other system package — auto-update unsupported
-            "package"
+            "deb" // default fallback for unknown Linux package managers
         }
     } else {
         // macOS and Windows updaters work natively
@@ -1191,4 +1193,91 @@ pub fn get_install_info() -> InstallInfo {
         install_type: install_type.to_string(),
         release_url: "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest".to_string(),
     }
+}
+
+/// Fetch latest.json, download the appropriate package, and install it via pkexec.
+/// Emits "package-update://progress" events with { percent: u8 } payloads.
+#[command]
+pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let info = get_install_info();
+    let pkg_key = match info.install_type.as_str() {
+        "deb" => "linux-deb-x86_64",
+        "rpm" => "linux-rpm-x86_64",
+        other => return Err(format!("package_update not supported for install type: {other}")),
+    };
+
+    // 1. Fetch latest.json to get the package URL
+    let latest_url = "https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/latest.json";
+    let client = reqwest::Client::new();
+    let latest: serde_json::Value = client.get(latest_url)
+        .send().await.map_err(|e| format!("Failed to fetch latest.json: {e}"))?
+        .json().await.map_err(|e| format!("Failed to parse latest.json: {e}"))?;
+
+    let pkg_url = latest.get("packages")
+        .and_then(|p| p.get(pkg_key))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("No package URL found for {pkg_key} in latest.json"))?
+        .to_string();
+
+    // 2. Download the package to a temp file
+    let response = client.get(&pkg_url)
+        .send().await.map_err(|e| format!("Download failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let extension = if info.install_type == "rpm" { "rpm" } else { "deb" };
+    let tmp_path = std::env::temp_dir().join(format!("maxvideoplayer_update.{extension}"));
+
+    let mut file = tokio::fs::File::create(&tmp_path).await
+        .map_err(|e| format!("Failed to create temp file: {e}"))?;
+
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_percent: u8 = 0;
+
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Download stream error: {e}"))?;
+        file.write_all(&chunk).await.map_err(|e| format!("Write error: {e}"))?;
+        downloaded += chunk.len() as u64;
+
+        if total_size > 0 {
+            let percent = ((downloaded as f64 / total_size as f64) * 100.0) as u8;
+            if percent != last_percent {
+                last_percent = percent;
+                let _ = app.emit("package-update://progress", serde_json::json!({ "percent": percent }));
+            }
+        }
+    }
+    file.flush().await.map_err(|e| format!("Flush error: {e}"))?;
+    drop(file);
+
+    // 3. Install via pkexec
+    let install_cmd = match info.install_type.as_str() {
+        "deb" => vec!["pkexec", "dpkg", "-i", tmp_path.to_str().unwrap()],
+        "rpm" => vec!["pkexec", "rpm", "-U", tmp_path.to_str().unwrap()],
+        _ => unreachable!(),
+    };
+
+    let output = std::process::Command::new(install_cmd[0])
+        .args(&install_cmd[1..])
+        .output()
+        .map_err(|e| format!("Failed to run installer: {e}"))?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&tmp_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Installation failed: {stderr}"));
+    }
+
+    Ok(())
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, X, RefreshCw } from "lucide-react";
+import { Download, X, RefreshCw } from "lucide-react";
 import type { UpdateState } from "@/hooks/useUpdateChecker";
 
 interface UpdateBannerProps {
@@ -8,7 +8,7 @@ interface UpdateBannerProps {
 }
 
 export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
-	const { update, installing, progress, error, manualUpdateRequired, dismiss, install } = state;
+	const { update, installing, progress, error, packageInstall, dismiss, install } = state;
 	const [visible, setVisible] = useState(false);
 
 	useEffect(() => {
@@ -35,10 +35,7 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 				{installing ? (
 					<p className="text-xs text-muted-foreground mt-0.5">
 						{progress !== null ? `Downloading… ${progress}%` : "Installing…"}
-					</p>
-				) : manualUpdateRequired ? (
-					<p className="text-xs text-muted-foreground mt-0.5">
-						Visit the releases page to download the latest version for your system.
+						{packageInstall && progress === 100 && " (password required)"}
 					</p>
 				) : (
 					<p className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -65,17 +62,8 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 						onClick={install}
 						className="flex items-center gap-1.5 text-xs font-semibold bg-primary text-primary-foreground px-3 py-1.5 rounded-lg hover:bg-primary/90 transition-colors shrink-0"
 					>
-						{manualUpdateRequired ? (
-							<>
-								<ExternalLink className="h-3 w-3" />
-								Download
-							</>
-						) : (
-							<>
-								<Download className="h-3 w-3" />
-								Install
-							</>
-						)}
+						<Download className="h-3 w-3" />
+						Install
 					</button>
 					<button
 						onClick={dismiss}
