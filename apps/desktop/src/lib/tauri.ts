@@ -299,3 +299,14 @@ export const deleteSuperCategory = (
 	contentType: string,
 	categoryName: string
 ): Promise<void> => invoke("delete_super_category", { providerId, contentType, categoryName });
+
+// --- Install Info ---
+
+export interface InstallInfo {
+	installType: string; // "appimage" | "deb" | "rpm" | "native"
+	releaseUrl: string;
+}
+
+export const getInstallInfo = (): Promise<InstallInfo> => invoke<InstallInfo>("get_install_info");
+
+export const packageUpdate = (): Promise<void> => invoke("package_update");

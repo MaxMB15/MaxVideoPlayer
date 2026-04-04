@@ -8,7 +8,7 @@ interface UpdateBannerProps {
 }
 
 export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
-	const { update, installing, progress, error, dismiss, install } = state;
+	const { update, installing, progress, error, packageInstall, dismiss, install } = state;
 	const [visible, setVisible] = useState(false);
 
 	useEffect(() => {
@@ -35,6 +35,7 @@ export const UpdateBanner = ({ state, hidden }: UpdateBannerProps) => {
 				{installing ? (
 					<p className="text-xs text-muted-foreground mt-0.5">
 						{progress !== null ? `Downloading… ${progress}%` : "Installing…"}
+						{packageInstall && progress === 100 && " (password required)"}
 					</p>
 				) : (
 					<p className="text-xs text-muted-foreground mt-0.5 truncate">
