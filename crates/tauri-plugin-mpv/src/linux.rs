@@ -386,7 +386,63 @@ impl LinuxGlRenderer {
             )),
         }?;
         renderer.csd_offset = csd_offset;
+
+        // Check for blocklisted GPU drivers AFTER construction so that if we
+        // return Err, the renderer is dropped and its Drop impl cleans up
+        // EGL/X11/Wayland resources properly (no leaks).
+        Self::check_gpu_blocklist(&renderer)?;
+
         Ok(renderer)
+    }
+
+    /// Check the GL renderer string against known-bad drivers that crash during
+    /// mpv's OpenGL render pipeline (texture upload, shader dispatch). Simple GL
+    /// operations (glClear, glSwapBuffers) pass on these drivers, but mpv rendering
+    /// segfaults. Returns Err to trigger fallback to a separate mpv window.
+    fn check_gpu_blocklist(renderer: &Self) -> Result<(), String> {
+        if std::env::var("MVP_FORCE_EMBEDDED_RENDERER").unwrap_or_default() == "1" {
+            tracing::info!("[Linux renderer] MVP_FORCE_EMBEDDED_RENDERER=1, skipping blocklist");
+            return Ok(());
+        }
+
+        let egl = egl_instance();
+        if egl.make_current(
+            renderer.egl_display,
+            Some(renderer.egl_surface),
+            Some(renderer.egl_surface),
+            Some(renderer.egl_context),
+        ).is_err() {
+            return Err("Cannot make EGL context current for blocklist check".into());
+        }
+
+        gl::load_with(|name| gl_get_proc_address(name) as *const _);
+        let renderer_str = unsafe {
+            let s = gl::GetString(gl::RENDERER);
+            if s.is_null() { String::new() }
+            else { std::ffi::CStr::from_ptr(s as *const _).to_string_lossy().into_owned() }
+        };
+        let _ = egl.make_current(renderer.egl_display, None, None, None);
+
+        let renderer_lower = renderer_str.to_lowercase();
+        let blocklist: &[(&str, &str)] = &[
+            ("svga3d", "VMware virtual GPU — SVGA3D driver crashes on mpv texture operations"),
+            ("llvmpipe", "Software rasterizer (llvmpipe) — too slow and unstable for embedded video"),
+            ("swrast", "Software rasterizer (swrast) — no GPU acceleration available"),
+            ("softpipe", "Software rasterizer (softpipe) — no GPU acceleration available"),
+        ];
+        for (pattern, reason) in blocklist {
+            if renderer_lower.contains(pattern) {
+                let msg = format!(
+                    "GL renderer blocklisted for embedded rendering: {} ({}). \
+                     Falling back to separate mpv window. \
+                     Set MVP_FORCE_EMBEDDED_RENDERER=1 to override.",
+                    renderer_str, reason
+                );
+                tracing::warn!("[Linux renderer] {}", msg);
+                return Err(msg);
+            }
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -549,7 +605,9 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("eglCreateContext: {:?}", e))?;
 
         // Log EGL/GL diagnostics to help debug driver issues.
-        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "X11");
+        // Blocklist check is deferred to new() so Drop cleans up EGL resources.
+        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "X11")
+            .unwrap_or_else(|e| tracing::warn!("[Linux renderer] X11 diagnostics issue: {}", e));
 
         tracing::info!(
             "[Linux renderer] X11 child window + EGL context created (OpenGL Core 3.2)"
@@ -743,7 +801,9 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("Wayland eglCreateContext: {:?}", e))?;
 
         // Log EGL/GL diagnostics to help debug driver issues.
-        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "Wayland");
+        // Blocklist check is deferred to new() so Drop cleans up EGL resources.
+        Self::log_egl_diagnostics(egl, egl_display, egl_surface, egl_context, "Wayland")
+            .unwrap_or_else(|e| tracing::warn!("[Linux renderer] Wayland diagnostics issue: {}", e));
 
         tracing::info!(
             "[Linux renderer] Wayland subsurface + wl_egl_window + EGL context created (OpenGL Core 3.2)"
@@ -821,13 +881,17 @@ impl LinuxGlRenderer {
 
     /// Log EGL vendor/version and GL renderer info for diagnostics.
     /// Makes the context current temporarily, queries strings, then releases.
+    ///
+    /// Returns `Err` if the GL renderer is known to crash with embedded mpv
+    /// rendering (e.g. VMware SVGA3D, software rasterizers). The caller should
+    /// bail to fallback in that case.
     fn log_egl_diagnostics(
         egl: &egl::DynamicInstance<egl::EGL1_4>,
         display: egl::Display,
         surface: egl::Surface,
         context: egl::Context,
         backend: &str,
-    ) {
+    ) -> Result<(), String> {
         let egl_vendor = egl.query_string(Some(display), egl::VENDOR)
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "unknown".into());
@@ -846,22 +910,25 @@ impl LinuxGlRenderer {
         // Temporarily make context current to query GL strings.
         if egl.make_current(display, Some(surface), Some(surface), Some(context)).is_ok() {
             gl::load_with(|name| gl_get_proc_address(name) as *const _);
+            let renderer_str;
+            let version_str;
+            let vendor_str;
             unsafe {
                 let gl_renderer = gl::GetString(gl::RENDERER);
                 let gl_version = gl::GetString(gl::VERSION);
                 let gl_vendor = gl::GetString(gl::VENDOR);
 
-                let renderer_str = if !gl_renderer.is_null() {
+                renderer_str = if !gl_renderer.is_null() {
                     std::ffi::CStr::from_ptr(gl_renderer as *const _).to_string_lossy().into_owned()
                 } else {
                     "null".into()
                 };
-                let version_str = if !gl_version.is_null() {
+                version_str = if !gl_version.is_null() {
                     std::ffi::CStr::from_ptr(gl_version as *const _).to_string_lossy().into_owned()
                 } else {
                     "null".into()
                 };
-                let vendor_str = if !gl_vendor.is_null() {
+                vendor_str = if !gl_vendor.is_null() {
                     std::ffi::CStr::from_ptr(gl_vendor as *const _).to_string_lossy().into_owned()
                 } else {
                     "null".into()
@@ -883,11 +950,14 @@ impl LinuxGlRenderer {
                 }
             }
             let _ = egl.make_current(display, None, None, None);
+            Ok(())
         } else {
-            tracing::warn!(
-                "[Linux renderer] Could not make context current for GL diagnostics ({})",
+            let msg = format!(
+                "Could not make context current for GL diagnostics ({})",
                 backend
             );
+            tracing::warn!("[Linux renderer] {}", msg);
+            Err(msg)
         }
     }
 
