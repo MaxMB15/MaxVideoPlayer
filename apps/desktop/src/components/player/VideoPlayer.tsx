@@ -5,7 +5,7 @@ import { SubtitleOverlay } from "./SubtitleOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
 import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
 import { LiveInfoDrawer } from "@/components/channels/LiveInfoDrawer";
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
@@ -94,7 +94,9 @@ export const PlayerView = () => {
 		seriesEpisodes?: Channel[];
 	} | null;
 
-	useEffect(() => {
+	// useLayoutEffect ensures the background is set BEFORE the browser paints,
+	// preventing a transparent flash when navigating to the player page.
+	useLayoutEffect(() => {
 		document.documentElement.style.backgroundColor = mpv.firstFrameReady
 			? "transparent"
 			: "black";

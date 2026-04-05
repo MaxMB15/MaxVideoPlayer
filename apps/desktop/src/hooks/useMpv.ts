@@ -51,12 +51,14 @@ export const useMpv = () => {
 
 	// On mount, check if mpv is already playing (e.g. user navigated away and back).
 	// If so, restore firstFrameReady immediately so the background turns transparent.
-	// Skip if a load is already in progress (loadingRef set before this IPC resolves)
-	// to avoid a transparent flash that load() would immediately cancel.
+	// Skip if a load was triggered during this mount cycle — the loadedThisMountRef
+	// flag prevents a race where the async mpvGetState() resolves after load()
+	// completes and incorrectly sets firstFrameReady before the first frame renders.
+	const loadedThisMountRef = useRef(false);
 	useEffect(() => {
 		mpvGetState()
 			.then((s) => {
-				if (!loadingRef.current && (s.isPlaying || s.isPaused)) {
+				if (!loadingRef.current && !loadedThisMountRef.current && (s.isPlaying || s.isPaused)) {
 					setFirstFrameReady(true);
 				}
 			})
@@ -66,6 +68,7 @@ export const useMpv = () => {
 	const load = useCallback(async (url: string) => {
 		if (loadingRef.current) return;
 		loadingRef.current = true;
+		loadedThisMountRef.current = true;
 		setError(null);
 		setFallbackActive(false);
 		setFirstFrameReady(false);
