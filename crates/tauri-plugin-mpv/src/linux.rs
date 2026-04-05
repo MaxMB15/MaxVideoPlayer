@@ -881,9 +881,9 @@ impl LinuxGlRenderer {
     /// Log EGL vendor/version and GL renderer info for diagnostics.
     /// Makes the context current temporarily, queries strings, then releases.
     ///
-    /// Returns `Err` if the GL renderer is known to crash with embedded mpv
-    /// rendering (e.g. VMware SVGA3D, software rasterizers). The caller should
-    /// bail to fallback in that case.
+    /// Returns `Err` if making the EGL context current fails or if the GL
+    /// renderer is a known software rasterizer (e.g. llvmpipe, swrast).
+    /// The caller should bail to fallback in that case.
     fn log_egl_diagnostics(
         egl: &egl::DynamicInstance<egl::EGL1_4>,
         display: egl::Display,
@@ -1049,10 +1049,13 @@ impl PlatformRenderer for LinuxGlRenderer {
                 // to fallback rather than waiting for a crash in render_frame.
                 let gl_err = unsafe { gl::GetError() };
                 if gl_err != gl::NO_ERROR {
-                    tracing::error!(
-                        "[Linux renderer] GL error after initial clear (Wayland): 0x{:04X}",
+                    let msg = format!(
+                        "GL error after initial clear (Wayland): 0x{:04X}",
                         gl_err
                     );
+                    tracing::error!("[Linux renderer] {}", msg);
+                    let _ = egl.make_current(display, None, None, None);
+                    return Err(msg);
                 }
                 if swap_ok.is_err() {
                     let egl_err = egl.get_error();
@@ -1129,10 +1132,13 @@ impl PlatformRenderer for LinuxGlRenderer {
             // GL validation probe: check for errors after initial render setup.
             let gl_err = unsafe { gl::GetError() };
             if gl_err != gl::NO_ERROR {
-                tracing::error!(
-                    "[Linux renderer] GL error after initial clear (X11): 0x{:04X}",
+                let msg = format!(
+                    "GL error after initial clear (X11): 0x{:04X}",
                     gl_err
                 );
+                tracing::error!("[Linux renderer] {}", msg);
+                let _ = egl.make_current(self.egl_display, None, None, None);
+                return Err(msg);
             }
             if swap_ok.is_err() {
                 let egl_err = egl.get_error();
@@ -1559,9 +1565,9 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-/// Software-safe fallback options for blocklisted GPUs (e.g. VMware SVGA3D).
-/// Uses vo=x11 (pure software blitting) and hwdec=no to avoid any GPU/GL calls
-/// that would crash on drivers that fail mpv's rendering pipeline.
+/// Software-safe fallback options for blocklisted software renderers (llvmpipe, swrast, softpipe).
+/// Uses vo=x11 (pure software blitting) and hwdec=no to avoid GPU/GL calls
+/// that fail on these drivers.
 pub fn software_fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "x11"),

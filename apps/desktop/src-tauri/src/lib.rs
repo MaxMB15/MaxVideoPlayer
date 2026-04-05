@@ -13,24 +13,29 @@ fn install_crash_handler() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| unsafe {
         unsafe extern "C" fn crash_handler(sig: libc::c_int) {
-            // Write directly to stderr -no allocations, no locks.
+            // Write directly to stderr — no allocations, no locks (async-signal-safe).
             let msg = match sig {
-                11 => b"[CRASH] SIGSEGV -segmentation fault in MaxVideoPlayer.\n\
+                libc::SIGSEGV => b"[CRASH] SIGSEGV - segmentation fault in MaxVideoPlayer.\n\
                          This typically indicates a GPU driver crash in the EGL/OpenGL rendering pipeline.\n\
                          Try running with: GDK_BACKEND=x11 max-video-player\n\
                          Or set MVP_DISABLE_EMBEDDED_RENDERER=1 to use fallback rendering.\n" as &[u8],
-                6  => b"[CRASH] SIGABRT -abort signal in MaxVideoPlayer.\n" as &[u8],
-                _  => b"[CRASH] Fatal signal in MaxVideoPlayer.\n" as &[u8],
+                libc::SIGABRT => b"[CRASH] SIGABRT - abort signal in MaxVideoPlayer.\n" as &[u8],
+                _ => b"[CRASH] Fatal signal in MaxVideoPlayer.\n" as &[u8],
             };
             libc::write(2, msg.as_ptr() as *const _, msg.len());
 
-            // Re-raise with default handler to get the core dump / exit code.
-            libc::signal(sig, libc::SIG_DFL);
-            libc::raise(sig);
+            // SA_RESETHAND already restored default disposition; re-raise to get core dump.
+            libc::kill(libc::getpid(), sig);
+            libc::_exit(128 + sig);
         }
 
-        libc::signal(libc::SIGSEGV, crash_handler as libc::sighandler_t);
-        libc::signal(libc::SIGABRT, crash_handler as libc::sighandler_t);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_flags = libc::SA_RESETHAND;
+        action.sa_sigaction = crash_handler as usize;
+        libc::sigemptyset(&mut action.sa_mask);
+
+        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGABRT, &action, std::ptr::null_mut());
     });
 }
 
