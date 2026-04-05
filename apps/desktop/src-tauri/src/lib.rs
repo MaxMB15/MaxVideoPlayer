@@ -36,11 +36,14 @@ fn install_crash_handler() {
 
 /// Work around WebKit2GTK DMABUF renderer issue that causes a black/blank
 /// window in AppImage builds on some Linux configurations.
-/// Setting this env var before GTK init disables the broken DMABUF path.
+/// Only applied inside AppImage (detected via the APPIMAGE env var set by
+/// the AppImage runtime) — the workaround breaks embedded video on systems
+/// where the DMABUF renderer works correctly.
 #[cfg(target_os = "linux")]
 fn apply_linux_workarounds() {
-    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        tracing::info!("[Linux] Setting WEBKIT_DISABLE_DMABUF_RENDERER=1 (AppImage black screen workaround)");
+    let is_appimage = std::env::var("APPIMAGE").is_ok();
+    if is_appimage && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        tracing::info!("[Linux] AppImage detected — setting WEBKIT_DISABLE_DMABUF_RENDERER=1");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 }
