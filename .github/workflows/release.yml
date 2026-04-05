@@ -407,3 +407,71 @@ jobs:
           gh release upload "v${VERSION}" latest.json \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+  # ── Sync main back to dev after release ─────────────────────────────────
+  sync-dev:
+    runs-on: ubuntu-latest
+    needs: [publish-latest-json]
+    if: always() && needs.publish-latest-json.result == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into dev
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
+        run: |
+          set -euo pipefail
+
+          # Check if dev branch exists before fetching (fetch fails if branch is missing)
+          if ! git ls-remote --heads origin dev | grep -q .; then
+            echo "::notice::No dev branch found — skipping sync."
+            exit 0
+          fi
+
+          git fetch origin main dev
+
+          git checkout dev
+          git reset --hard origin/dev
+
+          # Check if main has anything new for dev
+          AHEAD=$(git rev-list --count origin/dev..origin/main)
+          if [ "$AHEAD" = "0" ]; then
+            echo "dev is already up to date with main."
+            exit 0
+          fi
+
+          # Try fast-forward merge first, fall back to merge commit
+          if git merge origin/main --ff-only 2>/dev/null; then
+            echo "Fast-forwarded dev to main."
+            git push origin dev
+          elif git merge origin/main --no-edit -m "chore: sync main back to dev after release"; then
+            echo "Merged main into dev (merge commit)."
+            git push origin dev
+          else
+            echo "::warning::Auto-merge of main into dev failed (conflicts). Creating PR instead."
+            # Create a PR for manual resolution
+            BRANCH="chore/sync-main-to-dev-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
+            git merge --abort || true
+            git checkout -b "$BRANCH" origin/main
+            git push -u origin "$BRANCH"
+            gh pr create \
+              --base dev \
+              --head "$BRANCH" \
+              --title "chore: sync main back to dev after release" \
+              --body "Automated post-release sync. Main has changes (version bump + release tag) that need to be merged back into dev. Resolve any conflicts and merge."
+          fi
+
+      - name: Summary
+        run: echo "### main synced back to dev" >> "$GITHUB_STEP_SUMMARY"
