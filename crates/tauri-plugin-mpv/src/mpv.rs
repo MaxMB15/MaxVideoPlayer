@@ -13,7 +13,7 @@ use std::sync::{
 use crate::macos::{embedded_options, fallback_options, MacosGlRenderer};
 
 #[cfg(target_os = "linux")]
-use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, LinuxGlRenderer};
+use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, software_fallback_options as linux_software_fallback_options, LinuxGlRenderer};
 
 pub struct MpvState {
     inner: Mutex<MpvEngine>,
@@ -165,11 +165,11 @@ impl MpvState {
         self.fallback_active.store(true, Ordering::Release);
         let _ = app.emit("mpv://render-fallback", serde_json::json!({ "reason": reason }));
 
-        self.launch_fallback_impl(url)
+        self.launch_fallback_impl(url, reason)
     }
 
     #[cfg(target_os = "macos")]
-    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+    fn launch_fallback_impl(&self, url: &str, _reason: &str) -> Result<(), String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&fallback_options())?;
         engine.loadfile(url)?;
@@ -178,16 +178,24 @@ impl MpvState {
     }
 
     #[cfg(target_os = "linux")]
-    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+    fn launch_fallback_impl(&self, url: &str, reason: &str) -> Result<(), String> {
+        // If the GPU is blocklisted, vo=gpu will also crash. Use software-only output.
+        let gpu_blocklisted = reason.contains("blocklisted");
+        let opts = if gpu_blocklisted {
+            tracing::info!("[MPV] GPU blocklisted - using software video output (vo=x11, hwdec=no)");
+            linux_software_fallback_options()
+        } else {
+            linux_fallback_options()
+        };
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&linux_fallback_options())?;
+        engine.create(&opts)?;
         engine.loadfile(url)?;
         engine.set_current_url(url);
         Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn launch_fallback_impl(&self, url: &str) -> Result<(), String> {
+    fn launch_fallback_impl(&self, url: &str, _reason: &str) -> Result<(), String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&[])?;
         engine.loadfile(url)?;

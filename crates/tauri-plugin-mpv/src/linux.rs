@@ -425,10 +425,9 @@ impl LinuxGlRenderer {
 
         let renderer_lower = renderer_str.to_lowercase();
         let blocklist: &[(&str, &str)] = &[
-            ("svga3d", "VMware virtual GPU — SVGA3D driver crashes on mpv texture operations"),
-            ("llvmpipe", "Software rasterizer (llvmpipe) — too slow and unstable for embedded video"),
-            ("swrast", "Software rasterizer (swrast) — no GPU acceleration available"),
-            ("softpipe", "Software rasterizer (softpipe) — no GPU acceleration available"),
+            ("llvmpipe", "Software rasterizer (llvmpipe) -- too slow and unstable for embedded video"),
+            ("swrast", "Software rasterizer (swrast) -- no GPU acceleration available"),
+            ("softpipe", "Software rasterizer (softpipe) -- no GPU acceleration available"),
         ];
         for (pattern, reason) in blocklist {
             if renderer_lower.contains(pattern) {
@@ -1553,6 +1552,21 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("hwdec", "auto"),
         ("ao", "pipewire,pulse,alsa"),
         ("video-sync", "display-resample"),
+        ("cache", "yes"),
+        ("demuxer-max-bytes", "150MiB"),
+        ("demuxer-max-back-bytes", "75MiB"),
+        ("keep-open", "yes"),
+    ]
+}
+
+/// Software-safe fallback options for blocklisted GPUs (e.g. VMware SVGA3D).
+/// Uses vo=x11 (pure software blitting) and hwdec=no to avoid any GPU/GL calls
+/// that would crash on drivers that fail mpv's rendering pipeline.
+pub fn software_fallback_options() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("vo", "x11"),
+        ("hwdec", "no"),
+        ("ao", "pipewire,pulse,alsa"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
