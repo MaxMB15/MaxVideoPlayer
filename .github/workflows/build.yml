@@ -161,8 +161,9 @@ jobs:
           keep_files: true
 
   # ── macOS Desktop (push, or PRs with macOS-relevant changes) ─────────────
+  # Skip platform builds on version-bump PRs (only version numbers change).
   build-macos:
-    if: needs.detect-changes.outputs.macos == 'true'
+    if: needs.detect-changes.outputs.macos == 'true' && !startsWith(github.head_ref, 'chore-bump-v')
     needs: [test, detect-changes]
     runs-on: macos-latest
     steps:
@@ -214,7 +215,7 @@ jobs:
 
   # ── Linux Desktop (push, or PRs with Linux-relevant changes) ────────────
   build-linux:
-    if: needs.detect-changes.outputs.linux == 'true'
+    if: needs.detect-changes.outputs.linux == 'true' && !startsWith(github.head_ref, 'chore-bump-v')
     needs: [test, detect-changes]
     runs-on: ubuntu-latest
     steps:
