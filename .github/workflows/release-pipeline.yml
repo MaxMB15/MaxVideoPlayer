@@ -1,0 +1,214 @@
+# One-click release pipeline: dev -> main -> version bump -> tag -> release build.
+#
+# Replaces the manual 13-step process:
+#   1. Merges dev into main (fast-forward or merge commit)
+#   2. Bumps version on main
+#   3. Pushes annotated tag vX.Y.Z (triggers release.yml)
+#
+# After release.yml completes, its sync-dev job auto-merges main back to dev.
+#
+# Prerequisites:
+#   - Secret: RELEASE_AUTOMATION_PAT (fine-grained PAT: Contents + Pull requests RW)
+#   - Secret: TAURI_SIGNING_PRIVATE_KEY (for release.yml)
+#   - Optional var: RELEASE_ALLOWED_ACTORS (comma-separated usernames)
+#
+# The existing release-bump.yml and release-tag.yml still work as manual fallbacks.
+
+name: Release — one-click pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Semver bump type (see https://semver.org)"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: "Dry run — show what would happen without pushing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
+
+jobs:
+  release-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release permission
+        env:
+          ACTOR: ${{ github.actor }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_ALLOWED_ACTORS }}
+        run: |
+          set -euo pipefail
+          python3 << 'PY'
+          import os
+          actor = os.environ["ACTOR"]
+          owner = os.environ["REPO_OWNER"]
+          raw = os.environ.get("ALLOWED_ACTORS", "").strip()
+          if raw:
+              allowed = [x.strip() for x in raw.split(",") if x.strip()]
+          else:
+              allowed = [owner]
+          if actor not in allowed:
+              print(f"::error::User '{actor}' is not allowed to run releases. "
+                    f"Allowed: {allowed}. Set repository variable RELEASE_ALLOWED_ACTORS.")
+              raise SystemExit(1)
+          print(f"OK: {actor} is authorized to release.")
+          PY
+
+      - name: Require automation PAT
+        env:
+          RELEASE_AUTOMATION_PAT: ${{ secrets.RELEASE_AUTOMATION_PAT }}
+        run: |
+          if [ -z "${RELEASE_AUTOMATION_PAT:-}" ]; then
+            echo "::error::RELEASE_AUTOMATION_PAT secret is required."
+            exit 1
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_AUTOMATION_PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge dev into main
+        run: |
+          set -euo pipefail
+          git fetch origin main dev
+
+          # Check that dev is ahead of main
+          BEHIND=$(git rev-list --count origin/main..origin/dev)
+          if [ "$BEHIND" = "0" ]; then
+            echo "::warning::dev has no new commits over main. Continuing with version bump only."
+          fi
+
+          git checkout main
+          git reset --hard origin/main
+
+          # Merge dev into main (non-interactive)
+          echo "Merging origin/dev into main..."
+          git merge origin/dev --no-edit -m "Merge branch 'dev' into main for release"
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN — would merge dev into main"
+            echo "Commits from dev:"
+            git log origin/main..HEAD --oneline
+          else
+            git push origin main
+            echo "Pushed merged main."
+          fi
+
+      - name: Install Rust (for Cargo.lock refresh)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump version
+        id: ver
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          export CURRENT
+          NEW=$(python3 - <<'PY'
+          import os
+          cur = os.environ["CURRENT"]
+          rt = os.environ["RELEASE_TYPE"]
+          major, minor, patch = map(int, cur.split("."))
+          if rt == "patch":
+              print(f"{major}.{minor}.{patch + 1}")
+          elif rt == "minor":
+              print(f"{major}.{minor + 1}.0")
+          elif rt == "major":
+              print(f"{major + 1}.0.0")
+          else:
+              raise SystemExit(1)
+          PY
+          )
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumping $CURRENT -> $NEW ($RELEASE_TYPE)"
+          python3 scripts/bump-version.py "$NEW"
+
+      - name: Refresh Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Commit version bump
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
+        run: |
+          set -euo pipefail
+          git add apps/desktop/src-tauri/tauri.conf.json \
+                  apps/desktop/src-tauri/Cargo.toml \
+                  apps/desktop/src/components/settings/Settings.tsx \
+                  Cargo.lock
+          git commit -m "chore: bump version to $NEW"
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN — would commit and push version bump"
+          else
+            git push origin main
+            echo "Pushed version bump to main."
+          fi
+
+      - name: Create and push tag
+        id: tag
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
+        run: |
+          set -euo pipefail
+          TAG="v${NEW}"
+
+          # Check tag doesn't already exist
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "::error::Tag $TAG already exists on remote. Delete it first or use a different version."
+            exit 1
+          fi
+
+          git tag -a "$TAG" -m "Release $TAG"
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN — would push tag $TAG (triggers release.yml)"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "$TAG"
+            echo "Pushed tag $TAG — release.yml will now build and publish."
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
+          CURRENT: ${{ steps.ver.outputs.current }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "### Dry run complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "Would have:" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Release pipeline complete" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- Merged \`dev\` into \`main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Bumped version: \`$CURRENT\` -> \`$NEW\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pushed tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" != "true" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Next:** [release.yml](${{ github.server_url }}/${{ github.repository }}/actions/workflows/release.yml) builds and publishes the release, then auto-syncs \`main\` back to \`dev\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
