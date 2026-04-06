@@ -1239,8 +1239,9 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
         .suffix(&format!(".{extension}"))
         .tempfile_in(std::env::temp_dir())
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    let tmp_path = temp_file.path().to_path_buf();
-    let mut file = tokio::fs::File::from_std(temp_file.into_file());
+    // keep() persists the file on disk (disables auto-delete) so dpkg/rpm can access it by path.
+    let (std_file, tmp_path) = temp_file.keep().map_err(|e| format!("Failed to persist temp file: {e}"))?;
+    let mut file = tokio::fs::File::from_std(std_file);
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;

@@ -31,7 +31,7 @@ fn install_crash_handler() {
 
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_flags = libc::SA_RESETHAND;
-        action.sa_sigaction = crash_handler as usize;
+        action.sa_sigaction = crash_handler as *const () as usize;
         libc::sigemptyset(&mut action.sa_mask);
 
         libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
