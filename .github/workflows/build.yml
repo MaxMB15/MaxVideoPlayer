@@ -28,6 +28,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Enforce merge source for PRs targeting main ─────────────────────────
+  # Only dev and release automation branches may merge into main.
+  check-merge-source:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate source branch
+        run: |
+          HEAD="${{ github.head_ref }}"
+          if [[ "$HEAD" == "dev" || "$HEAD" == chore-bump-v* || "$HEAD" == chore/release-* || "$HEAD" == chore/sync-main-* ]]; then
+            echo "OK: '$HEAD' is allowed to merge into main."
+          else
+            echo "::error::Branch '$HEAD' is not allowed to merge into main. Only dev and release automation branches can target main."
+            exit 1
+          fi
+
   # ── Detect which platform-specific files changed ─────────────────────────
   # On PRs: uses dorny/paths-filter to check changed files.
   # On push: outputs 'true' for both so builds always run.
