@@ -1233,14 +1233,16 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
 
     let total_size = response.content_length().unwrap_or(0);
     let extension = if info.install_type == "rpm" { "rpm" } else { "deb" };
+    // keep() disables auto-delete and returns a TempPath (RAII: deletes on drop)
+    // plus the raw File handle for writing. TempPath stays alive until end of
+    // function, so dpkg/rpm can access the file, and cleanup happens on all paths.
     use tempfile::Builder;
     let temp_file = Builder::new()
         .prefix("maxvideoplayer_update.")
         .suffix(&format!(".{extension}"))
         .tempfile_in(std::env::temp_dir())
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    // keep() persists the file on disk (disables auto-delete) so dpkg/rpm can access it by path.
-    let (std_file, tmp_path) = temp_file.keep().map_err(|e| format!("Failed to persist temp file: {e}"))?;
+    let (std_file, tmp_path) = temp_file.into_parts();
     let mut file = tokio::fs::File::from_std(std_file);
 
     let mut stream = response.bytes_stream();
@@ -1286,8 +1288,7 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
         _ => unreachable!(),
     };
 
-    // Clean up temp file
-    let _ = std::fs::remove_file(&tmp_path);
+    // tmp_path (TempPath) auto-deletes on drop at end of function.
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
