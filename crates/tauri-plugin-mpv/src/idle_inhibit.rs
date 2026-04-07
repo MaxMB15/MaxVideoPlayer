@@ -72,6 +72,7 @@ impl IdleInhibitor {
         use std::ffi::c_void;
 
         // IOPMAssertionCreateWithName signature from IOKit/pwr_mgt/IOPMLib.h
+        #[link(name = "IOKit", kind = "framework")]
         extern "C" {
             fn IOPMAssertionCreateWithName(
                 assertion_type: *const c_void,   // CFStringRef
@@ -113,6 +114,7 @@ impl IdleInhibitor {
 
     #[cfg(target_os = "macos")]
     fn platform_uninhibit(&self, state: &mut InhibitState) {
+        #[link(name = "IOKit", kind = "framework")]
         extern "C" {
             fn IOPMAssertionRelease(assertion_id: u32) -> i32;
         }
@@ -172,6 +174,7 @@ impl Drop for IdleInhibitor {
 // ── macOS helpers ────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(cf: *const std::ffi::c_void);
 }
@@ -179,6 +182,7 @@ extern "C" {
 #[cfg(target_os = "macos")]
 fn cfstring(s: &str) -> *const std::ffi::c_void {
     use std::ffi::c_void;
+    #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         fn CFStringCreateWithBytes(
             alloc: *const c_void,
