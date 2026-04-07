@@ -164,6 +164,18 @@ pub fn run() {
                 cache: Mutex::new(cache),
             });
 
+            // Set the WebView's native background to fully transparent so the
+            // video surface (positioned below the WebView) is visible through it.
+            // CSS `background: transparent` alone is not sufficient on all Linux
+            // compositors (e.g. Pop!_OS/COSMIC with WebKit2GTK DMABUF renderer).
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if let Some(ref window) = app.get_webview_window("main") {
+                use tauri::webview::Color;
+                if let Err(e) = window.set_background_color(Some(Color(0, 0, 0, 0))) {
+                    tracing::warn!("Failed to set WebView background transparent: {}", e);
+                }
+            }
+
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();

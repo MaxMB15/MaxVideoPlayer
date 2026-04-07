@@ -6,6 +6,7 @@ extern crate objc;
 
 mod commands;
 mod engine;
+mod idle_inhibit;
 pub mod mpv;
 mod renderer;
 

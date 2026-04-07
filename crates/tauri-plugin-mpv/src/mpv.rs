@@ -3,6 +3,7 @@
 
 pub use crate::engine::PlayerState;
 use crate::engine::MpvEngine;
+use crate::idle_inhibit::IdleInhibitor;
 use crate::renderer::PlatformRenderer;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -19,6 +20,7 @@ pub struct MpvState {
     inner: Mutex<MpvEngine>,
     renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
     fallback_active: AtomicBool,
+    idle_inhibitor: IdleInhibitor,
 }
 
 impl MpvState {
@@ -27,6 +29,7 @@ impl MpvState {
             inner: Mutex::new(MpvEngine::new()),
             renderer: Mutex::new(None),
             fallback_active: AtomicBool::new(false),
+            idle_inhibitor: IdleInhibitor::new(),
         }
     }
 
@@ -43,9 +46,14 @@ impl MpvState {
         let old_renderer = self.renderer.lock().map_err(|e| e.to_string())?.take();
         drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().map_err(|e| e.to_string())?.stop();
+        self.idle_inhibitor.uninhibit();
         self.fallback_active.store(false, Ordering::Release);
 
-        self.load_impl(url, app)
+        let result = self.load_impl(url, app);
+        if result.is_ok() {
+            self.idle_inhibitor.inhibit();
+        }
+        result
     }
 
     #[cfg(target_os = "macos")]
@@ -230,17 +238,26 @@ impl MpvState {
     }
 
     pub fn play(&self) -> Result<(), String> {
-        self.inner.lock().map_err(|e| e.to_string())?.play()
+        let result = self.inner.lock().map_err(|e| e.to_string())?.play();
+        if result.is_ok() {
+            self.idle_inhibitor.inhibit();
+        }
+        result
     }
 
     pub fn pause(&self) -> Result<(), String> {
-        self.inner.lock().map_err(|e| e.to_string())?.pause()
+        let result = self.inner.lock().map_err(|e| e.to_string())?.pause();
+        if result.is_ok() {
+            self.idle_inhibitor.uninhibit();
+        }
+        result
     }
 
     pub fn stop(&self) {
         let old_renderer = self.renderer.lock().unwrap().take();
         drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().unwrap().stop();
+        self.idle_inhibitor.uninhibit();
     }
 
     pub fn seek(&self, position: f64) -> Result<(), String> {

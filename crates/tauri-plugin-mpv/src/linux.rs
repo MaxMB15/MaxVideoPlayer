@@ -972,6 +972,7 @@ impl LinuxGlRenderer {
 
 impl PlatformRenderer for LinuxGlRenderer {
     fn attach(&mut self, mpv: &mut Mpv) -> Result<(), String> {
+        reset_frame_counters();
         let egl = egl_instance();
         let is_wayland = self.wayland.is_some();
 
@@ -1408,11 +1409,19 @@ impl Drop for LinuxGlRenderer {
 // Per-frame rendering — glib main thread only
 // ---------------------------------------------------------------------------
 
+static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CONSECUTIVE_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Reset per-session frame diagnostics. Called at the start of each attach()
+/// so logs for a new playback session start from frame #0.
+fn reset_frame_counters() {
+    FRAME_COUNT.store(0, Ordering::Relaxed);
+    CONSECUTIVE_FAILURES.store(0, Ordering::Relaxed);
+}
+
 /// Render one frame. Called on the glib main thread by the update callback.
 /// Safety: caller must verify `valid = true`; `inner_ptr` must be live.
 unsafe fn render_frame(inner_ptr: usize) {
-    static FRAME_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    static CONSECUTIVE_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let inner = &mut *(inner_ptr as *mut RenderInner);
 
     if !inner.video_active.load(Ordering::Acquire) {
@@ -1549,6 +1558,10 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        // Log mpv-internal messages (audio/video init, codec selection, errors)
+        // to stderr so they appear alongside our tracing output for diagnostics.
+        ("terminal", "yes"),
+        ("msg-level", "all=status"),
     ]
 }
 
@@ -1562,6 +1575,8 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        ("terminal", "yes"),
+        ("msg-level", "all=status"),
     ]
 }
 
@@ -1577,5 +1592,7 @@ pub fn software_fallback_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        ("terminal", "yes"),
+        ("msg-level", "all=status"),
     ]
 }
