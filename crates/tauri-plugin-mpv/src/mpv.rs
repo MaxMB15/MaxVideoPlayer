@@ -46,6 +46,7 @@ impl MpvState {
         let old_renderer = self.renderer.lock().map_err(|e| e.to_string())?.take();
         drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().map_err(|e| e.to_string())?.stop();
+        self.idle_inhibitor.uninhibit();
         self.fallback_active.store(false, Ordering::Release);
 
         let result = self.load_impl(url, app);

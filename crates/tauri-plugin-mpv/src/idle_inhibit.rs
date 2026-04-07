@@ -38,10 +38,7 @@ impl IdleInhibitor {
 
     /// Prevent the display from sleeping. No-op if already inhibited.
     pub fn inhibit(&self) {
-        let mut state = match self.inner.lock() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if state.active {
             return;
         }
@@ -53,10 +50,7 @@ impl IdleInhibitor {
 
     /// Allow the display to sleep again. No-op if not inhibited.
     pub fn uninhibit(&self) {
-        let mut state = match self.inner.lock() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if !state.active {
             return;
         }
@@ -85,6 +79,12 @@ impl IdleInhibitor {
         // kIOPMAssertionTypePreventUserIdleDisplaySleep
         let assertion_type = cfstring("PreventUserIdleDisplaySleep");
         let reason = cfstring("MaxVideoPlayer: video playback active");
+        if assertion_type.is_null() || reason.is_null() {
+            if !assertion_type.is_null() { unsafe { CFRelease(assertion_type) }; }
+            if !reason.is_null() { unsafe { CFRelease(reason) }; }
+            tracing::warn!("[idle-inhibit] CFStringCreateWithBytes returned null");
+            return false;
+        }
         let mut assertion_id: u32 = 0;
 
         // kIOPMAssertionLevelOn = 255
@@ -214,6 +214,7 @@ fn dbus_call_u32(bus: &str, path: &str, method: &str, args: &[&str]) -> Option<u
     let mut cmd = std::process::Command::new("gdbus");
     cmd.arg("call")
         .arg("--session")
+        .arg("--timeout").arg("3") // seconds; avoid blocking playback on a hung bus
         .arg("--dest").arg(bus)
         .arg("--object-path").arg(path)
         .arg("--method").arg(method);
@@ -234,6 +235,7 @@ fn dbus_call_void(bus: &str, path: &str, method: &str, args: &[&str]) -> bool {
     let mut cmd = std::process::Command::new("gdbus");
     cmd.arg("call")
         .arg("--session")
+        .arg("--timeout").arg("3")
         .arg("--dest").arg(bus)
         .arg("--object-path").arg(path)
         .arg("--method").arg(method);
