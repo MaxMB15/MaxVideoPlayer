@@ -198,7 +198,7 @@ case "$PLATFORM" in
     ninja -C "$BUILD_DIR"
 
     # Copy .so to libs/linux/
-    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -not -type l | head -1)
+    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -type f | head -1)
     if [[ -z "$SO" ]]; then
       echo "Error: libmpv.so not found after build"
       exit 1
