@@ -236,7 +236,9 @@ jobs:
             meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
             libass-dev libpulse-dev libasound2-dev \
-            libplacebo-dev
+            libplacebo-dev \
+            libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev \
+            libwayland-dev
 
       - name: Build libmpv from source
         run: |

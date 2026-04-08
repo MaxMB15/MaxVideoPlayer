@@ -151,19 +151,28 @@ case "$PLATFORM" in
       --buildtype=release
       --wipe
       -Dlibmpv=true
+      # Video output: EGL/GL on X11 and Wayland
       -Dgl=enabled
-      -Dvulkan=disabled
-      -Dwayland=enabled
-      -Dx11=enabled
       -Degl=enabled
+      -Dx11=enabled
+      -Dwayland=enabled
+      -Dvulkan=disabled
+      # Disable optional features we don't need — avoids auto-detection pulling
+      # in deps that may not be on the CI runner (libplacebo, libXss, lua, etc.)
+      -Dlibplacebo=disabled
+      -Dlua=disabled
+      -Djavascript=disabled
+      -Dcaca=disabled
+      -Dsdl2=disabled
+      -Ddrm=disabled
+      -Djack=disabled
+      -Doss-audio=disabled
+      -Dsndio=disabled
+      -Dopenal=disabled
     )
 
-    # libplacebo is a required dependency for mpv 0.40.0.
-    # Disable it to avoid needing the dev package (mpv falls back to internal shaders).
-    if ! pkg-config --exists libplacebo 2>/dev/null; then
-      MESON_ARGS+=(-Dlibplacebo=disabled)
-      echo "    libplacebo not found, disabling (mpv will use internal shaders)"
-    fi
+    # Note: X11 support requires: libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev
+    # Wayland EGL requires: libwayland-dev
 
     # Enable audio outputs that have dev headers available.
     # Using -D<backend>=enabled makes meson fail if the dep can't be satisfied,
