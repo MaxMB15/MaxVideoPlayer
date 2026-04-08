@@ -158,8 +158,9 @@ case "$PLATFORM" in
       -Dwayland=enabled
       -Dvulkan=disabled
       # Disable optional features we don't need — avoids auto-detection pulling
-      # in deps that may not be on the CI runner (libplacebo, libXss, lua, etc.)
-      -Dlibplacebo=disabled
+      # in deps that may not be on the CI runner (lua, javascript, etc.)
+      # Note: libplacebo is a hard requirement of mpv 0.40.0 (not a meson option),
+      # so libplacebo-dev must be installed.
       -Dlua=disabled
       -Djavascript=disabled
       -Dcaca=disabled
