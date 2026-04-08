@@ -194,7 +194,8 @@ case "$PLATFORM" in
     meson setup "$BUILD_DIR" "$MPV_SRC" "${MESON_ARGS[@]}"
 
     echo "    Building libmpv.so (this takes a few minutes)..."
-    ninja -C "$BUILD_DIR" libmpv.so.2
+    # Build all targets — the .so name varies by mpv version/config
+    ninja -C "$BUILD_DIR"
 
     # Copy .so to libs/linux/
     SO=$(find "$BUILD_DIR" -name "libmpv.so*" -not -type l | head -1)
