@@ -117,6 +117,19 @@ case "$PLATFORM" in
       exit 1
     fi
 
+    # Check audio dev packages — at least one is required for playback with sound
+    AUDIO_FOUND=false
+    for lib in libpulse alsa libpipewire-0.3; do
+      if pkg-config --exists "$lib" 2>/dev/null; then
+        AUDIO_FOUND=true
+      fi
+    done
+    if [[ "$AUDIO_FOUND" != "true" ]]; then
+      echo "Warning: No audio dev packages found. Install at least one of:"
+      echo "  sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev"
+      echo "Without these, libmpv will have no audio output support."
+    fi
+
     # Clone mpv source (same version as macOS for consistency)
     MPV_SRC="$LIBS_DIR/mpv-src"
     MPV_TAG="v0.40.0"
@@ -127,24 +140,65 @@ case "$PLATFORM" in
       echo "    mpv source already present, skipping clone."
     fi
 
-    # Build
+    # Build with audio + video output support.
+    # Audio backends are conditionally enabled based on available dev headers.
+    # If no audio dev headers are found, the build will warn but continue —
+    # the AUDIO_FOUND check above already warns the user.
     BUILD_DIR="$MPV_SRC/build-linux"
     echo "    Running meson setup..."
-    meson setup "$BUILD_DIR" "$MPV_SRC" \
-      --buildtype=release \
-      --wipe \
-      -Dlibmpv=true \
-      -Dgl=enabled \
-      -Dvulkan=disabled \
-      -Dwayland=enabled \
-      -Dx11=enabled \
+
+    MESON_ARGS=(
+      --buildtype=release
+      --wipe
+      -Dlibmpv=true
+      # Video output: EGL/GL on X11 and Wayland
+      -Dgl=enabled
       -Degl=enabled
+      -Dx11=enabled
+      -Dwayland=enabled
+      -Dvulkan=disabled
+      # Disable optional features we don't need — avoids auto-detection pulling
+      # in deps that may not be on the CI runner (lua, javascript, etc.)
+      # Note: libplacebo is a hard requirement of mpv 0.40.0 (not a meson option),
+      # so libplacebo-dev must be installed.
+      -Dlua=disabled
+      -Djavascript=disabled
+      -Dcaca=disabled
+      -Dsdl2=disabled
+      -Ddrm=disabled
+      -Djack=disabled
+      -Doss-audio=disabled
+      -Dsndio=disabled
+      -Dopenal=disabled
+    )
+
+    # Note: X11 support requires: libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev
+    # Wayland EGL requires: libwayland-dev
+
+    # Enable audio outputs that have dev headers available.
+    # Using -D<backend>=enabled makes meson fail if the dep can't be satisfied,
+    # catching misconfigured build environments early.
+    if pkg-config --exists alsa 2>/dev/null; then
+      MESON_ARGS+=(-Dalsa=enabled)
+      echo "    Audio: ALSA enabled"
+    fi
+    if pkg-config --exists libpulse 2>/dev/null; then
+      MESON_ARGS+=(-Dpulse=enabled)
+      echo "    Audio: PulseAudio enabled"
+    fi
+    if pkg-config --exists libpipewire-0.3 2>/dev/null; then
+      MESON_ARGS+=(-Dpipewire=enabled)
+      echo "    Audio: PipeWire enabled"
+    fi
+
+    meson setup "$BUILD_DIR" "$MPV_SRC" "${MESON_ARGS[@]}"
 
     echo "    Building libmpv.so (this takes a few minutes)..."
-    ninja -C "$BUILD_DIR" libmpv.so.2
+    # Build all targets — the .so name varies by mpv version/config
+    ninja -C "$BUILD_DIR"
 
     # Copy .so to libs/linux/
-    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -not -type l | head -1)
+    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -type f | head -1)
     if [[ -z "$SO" ]]; then
       echo "Error: libmpv.so not found after build"
       exit 1

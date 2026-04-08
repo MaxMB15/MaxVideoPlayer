@@ -1549,7 +1549,10 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // color corruption (red/green hue) on drivers that can't handle the
         // NV12→RGB interop (VMware, some Mesa/Intel setups).
         ("hwdec", "auto-copy"),
-        ("ao", "pipewire,pulse,alsa"),
+        // Don't restrict audio outputs — let mpv try ALL compiled-in backends.
+        // Hardcoding "pipewire,pulse,alsa" prevented fallback to other outputs
+        // (sdl, oss, jack, sndio) on systems where libmpv was built differently.
+        ("ao", "auto"),
         // audio sync is correct for callback-driven rendering (not vsync-locked).
         // display-resample requires calling render() at every vsync, which our
         // idle_add_once approach doesn't guarantee — it deactivates after a few seconds.
@@ -1569,7 +1572,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
 pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hwdec", "auto"),
-        ("ao", "pipewire,pulse,alsa"),
+        ("ao", "auto"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
@@ -1587,7 +1590,7 @@ pub fn software_fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "x11"),
         ("hwdec", "no"),
-        ("ao", "pipewire,pulse,alsa"),
+        ("ao", "auto"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
