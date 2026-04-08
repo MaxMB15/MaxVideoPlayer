@@ -262,7 +262,8 @@ jobs:
             patchelf rpm \
             meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev
+            libass-dev libpulse-dev libasound2-dev \
+            libplacebo-dev
 
       - name: Build libmpv from source
         run: |

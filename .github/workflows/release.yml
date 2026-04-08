@@ -235,13 +235,13 @@ jobs:
             patchelf rpm \
             meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev
+            libass-dev libpulse-dev libasound2-dev \
+            libplacebo-dev
 
       - name: Build libmpv from source
         run: |
           ./scripts/build-libmpv.sh linux
           echo "LD_LIBRARY_PATH=$(pwd)/libs/linux:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(pwd)/libs/linux/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Prepare signing key
         run: |

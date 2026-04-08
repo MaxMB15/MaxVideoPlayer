@@ -140,10 +140,10 @@ case "$PLATFORM" in
       echo "    mpv source already present, skipping clone."
     fi
 
-    # Build with explicit audio + video output support.
-    # Audio: alsa/pulse/pipewire are auto-detected from dev headers;
-    # we enable them explicitly so the build fails if headers are missing
-    # rather than silently producing a libmpv without audio.
+    # Build with audio + video output support.
+    # Audio backends are conditionally enabled based on available dev headers.
+    # If no audio dev headers are found, the build will warn but continue —
+    # the AUDIO_FOUND check above already warns the user.
     BUILD_DIR="$MPV_SRC/build-linux"
     echo "    Running meson setup..."
 
@@ -158,7 +158,16 @@ case "$PLATFORM" in
       -Degl=enabled
     )
 
-    # Enable audio outputs that have dev headers available
+    # libplacebo is a required dependency for mpv 0.40.0.
+    # Disable it to avoid needing the dev package (mpv falls back to internal shaders).
+    if ! pkg-config --exists libplacebo 2>/dev/null; then
+      MESON_ARGS+=(-Dlibplacebo=disabled)
+      echo "    libplacebo not found, disabling (mpv will use internal shaders)"
+    fi
+
+    # Enable audio outputs that have dev headers available.
+    # Using -D<backend>=enabled makes meson fail if the dep can't be satisfied,
+    # catching misconfigured build environments early.
     if pkg-config --exists alsa 2>/dev/null; then
       MESON_ARGS+=(-Dalsa=enabled)
       echo "    Audio: ALSA enabled"

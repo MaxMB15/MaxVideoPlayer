@@ -70,37 +70,42 @@ SYSTEM_LIBS_RE+="|libGL\.so|libEGL\.so|libGLX|libGLdispatch"
 SYSTEM_LIBS_RE+="|libgtk|libgdk|libglib|libgobject|libgio|libpango|libcairo|libatk"
 SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
 
-# Collect all libs to bundle (deduplicated)
-declare -A BUNDLED_LIBS
-
-# bundle_deps: resolve and collect transitive dependencies of a shared library
-bundle_deps() {
-  local lib="$1"
-  ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
-    basename_dep=$(basename "$dep")
-    if echo "$basename_dep" | grep -qE "$SYSTEM_LIBS_RE"; then
-      continue
-    fi
-    if [[ ! -f "$BUNDLE_DIR/$basename_dep" ]]; then
-      cp "$dep" "$BUNDLE_DIR/"
-      echo "    bundled: $basename_dep"
-      # Recursively resolve deps of this library too (one level deep for audio libs)
-      ldd "$dep" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r subdep; do
-        sub_basename=$(basename "$subdep")
-        if echo "$sub_basename" | grep -qE "$SYSTEM_LIBS_RE"; then
-          continue
-        fi
-        if [[ ! -f "$BUNDLE_DIR/$sub_basename" ]]; then
-          cp "$subdep" "$BUNDLE_DIR/"
-          echo "    bundled: $sub_basename (transitive)"
-        fi
-      done
+# bundle_all_deps: recursively resolve and copy dependencies to a fixpoint.
+# Uses the bundle dir itself as the visited set — if a .so already exists
+# there, it's been processed and won't be traversed again.
+bundle_all_deps() {
+  local queue=("$@")
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    local lib="${queue[0]}"
+    queue=("${queue[@]:1}")
+    ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
+      local basename_dep
+      basename_dep=$(basename "$dep")
+      if echo "$basename_dep" | grep -qE "$SYSTEM_LIBS_RE"; then
+        continue
+      fi
+      if [[ ! -f "$BUNDLE_DIR/$basename_dep" ]]; then
+        cp "$dep" "$BUNDLE_DIR/"
+        echo "    bundled: $basename_dep"
+        # Append to queue file so the outer loop picks it up
+        echo "$BUNDLE_DIR/$basename_dep" >> "$QUEUE_FILE"
+      fi
+    done
+    # Read any newly discovered libs back into the queue
+    if [[ -f "$QUEUE_FILE" ]]; then
+      while IFS= read -r newlib; do
+        queue+=("$newlib")
+      done < "$QUEUE_FILE"
+      rm -f "$QUEUE_FILE"
     fi
   done
 }
 
-# Bundle libmpv's direct and transitive dependencies
-bundle_deps "$LIBMPV_PATH"
+QUEUE_FILE=$(mktemp)
+trap 'rm -f "$QUEUE_FILE"' EXIT
+
+# Bundle libmpv and all transitive dependencies
+bundle_all_deps "$LIBMPV_PATH"
 
 # Set RPATH so the binary and all bundled libs find co-located libs
 patchelf --set-rpath '$ORIGIN' "$BINARY"
