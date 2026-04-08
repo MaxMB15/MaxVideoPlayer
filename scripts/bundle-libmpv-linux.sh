@@ -73,12 +73,18 @@ SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
 # bundle_all_deps: recursively resolve and copy dependencies to a fixpoint.
 # Uses the bundle dir itself as the visited set — if a .so already exists
 # there, it's been processed and won't be traversed again.
+#
+# Uses process substitution (< <(...)) instead of a pipeline so that:
+#   1. The while loop body runs in the current shell — queue+= propagates.
+#   2. "|| true" after the process substitution suppresses grep exit-1 when a
+#      lib has no "=> /" lines (e.g. only linux-vdso / ld-linux deps), which
+#      would otherwise trigger set -euo pipefail and kill the script silently.
 bundle_all_deps() {
   local queue=("$@")
   while [[ ${#queue[@]} -gt 0 ]]; do
     local lib="${queue[0]}"
     queue=("${queue[@]:1}")
-    ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
+    while IFS= read -r dep; do
       local basename_dep
       basename_dep=$(basename "$dep")
       if echo "$basename_dep" | grep -qE "$SYSTEM_LIBS_RE"; then
@@ -87,29 +93,21 @@ bundle_all_deps() {
       if [[ ! -f "$BUNDLE_DIR/$basename_dep" ]]; then
         cp "$dep" "$BUNDLE_DIR/"
         echo "    bundled: $basename_dep"
-        # Append to queue file so the outer loop picks it up
-        echo "$BUNDLE_DIR/$basename_dep" >> "$QUEUE_FILE"
+        queue+=("$BUNDLE_DIR/$basename_dep")
       fi
-    done
-    # Read any newly discovered libs back into the queue
-    if [[ -f "$QUEUE_FILE" ]]; then
-      while IFS= read -r newlib; do
-        queue+=("$newlib")
-      done < "$QUEUE_FILE"
-      rm -f "$QUEUE_FILE"
-    fi
+    done < <(ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' || true)
   done
 }
-
-QUEUE_FILE=$(mktemp)
-trap 'rm -f "$QUEUE_FILE"' EXIT
 
 # Bundle libmpv and all transitive dependencies
 bundle_all_deps "$LIBMPV_PATH"
 
 # Set RPATH so the binary and all bundled libs find co-located libs
-patchelf --set-rpath '$ORIGIN' "$BINARY"
-patchelf --set-rpath '$ORIGIN' "$BUNDLE_DIR/libmpv.so"
+echo "    Setting RPATH on binary..."
+patchelf --set-rpath '$ORIGIN' "$BINARY" \
+  || { echo "Error: patchelf --set-rpath failed on $BINARY"; exit 1; }
+patchelf --set-rpath '$ORIGIN' "$BUNDLE_DIR/libmpv.so" \
+  || { echo "Error: patchelf --set-rpath failed on $BUNDLE_DIR/libmpv.so"; exit 1; }
 
 # Also set RPATH on all bundled .so files so they can find each other
 for so in "$BUNDLE_DIR"/*.so*; do
