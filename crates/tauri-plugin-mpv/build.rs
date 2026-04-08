@@ -61,7 +61,22 @@ fn link_libmpv() {
 
     #[cfg(target_os = "linux")]
     {
-        // Use pkg-config if available; libmpv2-sys may handle this, but we ensure the link
+        // Prefer libs/linux/ (source build with audio support) over system pkg-config
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let libs_linux = std::path::Path::new(&manifest_dir)
+            .join("..")
+            .join("..")
+            .join("libs")
+            .join("linux");
+        if libs_linux.join("libmpv.so").exists() {
+            if let Ok(abs) = libs_linux.canonicalize() {
+                println!("cargo:rustc-link-search=native={}", abs.display());
+            } else {
+                println!("cargo:rustc-link-search=native={}", libs_linux.display());
+            }
+            return;
+        }
+        // Fallback: system pkg-config (for development with libmpv-dev)
         if let Ok(output) = std::process::Command::new("pkg-config")
             .args(["--libs", "--cflags", "libmpv"])
             .output()
@@ -75,17 +90,6 @@ fn link_libmpv() {
                 }
                 return;
             }
-        }
-        // Fallback: libs/linux/ at workspace root
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let libs_linux = std::path::Path::new(&manifest_dir)
-            .join("..")
-            .join("..")
-            .join("libs")
-            .join("linux");
-        if libs_linux.join("libmpv.so").exists() {
-            println!("cargo:rustc-link-search=native={}", libs_linux.display());
-            return;
         }
     }
 
