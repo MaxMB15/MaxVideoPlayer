@@ -25,9 +25,13 @@ if ! command -v patchelf &>/dev/null; then
   exit 1
 fi
 
-# Find libmpv — prefer system pkg-config, then libs/linux/
+# Find libmpv — prefer libs/linux/ (source build), then system pkg-config.
+# Source build is preferred because it includes audio outputs we control.
 LIBMPV_PATH=""
-if pkg-config --exists mpv 2>/dev/null; then
+if [[ -f "$WORKSPACE_ROOT/libs/linux/libmpv.so" ]]; then
+  LIBMPV_PATH="$WORKSPACE_ROOT/libs/linux/libmpv.so"
+  echo "    Using source-built libmpv from libs/linux/"
+elif pkg-config --exists mpv 2>/dev/null; then
   LIBMPV_DIR=$(pkg-config --variable=libdir mpv 2>/dev/null || echo "")
   if [[ -n "$LIBMPV_DIR" ]]; then
     # Try versioned names first (libmpv.so.2, libmpv.so.1), then unversioned
@@ -39,11 +43,8 @@ if pkg-config --exists mpv 2>/dev/null; then
     done
   fi
 fi
-if [[ -z "$LIBMPV_PATH" && -f "$WORKSPACE_ROOT/libs/linux/libmpv.so" ]]; then
-  LIBMPV_PATH="$WORKSPACE_ROOT/libs/linux/libmpv.so"
-fi
 if [[ -z "$LIBMPV_PATH" ]]; then
-  echo "Error: libmpv.so not found via pkg-config or libs/linux/"
+  echo "Error: libmpv.so not found in libs/linux/ or via pkg-config"
   exit 1
 fi
 
@@ -69,20 +70,63 @@ SYSTEM_LIBS_RE+="|libGL\.so|libEGL\.so|libGLX|libGLdispatch"
 SYSTEM_LIBS_RE+="|libgtk|libgdk|libglib|libgobject|libgio|libpango|libcairo|libatk"
 SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
 
-# Resolve and copy transitive multimedia dependencies
-ldd "$LIBMPV_PATH" | grep "=> /" | awk '{print $3}' | while read -r dep; do
-  basename_dep=$(basename "$dep")
-  if echo "$basename_dep" | grep -qE "$SYSTEM_LIBS_RE"; then
-    continue
-  fi
-  if [[ ! -f "$BUNDLE_DIR/$basename_dep" ]]; then
-    cp "$dep" "$BUNDLE_DIR/"
-    echo "    bundled: $basename_dep"
-  fi
-done
+# Collect all libs to bundle (deduplicated)
+declare -A BUNDLED_LIBS
 
-# Set RPATH so the binary and libmpv find co-located libs
+# bundle_deps: resolve and collect transitive dependencies of a shared library
+bundle_deps() {
+  local lib="$1"
+  ldd "$lib" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r dep; do
+    basename_dep=$(basename "$dep")
+    if echo "$basename_dep" | grep -qE "$SYSTEM_LIBS_RE"; then
+      continue
+    fi
+    if [[ ! -f "$BUNDLE_DIR/$basename_dep" ]]; then
+      cp "$dep" "$BUNDLE_DIR/"
+      echo "    bundled: $basename_dep"
+      # Recursively resolve deps of this library too (one level deep for audio libs)
+      ldd "$dep" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read -r subdep; do
+        sub_basename=$(basename "$subdep")
+        if echo "$sub_basename" | grep -qE "$SYSTEM_LIBS_RE"; then
+          continue
+        fi
+        if [[ ! -f "$BUNDLE_DIR/$sub_basename" ]]; then
+          cp "$subdep" "$BUNDLE_DIR/"
+          echo "    bundled: $sub_basename (transitive)"
+        fi
+      done
+    fi
+  done
+}
+
+# Bundle libmpv's direct and transitive dependencies
+bundle_deps "$LIBMPV_PATH"
+
+# Set RPATH so the binary and all bundled libs find co-located libs
 patchelf --set-rpath '$ORIGIN' "$BINARY"
 patchelf --set-rpath '$ORIGIN' "$BUNDLE_DIR/libmpv.so"
 
+# Also set RPATH on all bundled .so files so they can find each other
+for so in "$BUNDLE_DIR"/*.so*; do
+  if [[ -f "$so" && ! -L "$so" ]]; then
+    patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+  fi
+done
+
+# Verify audio output support
+echo ""
+echo "==> Verifying bundled audio libraries..."
+AUDIO_LIBS=0
+for pattern in libpulse libasound libpipewire; do
+  if ls "$BUNDLE_DIR"/${pattern}* 2>/dev/null | head -1 >/dev/null; then
+    echo "    ✓ Found ${pattern}"
+    AUDIO_LIBS=$((AUDIO_LIBS + 1))
+  fi
+done
+if [[ $AUDIO_LIBS -eq 0 ]]; then
+  echo "    ⚠ WARNING: No audio libraries bundled. AppImage may have no audio output."
+  echo "    Install audio dev packages and rebuild libmpv: sudo apt-get install libpulse-dev libasound2-dev"
+fi
+
+echo ""
 echo "    Done. Bundled libs placed alongside binary in $BUNDLE_DIR"

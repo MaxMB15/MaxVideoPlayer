@@ -117,6 +117,19 @@ case "$PLATFORM" in
       exit 1
     fi
 
+    # Check audio dev packages — at least one is required for playback with sound
+    AUDIO_FOUND=false
+    for lib in libpulse alsa libpipewire-0.3; do
+      if pkg-config --exists "$lib" 2>/dev/null; then
+        AUDIO_FOUND=true
+      fi
+    done
+    if [[ "$AUDIO_FOUND" != "true" ]]; then
+      echo "Warning: No audio dev packages found. Install at least one of:"
+      echo "  sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev"
+      echo "Without these, libmpv will have no audio output support."
+    fi
+
     # Clone mpv source (same version as macOS for consistency)
     MPV_SRC="$LIBS_DIR/mpv-src"
     MPV_TAG="v0.40.0"
@@ -127,18 +140,39 @@ case "$PLATFORM" in
       echo "    mpv source already present, skipping clone."
     fi
 
-    # Build
+    # Build with explicit audio + video output support.
+    # Audio: alsa/pulse/pipewire are auto-detected from dev headers;
+    # we enable them explicitly so the build fails if headers are missing
+    # rather than silently producing a libmpv without audio.
     BUILD_DIR="$MPV_SRC/build-linux"
     echo "    Running meson setup..."
-    meson setup "$BUILD_DIR" "$MPV_SRC" \
-      --buildtype=release \
-      --wipe \
-      -Dlibmpv=true \
-      -Dgl=enabled \
-      -Dvulkan=disabled \
-      -Dwayland=enabled \
-      -Dx11=enabled \
+
+    MESON_ARGS=(
+      --buildtype=release
+      --wipe
+      -Dlibmpv=true
+      -Dgl=enabled
+      -Dvulkan=disabled
+      -Dwayland=enabled
+      -Dx11=enabled
       -Degl=enabled
+    )
+
+    # Enable audio outputs that have dev headers available
+    if pkg-config --exists alsa 2>/dev/null; then
+      MESON_ARGS+=(-Dalsa=enabled)
+      echo "    Audio: ALSA enabled"
+    fi
+    if pkg-config --exists libpulse 2>/dev/null; then
+      MESON_ARGS+=(-Dpulse=enabled)
+      echo "    Audio: PulseAudio enabled"
+    fi
+    if pkg-config --exists libpipewire-0.3 2>/dev/null; then
+      MESON_ARGS+=(-Dpipewire=enabled)
+      echo "    Audio: PipeWire enabled"
+    fi
+
+    meson setup "$BUILD_DIR" "$MPV_SRC" "${MESON_ARGS[@]}"
 
     echo "    Building libmpv.so (this takes a few minutes)..."
     ninja -C "$BUILD_DIR" libmpv.so.2
