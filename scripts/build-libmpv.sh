@@ -198,7 +198,8 @@ case "$PLATFORM" in
     ninja -C "$BUILD_DIR"
 
     # Copy .so to libs/linux/
-    SO=$(find "$BUILD_DIR" -name "libmpv.so*" -type f | head -1)
+    # -not -name "*.p" excludes meson build artifact directories like libmpv.so.2.5.0.p
+    SO=$(find "$BUILD_DIR" -maxdepth 1 -name "libmpv.so*" -type f -not -name "*.p" | head -1)
     if [[ -z "$SO" ]]; then
       echo "Error: libmpv.so not found after build"
       exit 1
