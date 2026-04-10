@@ -1549,10 +1549,11 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // color corruption (red/green hue) on drivers that can't handle the
         // NV12→RGB interop (VMware, some Mesa/Intel setups).
         ("hwdec", "auto-copy"),
-        // Don't restrict audio outputs — let mpv try ALL compiled-in backends.
-        // Hardcoding "pipewire,pulse,alsa" prevented fallback to other outputs
-        // (sdl, oss, jack, sndio) on systems where libmpv was built differently.
-        ("ao", "auto"),
+        // Don't set "ao" at all — libmpv's default iterates all compiled-in
+        // backends in order. Setting ao=auto is WRONG: libmpv treats it as a
+        // literal driver name ("auto" is not a driver), so find_ao("auto")
+        // fails and prints "Audio output auto not found!". Omitting the option
+        // yields the intended auto-select behavior.
         // audio sync is correct for callback-driven rendering (not vsync-locked).
         // display-resample requires calling render() at every vsync, which our
         // idle_add_once approach doesn't guarantee — it deactivates after a few seconds.
@@ -1572,7 +1573,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
 pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hwdec", "auto"),
-        ("ao", "auto"),
+        // No "ao" — libmpv default auto-iterates compiled backends.
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
@@ -1590,7 +1591,7 @@ pub fn software_fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vo", "x11"),
         ("hwdec", "no"),
-        ("ao", "auto"),
+        // No "ao" — libmpv default auto-iterates compiled backends.
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
