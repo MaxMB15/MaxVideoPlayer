@@ -343,8 +343,26 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("display handle: {:?}", e))?
             .as_raw();
 
+        // Detect XWayland: GDK gave us an X11 handle but Wayland is running.
+        // In this mode XLowerWindow doesn't reliably put the video child window
+        // below the WebKit compositor layer (Wayland controls z-order, not X11
+        // stacking), so the video obscures all React controls.
+        // Reject early → MpvState falls back to a separate mpv window.
+        // Pure X11 (WAYLAND_DISPLAY unset) is still attempted.
+        let is_xwayland = std::env::var("WAYLAND_DISPLAY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
         let mut renderer = match raw_window {
             RawWindowHandle::Xlib(h) => {
+                if is_xwayland {
+                    return Err(
+                        "X11 embedded rendering is not supported under XWayland (z-order \
+                         limitation). Falling back to a separate mpv window. \
+                         To use embedded video set GDK_BACKEND=wayland (requires Wayland \
+                         session) or set MVP_GDK_BACKEND=wayland.".to_string()
+                    );
+                }
                 let parent_window = h.window;
                 let x11_display_ptr = match raw_display {
                     RawDisplayHandle::Xlib(dh) => {
@@ -358,6 +376,12 @@ impl LinuxGlRenderer {
                 Self::build_x11(parent_window, x11_display_ptr)
             }
             RawWindowHandle::Xcb(h) => {
+                if is_xwayland {
+                    return Err(
+                        "X11 (XCB) embedded rendering is not supported under XWayland \
+                         (z-order limitation). Falling back to a separate mpv window.".to_string()
+                    );
+                }
                 // XCB handle — open our own Xlib connection for XCreateWindow etc.
                 let parent_window = h.window.get() as u64;
                 let xlib = x11_dl::xlib::Xlib::open()

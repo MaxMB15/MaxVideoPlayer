@@ -69,6 +69,14 @@ SYSTEM_LIBS_RE+="|libX[a-z]|libxcb|libwayland|libdrm|libgbm"
 SYSTEM_LIBS_RE+="|libGL\.so|libEGL\.so|libGLX|libGLdispatch"
 SYSTEM_LIBS_RE+="|libgtk|libgdk|libglib|libgobject|libgio|libpango|libcairo|libatk"
 SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
+# GPU hardware-decode libraries: these load GPU-specific driver plugins from
+# system paths (e.g. /usr/lib/dri/iHD_drv_video.so, VDPAU drivers). A bundled
+# copy can't find those plugins, causing a SIGSEGV when mpv tries hwdec at
+# startup. Let them come from the system (or be absent — mpv falls back to
+# software decode gracefully when they can't be found).
+SYSTEM_LIBS_RE+="|libva\.so|libva-drm|libva-x11|libva-wayland|libva-glx"
+SYSTEM_LIBS_RE+="|libvdpau\.so|libvdpau-|libmfx\.so|libigfxcmrt"
+SYSTEM_LIBS_RE+="|libvulkan\.so|libOpenCL\.so"
 
 # bundle_all_deps: recursively resolve and copy dependencies to a fixpoint.
 # Uses the bundle dir itself as the visited set — if a .so already exists
