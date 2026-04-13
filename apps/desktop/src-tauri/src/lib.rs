@@ -51,6 +51,24 @@ fn apply_linux_workarounds() {
         tracing::info!("[Linux] AppImage detected — setting WEBKIT_DISABLE_DMABUF_RENDERER=1");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+
+    // The AppImage AppRun script hard-codes GDK_BACKEND=x11 as a blanket
+    // workaround for older WebKit/GTK combinations. On Wayland systems this
+    // forces X11/XWayland, which breaks our embedded video renderer: the
+    // X11 child window ends up on top of the WebKit surface, hiding the
+    // React controls. Override it back to "wayland" when Wayland is
+    // actually available so the Wayland renderer path is used instead.
+    if is_appimage
+        && std::env::var("GDK_BACKEND").as_deref() == Ok("x11")
+        && std::env::var("WAYLAND_DISPLAY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    {
+        tracing::info!(
+            "[Linux] AppImage on Wayland: overriding GDK_BACKEND=x11 → wayland"
+        );
+        std::env::set_var("GDK_BACKEND", "wayland");
+    }
 }
 
 /// Log system display environment info for diagnostics.
