@@ -2,6 +2,11 @@
 name = "max-video-player"
 version = "0.4.7"
 edition = "2021"
+description = "Cross-platform IPTV player — watch live TV, movies, and series from any M3U or Xtream Codes provider"
+homepage = "https://github.com/MaxMB15/MaxVideoPlayer"
+repository = "https://github.com/MaxMB15/MaxVideoPlayer"
+license = "MIT"
+authors = ["Max Boksem"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

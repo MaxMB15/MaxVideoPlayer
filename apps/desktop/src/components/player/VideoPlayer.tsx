@@ -545,10 +545,7 @@ export const PlayerView = () => {
 			{mpv.fallbackActive && (
 				<div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-yellow-500/40 bg-yellow-950/80 px-4 py-2 text-yellow-200 text-sm shadow-lg backdrop-blur-sm max-w-xl">
 					<span>⚠</span>
-					<span>
-						Video is playing in a separate window with native controls (embedded
-						renderer unavailable).
-					</span>
+					<span>Video is playing in a separate window (embedded renderer unavailable).</span>
 				</div>
 			)}
 
@@ -580,35 +577,33 @@ export const PlayerView = () => {
 			{/* Autoplay banner — shown for 3s before next episode starts */}
 			{/* (simple version: no countdown, instant autoplay) */}
 
-			{!mpv.fallbackActive && (
-				<Controls
-					state={{
-						isPlaying: mpv.state.isPlaying,
-						isPaused: mpv.state.isPaused,
-						currentUrl: mpv.state.currentUrl,
-						volume: mpv.state.volume,
-						position: mpv.state.position,
-						duration: mpv.state.duration,
-					}}
-					visible={showControls}
-					isFullscreen={isFullscreen}
-					onPlay={mpv.play}
-					onPause={mpv.pause}
-					onStop={handleStop}
-					onSeek={mpv.seek}
-					onVolumeChange={mpv.setVolume}
-					onFullscreen={toggleFullscreen}
-					onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
-					onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
-					onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
-					autoplay={autoplay}
-					onAutoplayChange={setAutoplay}
-					hasSubtitles={selectedSubtitleId !== null}
-					onSubtitles={
-						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
-					}
-				/>
-			)}
+			<Controls
+				state={{
+					isPlaying: mpv.state.isPlaying,
+					isPaused: mpv.state.isPaused,
+					currentUrl: mpv.state.currentUrl,
+					volume: mpv.state.volume,
+					position: mpv.state.position,
+					duration: mpv.state.duration,
+				}}
+				visible={showControls}
+				isFullscreen={isFullscreen}
+				onPlay={mpv.play}
+				onPause={mpv.pause}
+				onStop={handleStop}
+				onSeek={mpv.seek}
+				onVolumeChange={mpv.setVolume}
+				onFullscreen={toggleFullscreen}
+				onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
+				onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
+				onNextEpisode={nextEpisode ? () => playEpisode(nextEpisode) : undefined}
+				autoplay={autoplay}
+				onAutoplayChange={setAutoplay}
+				hasSubtitles={selectedSubtitleId !== null}
+				onSubtitles={
+					canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
+				}
+			/>
 
 			{showChannelOsd && (
 				<ChannelOverlay

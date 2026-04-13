@@ -452,6 +452,10 @@ impl LinuxGlRenderer {
             ("llvmpipe", "Software rasterizer (llvmpipe) -- too slow and unstable for embedded video"),
             ("swrast", "Software rasterizer (swrast) -- no GPU acceleration available"),
             ("softpipe", "Software rasterizer (softpipe) -- no GPU acceleration available"),
+            // VMware SVGA3D: passes EGL init and simple GL ops but crashes in mpv's
+            // shader/texture pipeline during the first video frame render. Blocklist
+            // so we fall back to a separate mpv window on VMware VMs.
+            ("svga3d", "VMware SVGA3D virtual GPU -- OpenGL render pipeline unstable for embedded video"),
         ];
         for (pattern, reason) in blocklist {
             if renderer_lower.contains(pattern) {
