@@ -139,7 +139,7 @@ fn xlib_for_stacking() -> Option<&'static SyncXlib> {
 /// libgdkx11-3.so (absent on pure-Wayland systems).
 fn gdk_x11_window_xid(gdk_win: &gdk::Window) -> Option<u64> {
     use gdk::prelude::*;
-    use glib::translate::ToGlibPtr;
+    use gdk::glib::translate::ToGlibPtr;
 
     type GdkX11WindowGetXid = unsafe extern "C" fn(*mut gdk::ffi::GdkWindow) -> u64;
 
