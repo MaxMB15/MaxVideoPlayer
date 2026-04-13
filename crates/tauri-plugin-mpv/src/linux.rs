@@ -213,6 +213,17 @@ pub struct LinuxGlRenderer {
     /// (getBoundingClientRect) are relative to the WebView viewport, but
     /// set_position() is relative to the parent wl_surface.
     csd_offset: (i32, i32),
+
+    /// X11 only: raises all GTK-managed GdkWindows (including WebKit's rendering
+    /// surface) above the raw Xlib video child, from the GLib main thread.
+    ///
+    /// Background: GDK owns X11 stacking for GTK windows. XLowerWindow called
+    /// from the Tauri command thread races with GTK's own GLib-thread event
+    /// processing and can be silently undone. Also, XMapWindow in set_visible(true)
+    /// re-stacks the video child to the top with no compensating lower. Dispatching
+    /// via the GLib main thread serialises with GTK and reliably keeps WebKit above
+    /// the video, making React controls visible on top of embedded video.
+    x11_webkit_raise: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 unsafe impl Send for LinuxGlRenderer {}
@@ -343,26 +354,8 @@ impl LinuxGlRenderer {
             .map_err(|e| format!("display handle: {:?}", e))?
             .as_raw();
 
-        // Detect XWayland: GDK gave us an X11 handle but Wayland is running.
-        // In this mode XLowerWindow doesn't reliably put the video child window
-        // below the WebKit compositor layer (Wayland controls z-order, not X11
-        // stacking), so the video obscures all React controls.
-        // Reject early → MpvState falls back to a separate mpv window.
-        // Pure X11 (WAYLAND_DISPLAY unset) is still attempted.
-        let is_xwayland = std::env::var("WAYLAND_DISPLAY")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-
         let mut renderer = match raw_window {
             RawWindowHandle::Xlib(h) => {
-                if is_xwayland {
-                    return Err(
-                        "X11 embedded rendering is not supported under XWayland (z-order \
-                         limitation). Falling back to a separate mpv window. \
-                         To use embedded video set GDK_BACKEND=wayland (requires Wayland \
-                         session) or set MVP_GDK_BACKEND=wayland.".to_string()
-                    );
-                }
                 let parent_window = h.window;
                 let x11_display_ptr = match raw_display {
                     RawDisplayHandle::Xlib(dh) => {
@@ -376,12 +369,6 @@ impl LinuxGlRenderer {
                 Self::build_x11(parent_window, x11_display_ptr)
             }
             RawWindowHandle::Xcb(h) => {
-                if is_xwayland {
-                    return Err(
-                        "X11 (XCB) embedded rendering is not supported under XWayland \
-                         (z-order limitation). Falling back to a separate mpv window.".to_string()
-                    );
-                }
                 // XCB handle — open our own Xlib connection for XCreateWindow etc.
                 let parent_window = h.window.get() as u64;
                 let xlib = x11_dl::xlib::Xlib::open()
@@ -410,6 +397,41 @@ impl LinuxGlRenderer {
             )),
         }?;
         renderer.csd_offset = csd_offset;
+
+        // X11 path: install a GLib-main-thread raise callback so the WebKit
+        // GdkWindow stays above the raw Xlib video child at all times.
+        //
+        // Why GLib thread: GTK is the authoritative owner of GDK window stacking.
+        // XLowerWindow called from the Tauri command thread can be silently undone
+        // by GTK event processing (e.g. ConfigureNotify, expose). Dispatching
+        // via glib::idle_add_once serialises with GTK and ensures the raise
+        // happens after any pending restack events are processed.
+        //
+        // The callback is stored on the renderer so set_visible(true) can re-fire
+        // it every time XMapWindow re-stacks the video child to the top.
+        if renderer.wayland.is_none() {
+            let app_handle = app.clone();
+            let raise_cb: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+                use gtk::prelude::*;
+                let app_clone = app_handle.clone();
+                glib::idle_add_once(move || {
+                    if let Some(win) = app_clone.get_webview_window("main") {
+                        if let Ok(gtk_win) = win.gtk_window() {
+                            if let Some(root_gdk) = gtk_win.window() {
+                                // Raise every GTK-managed GdkWindow child.
+                                // Our raw Xlib video child is unknown to GTK so
+                                // it won't be raised here — it stays at the bottom.
+                                for child in root_gdk.children() {
+                                    child.raise();
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+            raise_cb(); // initial raise right after construction
+            renderer.x11_webkit_raise = Some(raise_cb);
+        }
 
         // Check for blocklisted GPU drivers AFTER construction so that if we
         // return Err, the renderer is dropped and its Drop impl cleans up
@@ -452,10 +474,6 @@ impl LinuxGlRenderer {
             ("llvmpipe", "Software rasterizer (llvmpipe) -- too slow and unstable for embedded video"),
             ("swrast", "Software rasterizer (swrast) -- no GPU acceleration available"),
             ("softpipe", "Software rasterizer (softpipe) -- no GPU acceleration available"),
-            // VMware SVGA3D: passes EGL init and simple GL ops but crashes in mpv's
-            // shader/texture pipeline during the first video frame render. Blocklist
-            // so we fall back to a separate mpv window on VMware VMs.
-            ("svga3d", "VMware SVGA3D virtual GPU -- OpenGL render pipeline unstable for embedded video"),
         ];
         for (pattern, reason) in blocklist {
             if renderer_lower.contains(pattern) {
@@ -659,6 +677,7 @@ impl LinuxGlRenderer {
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
             csd_offset: (0, 0),
+            x11_webkit_raise: None, // set by new() which has AppHandle
         })
     }
 
@@ -865,6 +884,7 @@ impl LinuxGlRenderer {
             video_active: Arc::new(AtomicBool::new(true)),
             pending_resize: Arc::new(Mutex::new(None)),
             csd_offset: (0, 0),
+            x11_webkit_raise: None,
         })
     }
 
@@ -1322,10 +1342,19 @@ impl PlatformRenderer for LinuxGlRenderer {
             unsafe {
                 if visible {
                     (xlib.XMapWindow)(x_display, self.x11_child_window);
+                    // XMapWindow always re-stacks the window at the top of its siblings.
+                    // Lower it again immediately, then let the GLib-thread callback
+                    // raise the WebKit GdkWindow to restore correct stacking.
+                    (xlib.XLowerWindow)(x_display, self.x11_child_window);
                 } else {
                     (xlib.XUnmapWindow)(x_display, self.x11_child_window);
                 }
                 (xlib.XFlush)(x_display);
+            }
+            if visible {
+                if let Some(ref raise) = self.x11_webkit_raise {
+                    raise();
+                }
             }
         }
     }
