@@ -5,7 +5,7 @@ edition = "2021"
 description = "Cross-platform IPTV player — watch live TV, movies, and series from any M3U or Xtream Codes provider"
 homepage = "https://github.com/MaxMB15/MaxVideoPlayer"
 repository = "https://github.com/MaxMB15/MaxVideoPlayer"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 authors = ["Max Boksem"]
 
 [build-dependencies]
