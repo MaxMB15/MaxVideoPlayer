@@ -134,6 +134,35 @@ fn xlib_for_stacking() -> Option<&'static SyncXlib> {
         .as_ref()
 }
 
+/// Extract the X11 window ID (XID) from a GDK window, if running under X11.
+/// Uses `dlsym` at runtime so we don't create a hard link-time dependency on
+/// libgdkx11-3.so (absent on pure-Wayland systems).
+fn gdk_x11_window_xid(gdk_win: &gdk::Window) -> Option<u64> {
+    use glib::translate::ToGlibPtr;
+
+    type GdkX11WindowGetXid = unsafe extern "C" fn(*mut gdk::ffi::GdkWindow) -> u64;
+
+    let is_x11 = gdk::Display::default()
+        .map(|d| d.type_().name() == "GdkX11Display")
+        .unwrap_or(false);
+    if !is_x11 {
+        return None;
+    }
+
+    let func: GdkX11WindowGetXid = unsafe {
+        let sym = libc::dlsym(
+            libc::RTLD_DEFAULT,
+            b"gdk_x11_window_get_xid\0".as_ptr() as *const _,
+        );
+        if sym.is_null() {
+            return None;
+        }
+        std::mem::transmute(sym)
+    };
+
+    unsafe { Some(func(gdk_win.to_glib_none().0)) }
+}
+
 // ---------------------------------------------------------------------------
 // Wayland-specific state
 // ---------------------------------------------------------------------------
@@ -359,6 +388,10 @@ impl LinuxGlRenderer {
             std::env::current_exe().unwrap_or_default(),
         );
 
+        // Dump GPU-related shared libraries from /proc/self/maps so we can
+        // see exactly which Mesa/EGL/GL libs are loaded and from where.
+        Self::log_gpu_library_map();
+
         // Verify EGL is available before doing any work. This returns Err
         // instead of panicking, so the caller can fall back gracefully.
         try_load_egl().map_err(|e| {
@@ -444,7 +477,17 @@ impl LinuxGlRenderer {
         if renderer.wayland.is_none() {
             let app_handle = app.clone();
             let child_window = renderer.x11_child_window;
+            let parent_window = renderer.x11_parent_window;
             let display_usize = renderer.x11_display.map(|p| p as usize).unwrap_or(0);
+
+            // One-time X11 window hierarchy diagnostic (runs once on GLib thread).
+            {
+                let app_diag = app.clone();
+                glib::idle_add_once(move || {
+                    Self::log_x11_window_hierarchy(display_usize, parent_window, child_window, &app_diag);
+                });
+            }
+
             let raise_cb: Box<dyn Fn() + Send + Sync> = Box::new(move || {
                 use gtk::prelude::*;
                 let app_clone = app_handle.clone();
@@ -469,10 +512,6 @@ impl LinuxGlRenderer {
                         if let Ok(gtk_win) = win.gtk_window() {
                             if let Some(root_gdk) = gtk_win.window() {
                                 let children = root_gdk.children();
-                                tracing::trace!(
-                                    "[Linux renderer] x11_stacking: lowered video 0x{:x}, raising {} GDK children",
-                                    child_window, children.len()
-                                );
                                 for child in children {
                                     child.raise();
                                 }
@@ -540,6 +579,147 @@ impl LinuxGlRenderer {
             }
         }
         Ok(())
+    }
+
+    /// Dump GPU-related .so paths from /proc/self/maps.
+    /// Helps distinguish system vs bundled Mesa/EGL/driver libraries.
+    fn log_gpu_library_map() {
+        let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+            tracing::debug!("[Linux renderer] cannot read /proc/self/maps");
+            return;
+        };
+        let keywords = [
+            "libEGL", "libGL", "libgbm", "libdrm", "mesa", "swrast",
+            "dri/", "i965", "iris", "radeonsi", "nouveau", "vmwgfx",
+            "svga", "gallium", "libvulkan", "libva", "libvdpau",
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for line in maps.lines() {
+            // Only look at mapped .so files (lines containing "/").
+            let Some(path_start) = line.rfind('/') else { continue };
+            let path = &line[path_start..];
+            let lower = path.to_lowercase();
+            if keywords.iter().any(|kw| lower.contains(&kw.to_lowercase())) {
+                if seen.insert(path.to_string()) {
+                    tracing::info!("[GPU lib] {path}");
+                }
+            }
+        }
+    }
+
+    /// Diagnostic: dump the X11 window tree under the parent to understand
+    /// why WebKit controls may be hidden behind the video child.
+    fn log_x11_window_hierarchy(
+        display_usize: usize,
+        parent_window: u64,
+        video_child: u64,
+        app: &tauri::AppHandle,
+    ) {
+        use gtk::prelude::*;
+
+        if display_usize == 0 || parent_window == 0 {
+            tracing::warn!("[X11 diag] no display/parent — skipping hierarchy dump");
+            return;
+        }
+
+        let xlib = match x11_dl::xlib::Xlib::open() {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::warn!("[X11 diag] cannot open Xlib: {e}");
+                return;
+            }
+        };
+
+        let dpy = display_usize as *mut x11_dl::xlib::Display;
+
+        // Query children of the parent window.
+        let mut root_ret: u64 = 0;
+        let mut parent_ret: u64 = 0;
+        let mut children_ptr: *mut u64 = std::ptr::null_mut();
+        let mut nchildren: u32 = 0;
+        let ok = unsafe {
+            (xlib.XQueryTree)(
+                dpy,
+                parent_window,
+                &mut root_ret,
+                &mut parent_ret,
+                &mut children_ptr,
+                &mut nchildren,
+            )
+        };
+        if ok == 0 {
+            tracing::warn!("[X11 diag] XQueryTree failed for parent 0x{parent_window:x}");
+            return;
+        }
+
+        tracing::info!(
+            "[X11 diag] parent=0x{:x} has {} children (root=0x{:x})",
+            parent_window, nchildren, root_ret
+        );
+
+        let children = if children_ptr.is_null() || nchildren == 0 {
+            Vec::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(children_ptr, nchildren as usize) };
+            let v = slice.to_vec();
+            unsafe { (xlib.XFree)(children_ptr as *mut _) };
+            v
+        };
+
+        // Children are in bottom-to-top stacking order.
+        for (i, &win) in children.iter().enumerate() {
+            let mut attrs: x11_dl::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+            unsafe { (xlib.XGetWindowAttributes)(dpy, win, &mut attrs) };
+
+            let is_video = win == video_child;
+            let mut label = if is_video {
+                "VIDEO-CHILD".to_string()
+            } else {
+                "unknown".to_string()
+            };
+
+            // Check if this is a GDK window.
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let Ok(gtk_win) = main_win.gtk_window() {
+                    if let Some(root_gdk) = gtk_win.window() {
+                        for gdk_child in root_gdk.children() {
+                            if let Some(xid) = gdk_x11_window_xid(&gdk_child) {
+                                if xid == win {
+                                    label = format!("GDK (type={:?})", gdk_child.window_type());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!(
+                "[X11 diag]   [{i}] xid=0x{win:x} {w}x{h}+{x}+{y} map={map} depth={depth} class={cls} — {label}",
+                w = attrs.width,
+                h = attrs.height,
+                x = attrs.x,
+                y = attrs.y,
+                map = attrs.map_state,
+                depth = attrs.depth,
+                cls = attrs.class,
+            );
+        }
+
+        // Check if a compositor is active (RGBA blending between siblings).
+        let comp_atom_name = std::ffi::CString::new(format!(
+            "_NET_WM_CM_S{}",
+            unsafe { (xlib.XDefaultScreen)(dpy) }
+        ))
+        .unwrap();
+        let comp_atom =
+            unsafe { (xlib.XInternAtom)(dpy, comp_atom_name.as_ptr(), 0) };
+        let comp_owner = unsafe { (xlib.XGetSelectionOwner)(dpy, comp_atom) };
+        tracing::info!(
+            "[X11 diag] compositor active: {} (owner=0x{:x})",
+            comp_owner != 0,
+            comp_owner
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1354,12 +1534,18 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
+            let adjusted_x = x as i32 + self.csd_offset.0;
+            let adjusted_y = y as i32 + self.csd_offset.1;
+            tracing::trace!(
+                "[Linux renderer] X11 set_frame: raw=({},{}) csd_offset=({},{}) adjusted=({},{})",
+                x as i32, y as i32, self.csd_offset.0, self.csd_offset.1, adjusted_x, adjusted_y
+            );
             unsafe {
                 (xlib.XMoveResizeWindow)(
                     x_display,
                     self.x11_child_window,
-                    x as i32,
-                    y as i32,
+                    adjusted_x,
+                    adjusted_y,
                     (w as u32).max(1),
                     (h as u32).max(1),
                 );

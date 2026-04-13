@@ -29,6 +29,7 @@ khronos-egl = { version = "6", features = ["dynamic"] }
 gl = "0.14"
 x11-dl = "2"
 glib = "0.20"
+gdk = "0.18"
 gtk = "0.18"
 libc = "0.2"
 wayland-client = "0.31"

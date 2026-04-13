@@ -6,31 +6,61 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 /// Install a SIGSEGV/SIGABRT handler that logs context before crashing.
-/// This helps diagnose GL driver crashes that produce no Rust-level output.
+/// Uses SA_SIGINFO to capture the faulting address for diagnostics.
 #[cfg(target_os = "linux")]
 fn install_crash_handler() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| unsafe {
-        unsafe extern "C" fn crash_handler(sig: libc::c_int) {
-            // Write directly to stderr — no allocations, no locks (async-signal-safe).
+        unsafe extern "C" fn crash_handler(sig: libc::c_int, info: *mut libc::siginfo_t, _ctx: *mut libc::c_void) {
             let msg = match sig {
-                libc::SIGSEGV => b"[CRASH] SIGSEGV - segmentation fault in MaxVideoPlayer.\n\
-                         This typically indicates a GPU driver crash in the EGL/OpenGL rendering pipeline.\n\
-                         Try running with: GDK_BACKEND=x11 max-video-player\n\
-                         Or set MVP_DISABLE_EMBEDDED_RENDERER=1 to use fallback rendering.\n" as &[u8],
+                libc::SIGSEGV => b"[CRASH] SIGSEGV - segmentation fault in MaxVideoPlayer.\n" as &[u8],
                 libc::SIGABRT => b"[CRASH] SIGABRT - abort signal in MaxVideoPlayer.\n" as &[u8],
                 _ => b"[CRASH] Fatal signal in MaxVideoPlayer.\n" as &[u8],
             };
             libc::write(2, msg.as_ptr() as *const _, msg.len());
 
-            // SA_RESETHAND already restored default disposition; re-raise to get core dump.
+            // Print faulting address (async-signal-safe: only write() and itoa).
+            if !info.is_null() && sig == libc::SIGSEGV {
+                let addr = (*info).si_addr() as usize;
+                let mut buf = [0u8; 80];
+                let prefix = b"[CRASH] Faulting address: 0x";
+                buf[..prefix.len()].copy_from_slice(prefix);
+                let mut pos = prefix.len();
+                // Manual hex formatting (no allocator).
+                let mut val = addr;
+                let mut hex = [0u8; 16];
+                let mut hlen = 0;
+                if val == 0 {
+                    hex[0] = b'0';
+                    hlen = 1;
+                } else {
+                    while val > 0 && hlen < 16 {
+                        let d = (val & 0xF) as u8;
+                        hex[hlen] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+                        hlen += 1;
+                        val >>= 4;
+                    }
+                    hex[..hlen].reverse();
+                }
+                buf[pos..pos + hlen].copy_from_slice(&hex[..hlen]);
+                pos += hlen;
+                buf[pos] = b'\n';
+                pos += 1;
+                libc::write(2, buf.as_ptr() as *const _, pos);
+            }
+
+            let advice = b"[CRASH] For a full stack trace, run:\n\
+                           [CRASH]   gdb -ex run -ex bt -ex quit --args <your-command>\n\
+                           [CRASH] Try: GDK_BACKEND=x11 or MVP_DISABLE_EMBEDDED_RENDERER=1\n" as &[u8];
+            libc::write(2, advice.as_ptr() as *const _, advice.len());
+
             libc::kill(libc::getpid(), sig);
             libc::_exit(128 + sig);
         }
 
         let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_flags = libc::SA_RESETHAND;
+        action.sa_flags = libc::SA_RESETHAND | libc::SA_SIGINFO;
         action.sa_sigaction = crash_handler as *const () as usize;
         libc::sigemptyset(&mut action.sa_mask);
 
@@ -46,18 +76,31 @@ fn install_crash_handler() {
 /// SHM (shared-memory) renderer, which composites correctly alongside our
 /// wl_subsurface.
 ///
-/// Applied on all Wayland sessions (AppImage, deb, rpm) — not just AppImage.
-/// On X11 sessions, the DMABUF renderer is not used so no workaround is needed.
+/// Only applied for **bundled** builds (AppImage, deb, rpm) — NOT dev mode.
+/// In dev mode, WebKit's DMABUF renderer works fine and disabling it causes
+/// an opaque/black WebView (SHM doesn't support RGBA transparency well) plus
+/// increased latency.
 #[cfg(target_os = "linux")]
 fn apply_linux_workarounds() {
     let wayland_up = std::env::var("WAYLAND_DISPLAY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
-    if wayland_up && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        tracing::info!("[Linux] Wayland session — setting WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+    let bundled = std::env::var("APPIMAGE").is_ok() || {
+        std::env::current_exe()
+            .map(|p| {
+                let s = p.to_string_lossy();
+                s.starts_with("/usr/") || s.starts_with("/opt/")
+            })
+            .unwrap_or(false)
+    };
+
+    if wayland_up && bundled && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        tracing::info!("[Linux] Wayland session (bundled build) — setting WEBKIT_DISABLE_DMABUF_RENDERER=1 \
                         (prevents EGL context conflict with WebKit DMABUF renderer)");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    } else if wayland_up && !bundled {
+        tracing::info!("[Linux] Wayland session (dev build) — DMABUF renderer left enabled");
     }
 
     // Determine which GDK backend to use, in priority order:
@@ -121,9 +164,18 @@ fn log_display_environment() {
     let disable_embedded = std::env::var("MVP_DISABLE_EMBEDDED_RENDERER").unwrap_or_else(|_| "0".into());
     let webkit_dmabuf = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into());
 
+    let bundled = std::env::var("APPIMAGE").is_ok() || {
+        std::env::current_exe()
+            .map(|p| {
+                let s = p.to_string_lossy();
+                s.starts_with("/usr/") || s.starts_with("/opt/")
+            })
+            .unwrap_or(false)
+    };
+
     tracing::info!(
-        "[diagnostics] session={} wayland={} x11={} gdk_backend={} disable_embedded={} webkit_dmabuf={}",
-        session_type, wayland_display, x11_display, gdk_backend, disable_embedded, webkit_dmabuf
+        "[diagnostics] session={} wayland={} x11={} gdk_backend={} disable_embedded={} webkit_dmabuf={} bundled={}",
+        session_type, wayland_display, x11_display, gdk_backend, disable_embedded, webkit_dmabuf, bundled
     );
 }
 
