@@ -31,4 +31,18 @@ pub trait PlatformRenderer: Send + Sync {
 
     /// Tear down the surface. Must be idempotent.
     fn detach(&mut self);
+
+    /// Set a callback that fires exactly once when the first video frame is rendered.
+    fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>);
+
+    /// Drop only the mpv render context, keeping the platform surface (EGL
+    /// context, Wayland subsurface, X11 child window) alive for reuse.
+    /// After `soft_detach`, `attach()` can be called again with a new mpv
+    /// instance without recreating the GPU context.
+    ///
+    /// Default: falls back to full `detach()`. Override on platforms where
+    /// GPU context recreation is expensive or buggy (e.g. SVGA3D on Wayland).
+    fn soft_detach(&mut self) {
+        self.detach();
+    }
 }

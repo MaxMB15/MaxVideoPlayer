@@ -1241,10 +1241,6 @@ impl LinuxGlRenderer {
         }
     }
 
-    /// Set a callback that fires exactly once when the first video frame is rendered.
-    pub fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
-        self.first_frame_cb = Some(cb);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,8 +1248,16 @@ impl LinuxGlRenderer {
 // ---------------------------------------------------------------------------
 
 impl PlatformRenderer for LinuxGlRenderer {
+    fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
+        self.first_frame_cb = Some(cb);
+    }
+
     fn attach(&mut self, mpv: &mut Mpv) -> Result<(), String> {
         reset_frame_counters();
+        // Reset flags for the new session (important when reusing after soft_detach).
+        self.valid.store(true, Ordering::Release);
+        self.video_active.store(true, Ordering::Release);
+
         let egl = egl_instance();
         let is_wayland = self.wayland.is_some();
 
@@ -1535,18 +1539,16 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
         } else if let (Some(ref xlib), Some(display)) = (&self.xlib, self.x11_display) {
             let x_display = display as *mut x11_dl::xlib::Display;
-            let adjusted_x = x as i32 + self.csd_offset.0;
-            let adjusted_y = y as i32 + self.csd_offset.1;
-            tracing::trace!(
-                "[Linux renderer] X11 set_frame: raw=({},{}) csd_offset=({},{}) adjusted=({},{})",
-                x as i32, y as i32, self.csd_offset.0, self.csd_offset.1, adjusted_x, adjusted_y
-            );
+            // NOTE: unlike Wayland, X11 child window coordinates are relative to
+            // the GDK parent window origin. On X11, the WebView's
+            // getBoundingClientRect() values map directly to child window
+            // coordinates within the parent — no CSD offset needed.
             unsafe {
                 (xlib.XMoveResizeWindow)(
                     x_display,
                     self.x11_child_window,
-                    adjusted_x,
-                    adjusted_y,
+                    x as i32,
+                    y as i32,
                     (w as u32).max(1),
                     (h as u32).max(1),
                 );
@@ -1606,6 +1608,48 @@ impl PlatformRenderer for LinuxGlRenderer {
                 }
             }
         }
+    }
+
+    fn soft_detach(&mut self) {
+        self.valid.store(false, Ordering::Release);
+
+        let egl = egl_instance();
+
+        // Drop only the RenderInner (which holds the mpv RenderContext).
+        // Keep the EGL context, surface, display, and platform surface alive.
+        if let Some(render_inner) = self.render_inner.take() {
+            let display_usize = self.egl_display.as_ptr() as usize;
+            let surface_usize = self.egl_surface.as_ptr() as usize;
+            let context_usize = self.egl_context.as_ptr() as usize;
+
+            let do_drop = move |ri: Box<RenderInner>| {
+                let egl = egl_instance();
+                let display: egl::Display = unsafe { std::mem::transmute(display_usize as *mut c_void) };
+                let surface: egl::Surface = unsafe { std::mem::transmute(surface_usize as *mut c_void) };
+                let context: egl::Context = unsafe { std::mem::transmute(context_usize as *mut c_void) };
+                let _ = egl.make_current(display, Some(surface), Some(surface), Some(context));
+                drop(ri);
+                let _ = egl.make_current(display, None, None, None);
+            };
+
+            if glib::MainContext::default().is_owner() {
+                do_drop(render_inner);
+            } else {
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                glib::idle_add_once(move || {
+                    do_drop(render_inner);
+                    let _ = tx.send(());
+                });
+                if rx.recv_timeout(std::time::Duration::from_secs(2)).is_err() {
+                    tracing::warn!("[Linux renderer] soft_detach: timed out waiting for GLib drain");
+                }
+            }
+        }
+
+        // Release EGL context from the current thread (render_frame had it).
+        let _ = egl.make_current(self.egl_display, None, None, None);
+
+        tracing::info!("[Linux renderer] soft_detach complete (EGL/surface kept alive for reuse)");
     }
 
     fn detach(&mut self) {

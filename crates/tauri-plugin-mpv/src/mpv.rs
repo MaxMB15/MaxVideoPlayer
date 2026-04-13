@@ -38,18 +38,31 @@ impl MpvState {
         url: &str,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
-        // Take the old renderer OUT of the mutex before dropping it.
+        // Take the old renderer OUT of the mutex before dropping/detaching it.
         // detach() calls Queue::main().exec_sync(), which blocks the background thread
         // until the main thread processes the closure. The main thread's on_window_event
         // resize handler also needs the renderer mutex — holding the mutex while calling
         // exec_sync causes a deadlock. Dropping outside the lock avoids this.
         let old_renderer = self.renderer.lock().map_err(|e| e.to_string())?.take();
-        drop(old_renderer); // calls detach() with renderer mutex RELEASED
+
+        // On Linux, soft_detach the old renderer and pass it for reuse.
+        // Some GPU drivers (SVGA3D on Wayland) crash when an EGL context is
+        // destroyed and recreated on a shared EGL display. Reusing the
+        // renderer avoids this by keeping the EGL context alive.
+        #[cfg(target_os = "linux")]
+        let old_renderer = old_renderer.map(|mut r| { r.soft_detach(); r });
+        #[cfg(not(target_os = "linux"))]
+        drop(old_renderer);
+
         self.inner.lock().map_err(|e| e.to_string())?.stop();
         self.idle_inhibitor.uninhibit();
         self.fallback_active.store(false, Ordering::Release);
 
+        #[cfg(target_os = "linux")]
+        let result = self.load_impl(url, app, old_renderer);
+        #[cfg(not(target_os = "linux"))]
         let result = self.load_impl(url, app);
+
         if result.is_ok() {
             self.idle_inhibitor.inhibit();
         }
@@ -108,10 +121,19 @@ impl MpvState {
         &self,
         url: &str,
         app: &tauri::AppHandle<R>,
+        old_renderer: Option<Box<dyn PlatformRenderer>>,
     ) -> Result<(), String> {
-        let mut gl_renderer = match LinuxGlRenderer::new(app) {
-            Ok(r) => r,
-            Err(e) => return self.launch_fallback(url, app, &e),
+        // Reuse the existing renderer if available (avoids EGL context
+        // recreation which crashes SVGA3D and similar drivers on Wayland).
+        let mut gl_renderer: Box<dyn PlatformRenderer> = match old_renderer {
+            Some(r) => {
+                tracing::info!("[MPV] reusing existing renderer (soft_detach path)");
+                r
+            }
+            None => match LinuxGlRenderer::new(app) {
+                Ok(r) => Box::new(r),
+                Err(e) => return self.launch_fallback(url, app, &e),
+            },
         };
 
         {
@@ -132,12 +154,14 @@ impl MpvState {
 
         if let Err(e) = attach_result {
             self.inner.lock().map_err(|e| e.to_string())?.stop();
+            // If reuse failed, drop the old renderer and try fresh.
+            drop(gl_renderer);
             return self.launch_fallback(url, app, &e);
         }
 
         {
             let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
-            *renderer = Some(Box::new(gl_renderer));
+            *renderer = Some(gl_renderer);
         }
 
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;

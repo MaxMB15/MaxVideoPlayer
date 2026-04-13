@@ -206,13 +206,13 @@ impl MacosGlRenderer {
             video_active: Arc::new(AtomicBool::new(true)),
         })
     }
-    /// Set a callback that fires exactly once when the first video frame is rendered.
-    pub fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
-        self.first_frame_cb = Some(cb);
-    }
 }
 
 impl PlatformRenderer for MacosGlRenderer {
+    fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
+        self.first_frame_cb = Some(cb);
+    }
+
     fn attach(&mut self, mpv: &mut Mpv) -> Result<(), String> {
         let gl_view = self.gl_view;
         let gl_context = self.gl_context;

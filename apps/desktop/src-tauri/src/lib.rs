@@ -109,10 +109,14 @@ fn apply_linux_workarounds() {
     //    Validated: if the named backend's display socket is absent the
     //    value is ignored and we fall through to auto-detection.
     //
-    // 2. Auto-detect — prefer Wayland when WAYLAND_DISPLAY is available.
-    //    This also corrects the AppImage AppRun script, which hard-codes
-    //    GDK_BACKEND=x11 even on Wayland systems; we overwrite it here so
-    //    the Wayland renderer path is used (X11 mode hides React controls).
+    // 2. Auto-detect:
+    //    - Dev builds: prefer Wayland when WAYLAND_DISPLAY is available.
+    //    - Bundled builds (AppImage/deb): force X11 (via XWayland) on
+    //      Wayland sessions. Bundled builds ship their own GLib/GTK, which
+    //      can ABI-conflict with the system's Mesa GPU driver on Wayland,
+    //      causing SIGSEGV in the GL render pipeline. X11 (via XWayland)
+    //      uses a simpler driver path that avoids this conflict.
+    //      Users can opt back into Wayland with MVP_GDK_BACKEND=wayland.
     let wayland_up = std::env::var("WAYLAND_DISPLAY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
@@ -123,7 +127,7 @@ fn apply_linux_workarounds() {
     let explicit = std::env::var("MVP_GDK_BACKEND").ok().filter(|v| !v.is_empty());
     let resolved = match explicit.as_deref() {
         Some("wayland") if wayland_up => {
-            tracing::info!("[Linux] MVP_GDK_BACKEND=wayland (valid)");
+            tracing::info!("[Linux] MVP_GDK_BACKEND=wayland (user override, valid)");
             Some("wayland")
         }
         Some("wayland") => {
@@ -131,7 +135,7 @@ fn apply_linux_workarounds() {
             None
         }
         Some("x11") if x11_up => {
-            tracing::info!("[Linux] MVP_GDK_BACKEND=x11 (valid)");
+            tracing::info!("[Linux] MVP_GDK_BACKEND=x11 (user override, valid)");
             Some("x11")
         }
         Some("x11") => {
@@ -142,9 +146,19 @@ fn apply_linux_workarounds() {
             tracing::warn!("[Linux] MVP_GDK_BACKEND={v} unrecognised — ignoring");
             None
         }
-        // No explicit override: auto-detect.
         None => {
-            if wayland_up { Some("wayland") } else { None }
+            if wayland_up && bundled && x11_up {
+                tracing::info!(
+                    "[Linux] Bundled build on Wayland — forcing GDK_BACKEND=x11 (XWayland) \
+                     to avoid GLib ABI conflicts with system GPU drivers. \
+                     Set MVP_GDK_BACKEND=wayland to override."
+                );
+                Some("x11")
+            } else if wayland_up && !bundled {
+                Some("wayland")
+            } else {
+                None
+            }
         }
     };
 
