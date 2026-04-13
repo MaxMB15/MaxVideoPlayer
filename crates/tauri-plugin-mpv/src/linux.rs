@@ -138,6 +138,7 @@ fn xlib_for_stacking() -> Option<&'static SyncXlib> {
 /// Uses `dlsym` at runtime so we don't create a hard link-time dependency on
 /// libgdkx11-3.so (absent on pure-Wayland systems).
 fn gdk_x11_window_xid(gdk_win: &gdk::Window) -> Option<u64> {
+    use gdk::prelude::*;
     use glib::translate::ToGlibPtr;
 
     type GdkX11WindowGetXid = unsafe extern "C" fn(*mut gdk::ffi::GdkWindow) -> u64;
@@ -609,11 +610,11 @@ impl LinuxGlRenderer {
 
     /// Diagnostic: dump the X11 window tree under the parent to understand
     /// why WebKit controls may be hidden behind the video child.
-    fn log_x11_window_hierarchy(
+    fn log_x11_window_hierarchy<R: tauri::Runtime>(
         display_usize: usize,
         parent_window: u64,
         video_child: u64,
-        app: &tauri::AppHandle,
+        app: &tauri::AppHandle<R>,
     ) {
         use gtk::prelude::*;
 

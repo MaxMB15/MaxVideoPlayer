@@ -4887,6 +4887,7 @@ version = "0.1.0"
 dependencies = [
  "cocoa",
  "dispatch",
+ "gdk",
  "gl",
  "glib 0.20.12",
  "gtk",
