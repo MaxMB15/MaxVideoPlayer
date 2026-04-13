@@ -52,22 +52,44 @@ fn apply_linux_workarounds() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    // The AppImage AppRun script hard-codes GDK_BACKEND=x11 as a blanket
-    // workaround for older WebKit/GTK combinations. On Wayland systems this
-    // forces X11/XWayland, which breaks our embedded video renderer: the
-    // X11 child window ends up on top of the WebKit surface, hiding the
-    // React controls. Override it back to "wayland" when Wayland is
-    // actually available so the Wayland renderer path is used instead.
-    if is_appimage
-        && std::env::var("GDK_BACKEND").as_deref() == Ok("x11")
-        && std::env::var("WAYLAND_DISPLAY")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    {
-        tracing::info!(
-            "[Linux] AppImage on Wayland: overriding GDK_BACKEND=x11 → wayland"
-        );
-        std::env::set_var("GDK_BACKEND", "wayland");
+    // GDK_BACKEND: if already set to a recognised backend, validate that the
+    // display server it names is actually reachable; if not, clear it so GTK
+    // can auto-detect.  If not set at all, prefer Wayland when available.
+    // This also corrects the AppImage AppRun script, which hard-codes
+    // GDK_BACKEND=x11 even on Wayland-only systems.
+    let wayland_up = std::env::var("WAYLAND_DISPLAY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let x11_up = std::env::var("DISPLAY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    match std::env::var("GDK_BACKEND").as_deref() {
+        // Not set: prefer Wayland when available.
+        Err(_) | Ok("") => {
+            if wayland_up {
+                tracing::info!("[Linux] GDK_BACKEND unset — defaulting to wayland");
+                std::env::set_var("GDK_BACKEND", "wayland");
+            }
+        }
+        // Explicitly set to wayland but Wayland socket is absent — fall back.
+        Ok("wayland") if !wayland_up => {
+            tracing::warn!("[Linux] GDK_BACKEND=wayland but WAYLAND_DISPLAY unset — clearing");
+            std::env::remove_var("GDK_BACKEND");
+        }
+        // Explicitly set to x11 but X11 display is absent — try Wayland instead.
+        Ok("x11") if !x11_up => {
+            if wayland_up {
+                tracing::warn!("[Linux] GDK_BACKEND=x11 but DISPLAY unset — overriding to wayland");
+                std::env::set_var("GDK_BACKEND", "wayland");
+            } else {
+                std::env::remove_var("GDK_BACKEND");
+            }
+        }
+        // Set to a reachable backend — use it as-is.
+        Ok(v) => {
+            tracing::info!("[Linux] GDK_BACKEND={v} (user/env supplied, using as-is)");
+        }
     }
 }
 
