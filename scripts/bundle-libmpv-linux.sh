@@ -77,6 +77,12 @@ SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
 SYSTEM_LIBS_RE+="|libva\.so|libva-drm|libva-x11|libva-wayland|libva-glx"
 SYSTEM_LIBS_RE+="|libvdpau\.so|libvdpau-|libmfx\.so|libigfxcmrt"
 SYSTEM_LIBS_RE+="|libvulkan\.so|libOpenCL\.so"
+# Mesa/GPU driver internals: these are tightly coupled to the system's GPU
+# driver stack. Bundling them causes ABI mismatches with the system's DRI
+# driver plugins (e.g. SVGA3D uses LLVM for shader compilation — a bundled
+# libLLVM with different symbols crashes the driver mid-render).
+SYSTEM_LIBS_RE+="|libLLVM|libGLESv2|libelf|libudev|libsensors"
+SYSTEM_LIBS_RE+="|libglapi|libxshmfence|libXfixes"
 
 # bundle_all_deps: recursively resolve and copy dependencies to a fixpoint.
 # Uses the bundle dir itself as the visited set — if a .so already exists
@@ -137,6 +143,30 @@ done
 if [[ $AUDIO_LIBS -eq 0 ]]; then
   echo "    ⚠ WARNING: No audio libraries bundled. AppImage may have no audio output."
   echo "    Install audio dev packages and rebuild libmpv: sudo apt-get install libpulse-dev libasound2-dev"
+fi
+
+# List all bundled libraries and flag any GPU/Mesa-related ones that may
+# cause driver conflicts. This diagnostic output helps debug SIGSEGV crashes
+# caused by bundled library ABI mismatches with system GPU driver plugins.
+echo ""
+echo "==> Bundled libraries ($(ls "$BUNDLE_DIR"/*.so* 2>/dev/null | wc -l) files):"
+GPU_WARNINGS=0
+for so in "$BUNDLE_DIR"/*.so*; do
+  [[ -f "$so" && ! -L "$so" ]] || continue
+  basename_so=$(basename "$so")
+  # Flag GPU-related libraries that shouldn't have been bundled
+  if echo "$basename_so" | grep -qiE "libLLVM|libGLES|libglapi|libva[.-]|libvdpau|libdrm|libgbm|libvulkan"; then
+    echo "    ⚠ $basename_so  (GPU-related — may cause driver conflicts!)"
+    GPU_WARNINGS=$((GPU_WARNINGS + 1))
+  else
+    echo "    $basename_so"
+  fi
+done
+if [[ $GPU_WARNINGS -gt 0 ]]; then
+  echo ""
+  echo "    ⚠ WARNING: $GPU_WARNINGS GPU-related libraries were bundled."
+  echo "    These may cause SIGSEGV on systems with different GPU drivers."
+  echo "    Consider adding them to SYSTEM_LIBS_RE in this script."
 fi
 
 echo ""

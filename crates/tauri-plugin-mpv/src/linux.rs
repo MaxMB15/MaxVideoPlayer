@@ -109,9 +109,30 @@ struct RenderInner {
     /// Pointer to the WlEglSurface so render_frame can call resize() on the
     /// GLib main thread. Only valid while LinuxGlRenderer is alive.
     wl_egl_surface_ptr: usize,
+    /// X11 only: display pointer and child window for stacking enforcement.
+    /// render_frame periodically re-lowers the video window to keep it
+    /// below WebKit's GdkWindow (GTK event processing can restack siblings).
+    x11_display_ptr: usize,
+    x11_child_window: u64,
 }
 
 unsafe impl Send for RenderInner {}
+
+// ---------------------------------------------------------------------------
+// Cached Xlib for stacking operations from the GLib render thread
+// ---------------------------------------------------------------------------
+
+struct SyncXlib(x11_dl::xlib::Xlib);
+unsafe impl Send for SyncXlib {}
+unsafe impl Sync for SyncXlib {}
+
+/// Lazily load Xlib for X11 stacking operations called from render_frame().
+/// Safe to cache: libX11.so is already loaded by GTK and stays resident.
+fn xlib_for_stacking() -> Option<&'static SyncXlib> {
+    static XLIB: OnceLock<Option<SyncXlib>> = OnceLock::new();
+    XLIB.get_or_init(|| x11_dl::xlib::Xlib::open().ok().map(SyncXlib))
+        .as_ref()
+}
 
 // ---------------------------------------------------------------------------
 // Wayland-specific state
@@ -331,6 +352,13 @@ impl LinuxGlRenderer {
             return Err("Embedded renderer disabled via MVP_DISABLE_EMBEDDED_RENDERER=1".to_string());
         }
 
+        tracing::info!(
+            "[Linux renderer] initializing (bundled_build={}, APPIMAGE={}, exe={:?})",
+            is_bundled_build(),
+            std::env::var("APPIMAGE").unwrap_or_default(),
+            std::env::current_exe().unwrap_or_default(),
+        );
+
         // Verify EGL is available before doing any work. This returns Err
         // instead of panicking, so the caller can fall back gracefully.
         try_load_egl().map_err(|e| {
@@ -398,30 +426,54 @@ impl LinuxGlRenderer {
         }?;
         renderer.csd_offset = csd_offset;
 
-        // X11 path: install a GLib-main-thread raise callback so the WebKit
-        // GdkWindow stays above the raw Xlib video child at all times.
+        // X11 path: install a GLib-main-thread stacking callback that ensures
+        // the raw Xlib video child stays BELOW all GTK/WebKit GdkWindows.
         //
-        // Why GLib thread: GTK is the authoritative owner of GDK window stacking.
-        // XLowerWindow called from the Tauri command thread can be silently undone
-        // by GTK event processing (e.g. ConfigureNotify, expose). Dispatching
-        // via glib::idle_add_once serialises with GTK and ensures the raise
-        // happens after any pending restack events are processed.
+        // The callback does two things atomically on the GLib main thread:
+        //  1. XLowerWindow on the video child — pushes it to the bottom of
+        //     the sibling stack (below all GDK-managed windows).
+        //  2. gdk_window_raise on every GDK child — raises WebKit surfaces
+        //     above any other siblings (belt-and-suspenders).
         //
-        // The callback is stored on the renderer so set_visible(true) can re-fire
-        // it every time XMapWindow re-stacks the video child to the top.
+        // Both operations run on the GLib thread to serialise with GTK's own
+        // event processing, which can silently re-stack X11 windows in
+        // response to ConfigureNotify, expose, or resize events.
+        //
+        // Fires at: construction, set_visible(true), set_frame, and
+        // periodically from render_frame (every ~30 frames).
         if renderer.wayland.is_none() {
             let app_handle = app.clone();
+            let child_window = renderer.x11_child_window;
+            let display_usize = renderer.x11_display.map(|p| p as usize).unwrap_or(0);
             let raise_cb: Box<dyn Fn() + Send + Sync> = Box::new(move || {
                 use gtk::prelude::*;
                 let app_clone = app_handle.clone();
                 glib::idle_add_once(move || {
+                    // 1. Lower the video child via raw X11.
+                    if display_usize != 0 {
+                        if let Some(xlib) = xlib_for_stacking() {
+                            unsafe {
+                                (xlib.0.XLowerWindow)(
+                                    display_usize as *mut x11_dl::xlib::Display,
+                                    child_window,
+                                );
+                                (xlib.0.XFlush)(
+                                    display_usize as *mut x11_dl::xlib::Display,
+                                );
+                            }
+                        }
+                    }
+
+                    // 2. Raise every GTK-managed GdkWindow child.
                     if let Some(win) = app_clone.get_webview_window("main") {
                         if let Ok(gtk_win) = win.gtk_window() {
                             if let Some(root_gdk) = gtk_win.window() {
-                                // Raise every GTK-managed GdkWindow child.
-                                // Our raw Xlib video child is unknown to GTK so
-                                // it won't be raised here — it stays at the bottom.
-                                for child in root_gdk.children() {
+                                let children = root_gdk.children();
+                                tracing::trace!(
+                                    "[Linux renderer] x11_stacking: lowered video 0x{:x}, raising {} GDK children",
+                                    child_window, children.len()
+                                );
+                                for child in children {
                                     child.raise();
                                 }
                             }
@@ -1210,6 +1262,9 @@ impl PlatformRenderer for LinuxGlRenderer {
         };
 
         // Common path: set up RenderInner and update callback.
+        let x11_display_ptr = self.x11_display.map(|p| p as usize).unwrap_or(0);
+        let x11_child_window = self.x11_child_window;
+
         let mut inner = Box::new(RenderInner {
             ctx: render_ctx,
             egl_display: self.egl_display,
@@ -1219,6 +1274,8 @@ impl PlatformRenderer for LinuxGlRenderer {
             video_active: self.video_active.clone(),
             pending_resize: self.pending_resize.clone(),
             wl_egl_surface_ptr,
+            x11_display_ptr,
+            x11_child_window,
         });
 
         let inner_ptr = &*inner as *const RenderInner as usize;
@@ -1307,6 +1364,11 @@ impl PlatformRenderer for LinuxGlRenderer {
                     (h as u32).max(1),
                 );
                 (xlib.XFlush)(x_display);
+            }
+            // XMoveResizeWindow generates ConfigureNotify which may trigger GTK
+            // to restack its GdkWindows. Re-enforce video-below-WebKit ordering.
+            if let Some(ref raise) = self.x11_webkit_raise {
+                raise();
             }
         }
 
@@ -1587,6 +1649,20 @@ unsafe fn render_frame(inner_ptr: usize) {
             tracing::debug!("[Linux renderer] frame presented (#{n})");
         }
 
+        // X11: periodically re-lower the video window to keep it below WebKit.
+        // GTK event processing (ConfigureNotify, expose) can silently restack
+        // the video child above GDK-managed windows. Re-lowering on the first
+        // 5 frames (immediate visual fix) and then every 30 frames (~0.5s at
+        // 60fps) keeps overhead minimal while ensuring controls stay visible.
+        if inner.x11_display_ptr != 0 && (n < 5 || n % 30 == 0) {
+            if let Some(xlib) = xlib_for_stacking() {
+                (xlib.0.XLowerWindow)(
+                    inner.x11_display_ptr as *mut x11_dl::xlib::Display,
+                    inner.x11_child_window,
+                );
+            }
+        }
+
         if let Some(cb) = inner.first_frame_cb.take() {
             cb();
         }
@@ -1597,30 +1673,59 @@ unsafe fn render_frame(inner_ptr: usize) {
 // MPV option sets
 // ---------------------------------------------------------------------------
 
+/// Detect whether we are running inside a bundled package (AppImage or deb install)
+/// as opposed to a dev build. Bundled builds have libmpv and its transitive deps
+/// alongside the binary, which can conflict with system GPU driver plugins.
+fn is_bundled_build() -> bool {
+    // AppImage sets APPIMAGE env var
+    if std::env::var("APPIMAGE").is_ok() {
+        return true;
+    }
+    // Deb/rpm install: binary lives under /usr or /opt, not in a cargo target dir
+    if let Ok(exe) = std::env::current_exe() {
+        let path = exe.to_string_lossy();
+        if path.starts_with("/usr/") || path.starts_with("/opt/") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Options for embedded playback via OpenGL render context (vo=libmpv).
 pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
+    // In bundled builds (AppImage/deb), the bundled ffmpeg's hwdec paths may
+    // load system VA-API/VDPAU driver plugins that were compiled against
+    // different library versions, causing SIGSEGV. Default to hwdec=no for
+    // safety. Users can override with MVP_HWDEC=auto-copy if their system
+    // is compatible.
+    let hwdec = match std::env::var("MVP_HWDEC") {
+        Ok(val) => {
+            tracing::info!("[Linux renderer] hwdec override via MVP_HWDEC={}", val);
+            // Leak the string so we get a &'static str.
+            // Only happens once per process, so the leak is negligible.
+            &*Box::leak(val.into_boxed_str())
+        }
+        Err(_) => {
+            if is_bundled_build() {
+                tracing::info!(
+                    "[Linux renderer] bundled build detected — using hwdec=no \
+                     (set MVP_HWDEC=auto-copy to override)"
+                );
+                "no"
+            } else {
+                "auto-copy"
+            }
+        }
+    };
+
     vec![
         ("vo", "libmpv"),
-        // auto-copy: hardware-decode but copy frames to CPU for GL rendering.
-        // Plain "auto" maps VAAPI surfaces directly as GL textures, which causes
-        // color corruption (red/green hue) on drivers that can't handle the
-        // NV12→RGB interop (VMware, some Mesa/Intel setups).
-        ("hwdec", "auto-copy"),
-        // Don't set "ao" at all — libmpv's default iterates all compiled-in
-        // backends in order. Setting ao=auto is WRONG: libmpv treats it as a
-        // literal driver name ("auto" is not a driver), so find_ao("auto")
-        // fails and prints "Audio output auto not found!". Omitting the option
-        // yields the intended auto-select behavior.
-        // audio sync is correct for callback-driven rendering (not vsync-locked).
-        // display-resample requires calling render() at every vsync, which our
-        // idle_add_once approach doesn't guarantee — it deactivates after a few seconds.
+        ("hwdec", hwdec),
         ("video-sync", "audio"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
-        // Log mpv-internal messages (audio/video init, codec selection, errors)
-        // to stderr so they appear alongside our tracing output for diagnostics.
         ("terminal", "yes"),
         ("msg-level", "all=status"),
     ]
@@ -1628,9 +1733,9 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
 
 /// Options for fallback separate window (vo=gpu, native OSC shown automatically).
 pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
+    let hwdec = if is_bundled_build() { "no" } else { "auto" };
     vec![
-        ("hwdec", "auto"),
-        // No "ao" — libmpv default auto-iterates compiled backends.
+        ("hwdec", hwdec),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),

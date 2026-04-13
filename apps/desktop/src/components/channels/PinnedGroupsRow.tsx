@@ -30,10 +30,7 @@ export const PinnedGroupsRow = ({
 			<ScrollArea className="w-full">
 				<div className="flex gap-2 pb-1">
 					{pinnedGroups.map((pin) => (
-						<div
-							key={pin.groupName}
-							className="flex items-center shrink-0 group"
-						>
+						<div key={pin.groupName} className="flex items-center shrink-0 group">
 							<button
 								onClick={() => onSelectGroup(pin.groupName)}
 								className={`flex items-center gap-2 px-3 py-1.5 rounded-l-lg text-xs border transition-colors ${

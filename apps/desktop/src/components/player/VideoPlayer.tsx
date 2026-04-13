@@ -545,7 +545,9 @@ export const PlayerView = () => {
 			{mpv.fallbackActive && (
 				<div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-lg border border-yellow-500/40 bg-yellow-950/80 px-4 py-2 text-yellow-200 text-sm shadow-lg backdrop-blur-sm max-w-xl">
 					<span>⚠</span>
-					<span>Video is playing in a separate window (embedded renderer unavailable).</span>
+					<span>
+						Video is playing in a separate window (embedded renderer unavailable).
+					</span>
 				</div>
 			)}
 
@@ -600,9 +602,7 @@ export const PlayerView = () => {
 				autoplay={autoplay}
 				onAutoplayChange={setAutoplay}
 				hasSubtitles={selectedSubtitleId !== null}
-				onSubtitles={
-					canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
-				}
+				onSubtitles={canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined}
 			/>
 
 			{showChannelOsd && (

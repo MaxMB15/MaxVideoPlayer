@@ -39,16 +39,24 @@ fn install_crash_handler() {
     });
 }
 
-/// Work around WebKit2GTK DMABUF renderer issue that causes a black/blank
-/// window in AppImage builds on some Linux configurations.
-/// Only applied inside AppImage (detected via the APPIMAGE env var set by
-/// the AppImage runtime) — the workaround breaks embedded video on systems
-/// where the DMABUF renderer works correctly.
+/// Work around WebKit2GTK DMABUF renderer conflict with our EGL subsurface
+/// rendering on Wayland. WebKit's DMABUF renderer shares GPU buffers in a way
+/// that conflicts with our separate EGL context, causing an immediate SIGSEGV
+/// when the first frame is rendered. Disabling it forces WebKit to use the
+/// SHM (shared-memory) renderer, which composites correctly alongside our
+/// wl_subsurface.
+///
+/// Applied on all Wayland sessions (AppImage, deb, rpm) — not just AppImage.
+/// On X11 sessions, the DMABUF renderer is not used so no workaround is needed.
 #[cfg(target_os = "linux")]
 fn apply_linux_workarounds() {
-    let is_appimage = std::env::var("APPIMAGE").is_ok();
-    if is_appimage && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        tracing::info!("[Linux] AppImage detected — setting WEBKIT_DISABLE_DMABUF_RENDERER=1");
+    let wayland_up = std::env::var("WAYLAND_DISPLAY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    if wayland_up && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        tracing::info!("[Linux] Wayland session — setting WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+                        (prevents EGL context conflict with WebKit DMABUF renderer)");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
