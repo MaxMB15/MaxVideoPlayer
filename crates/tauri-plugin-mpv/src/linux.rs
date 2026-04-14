@@ -300,23 +300,20 @@ impl PlatformRenderer for LinuxGlRenderer {
             .and_then(|mut slot| slot.take());
 
         // `NonNull<mpv_handle>::as_ptr()` returns a `!Send` raw pointer.
-        // Wrap it as `*mut c_void` in a local newtype with a `Send` impl
-        // so the dispatch closure satisfies `F: Send`. Cast back at the
-        // use site. The pointer is owned by the `MpvEngine` mutex held by
-        // the caller for the duration of this call and is dereferenced
-        // only on the GLib main thread.
-        struct MpvHandlePtr(*mut c_void);
-        // SAFETY: single-use, serialized across the dispatch by the
-        // MpvEngine lock and consumed on the main thread.
-        unsafe impl Send for MpvHandlePtr {}
-        let mpv_ptr = MpvHandlePtr(mpv.ctx.as_ptr().cast());
+        // Transport it through the dispatch closure as `usize` (which is
+        // unconditionally `Send + Sync`) and cast back on the other side.
+        // This avoids a wrapper type with its own `unsafe impl Send`.
+        // The pointer is owned by the `MpvEngine` mutex held by the
+        // caller for the duration of this call and is dereferenced only
+        // on the GLib main thread.
+        let mpv_ptr_usize = mpv.ctx.as_ptr() as usize;
 
         // Build the render context, `Arc<Inner>`, and wire the update
         // callback all on the GLib main thread. `Arc<Inner>` is `Send` via
         // the existing `unsafe impl Send for Inner`, so the dispatch
         // channel needs no extra send-assertion wrapper on the return.
         let inner = run_on_glib_main(move || -> Result<Arc<Inner>, String> {
-            let MpvHandlePtr(mpv_ptr) = mpv_ptr;
+            let mpv_ptr = mpv_ptr_usize as *mut c_void;
             let egl = egl()?;
             let display = egl_res.display;
             let surface = egl_res.surface;
@@ -590,22 +587,14 @@ fn build_wayland_on_main_thread(
     wl_surface_ptr: *mut c_void,
     wl_display_ptr: *mut c_void,
 ) -> Result<(OwnedEgl, WaylandSession), String> {
-    // Raw pointers aren't Send; wrap them in a local newtype whose Send impl
-    // we vouch for (they are valid for the lifetime of the Tauri window).
-    struct RawPtrs(*mut c_void, *mut c_void);
-    // SAFETY: Both pointers are owned by GTK and remain valid until the
-    // window closes; sending them across the main-thread dispatch boundary
-    // does not extend their lifetime.
-    unsafe impl Send for RawPtrs {}
-
-    let raw = RawPtrs(wl_surface_ptr, wl_display_ptr);
-    // Destructure inside the closure so Rust's disjoint-capture analysis
-    // cannot split `RawPtrs` into two bare `*mut c_void` captures (which
-    // would drop the `Send` guarantee we added on the newtype).
-    run_on_glib_main(move || {
-        let RawPtrs(ws, wd) = raw;
-        build_wayland(ws, wd)
-    })
+    // Raw pointers aren't Send, but `usize` is. Transport the two GTK-owned
+    // Wayland handles across the main-thread dispatch boundary as integers
+    // and cast back inside the closure. This avoids an `unsafe impl Send`
+    // wrapper and sidesteps RFC 2229 disjoint-capture, which would otherwise
+    // split any struct wrapper into its non-Send field captures.
+    let ws_usize = wl_surface_ptr as usize;
+    let wd_usize = wl_display_ptr as usize;
+    run_on_glib_main(move || build_wayland(ws_usize as *mut c_void, wd_usize as *mut c_void))
 }
 
 fn build_wayland(
