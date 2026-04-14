@@ -218,7 +218,10 @@ pub struct LinuxGlRenderer {
     /// Active render state. `Some` between `attach` and `detach`.
     active: Option<Arc<Inner>>,
     /// Queued up by the caller before `attach`; moved into `Inner` there.
-    first_frame_cb: Option<Box<dyn FnOnce() + Send>>,
+    /// `Mutex` only exists to satisfy `Sync`; we never contend it
+    /// (`set_first_frame_callback` / `attach` are both called from the
+    /// command thread before the renderer becomes shared).
+    first_frame_cb: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 struct Pending {
@@ -266,14 +269,16 @@ impl LinuxGlRenderer {
                 csd_offset,
             }),
             active: None,
-            first_frame_cb: None,
+            first_frame_cb: Mutex::new(None),
         })
     }
 
     /// Register a callback invoked once, on the first presented frame. Must
     /// be called before `attach`; it is moved into `Inner` at that point.
     pub fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
-        self.first_frame_cb = Some(cb);
+        if let Ok(mut slot) = self.first_frame_cb.lock() {
+            *slot = Some(cb);
+        }
     }
 }
 
@@ -288,19 +293,36 @@ impl PlatformRenderer for LinuxGlRenderer {
             .take()
             .ok_or_else(|| "Renderer has already been attached".to_string())?;
 
-        // Capture raw handles to move across the GLib dispatch boundary.
-        // After this block, the Send+Sync Inner is what crosses threads.
-        let display = egl_res.display;
-        let surface = egl_res.surface;
-        let context = egl_res.context;
-        let wl_display_ptr = wayland.wl_display_ptr;
-        let mpv_ptr = mpv.ctx.as_ptr();
+        let first_frame_cb = self
+            .first_frame_cb
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
 
-        // Dispatch render-context creation to the GLib main thread because
-        // libmpv will immediately call our get_proc_address callback and
-        // must find the EGL context current on the calling thread.
-        let render_ctx = run_on_glib_main(move || -> Result<RenderContext, String> {
+        // `NonNull<mpv_handle>::as_ptr()` returns a `!Send` raw pointer.
+        // Wrap it as `*mut c_void` in a local newtype with a `Send` impl
+        // so the dispatch closure satisfies `F: Send`. Cast back at the
+        // use site. The pointer is owned by the `MpvEngine` mutex held by
+        // the caller for the duration of this call and is dereferenced
+        // only on the GLib main thread.
+        struct MpvHandlePtr(*mut c_void);
+        // SAFETY: single-use, serialized across the dispatch by the
+        // MpvEngine lock and consumed on the main thread.
+        unsafe impl Send for MpvHandlePtr {}
+        let mpv_ptr = MpvHandlePtr(mpv.ctx.as_ptr().cast());
+
+        // Build the render context, `Arc<Inner>`, and wire the update
+        // callback all on the GLib main thread. `Arc<Inner>` is `Send` via
+        // the existing `unsafe impl Send for Inner`, so the dispatch
+        // channel needs no extra send-assertion wrapper on the return.
+        let inner = run_on_glib_main(move || -> Result<Arc<Inner>, String> {
+            let MpvHandlePtr(mpv_ptr) = mpv_ptr;
             let egl = egl()?;
+            let display = egl_res.display;
+            let surface = egl_res.surface;
+            let context = egl_res.context;
+            let wl_display_ptr = wayland.wl_display_ptr;
+
             egl.make_current(display, Some(surface), Some(surface), Some(context))
                 .map_err(|e| format!("eglMakeCurrent (init): {e:?}"))?;
 
@@ -313,20 +335,23 @@ impl PlatformRenderer for LinuxGlRenderer {
                 gl_proc_address(name)
             }
 
-            // SAFETY: `mpv_ptr` is a valid `*mut mpv_handle` held alive by
-            // the MpvEngine mutex across this call; we do not dereference it
-            // ourselves — libmpv2 passes it to `mpv_render_context_create`.
-            let ctx = RenderContext::new(
-                unsafe { &mut *mpv_ptr },
+            // SAFETY: `mpv_ptr` (originally `NonNull<mpv_handle>::as_ptr`)
+            // remains valid for the duration of this call because the
+            // caller is holding the MpvEngine mutex. The cast to
+            // `*mut _` is inferred to `*mut mpv_handle` by the signature
+            // of `RenderContext::new`; we never dereference it for any
+            // other purpose.
+            let render_ctx = RenderContext::new(
+                unsafe { &mut *mpv_ptr.cast() },
                 vec![
                     RenderParam::ApiType(RenderParamApiType::OpenGl),
                     RenderParam::InitParams(OpenGLInitParams {
                         get_proc_address,
                         ctx: std::ptr::null_mut::<c_void>(),
                     }),
-                    // Tells libmpv which Wayland display the GL context is on
-                    // so it can request dmabuf formats from the compositor
-                    // and match its presentation timing to the compositor's.
+                    // Tells libmpv which Wayland display the GL context is
+                    // on so it can request dmabuf formats from the
+                    // compositor and match its presentation timing.
                     RenderParam::WaylandDisplay(wl_display_ptr as *const c_void),
                 ],
             )
@@ -340,37 +365,33 @@ impl PlatformRenderer for LinuxGlRenderer {
             }
             let _ = egl.swap_buffers(display, surface);
             let _ = egl.make_current(display, None, None, None);
-            Ok(ctx)
-        })?;
 
-        let first_frame_cb = self.first_frame_cb.take();
-        let inner = Arc::new(Inner {
-            state: Mutex::new(SessionState {
-                pending_resize: None,
-                last_frame: (0, 0, 0, 0),
-                csd_offset,
-            }),
-            first_frame_cb: Mutex::new(first_frame_cb),
-            video_active: AtomicBool::new(true),
-            valid: AtomicBool::new(true),
-            render_ctx,
-            egl: egl_res,
-            wayland,
-        });
+            let mut inner = Arc::new(Inner {
+                state: Mutex::new(SessionState {
+                    pending_resize: None,
+                    last_frame: (0, 0, 0, 0),
+                    csd_offset,
+                }),
+                first_frame_cb: Mutex::new(first_frame_cb),
+                video_active: AtomicBool::new(true),
+                valid: AtomicBool::new(true),
+                render_ctx,
+                egl: egl_res,
+                wayland,
+            });
 
-        // Wire the update callback to a Weak<Inner>. If `detach` drops the
-        // only Arc before an idle callback runs, `upgrade()` returns None
-        // and the callback is a no-op — no dangling access possible.
-        //
-        // `Arc::get_mut` is safe here because this is the single-producer
-        // moment: the Arc was just constructed and no clones exist yet.
-        let weak = Arc::downgrade(&inner);
-        {
-            let mut owned = inner;
-            let inner_mut = Arc::get_mut(&mut owned).expect("fresh Arc has no other refs");
+            // Wire the mpv update callback to a Weak<Inner>. If `detach`
+            // drops the only Arc before an idle callback runs,
+            // `upgrade()` returns None and the callback is a no-op — no
+            // dangling access possible.
+            //
+            // `Arc::get_mut` is valid here because the Arc was just
+            // constructed in this scope and hasn't been cloned.
+            let weak = Arc::downgrade(&inner);
+            let inner_mut =
+                Arc::get_mut(&mut inner).expect("fresh Arc has no other refs");
             inner_mut.render_ctx.set_update_callback(move || {
                 if let Some(alive) = weak.upgrade() {
-                    let alive = alive.clone();
                     glib::idle_add_once(move || {
                         if alive.valid.load(Ordering::Acquire) {
                             render_frame(&alive);
@@ -378,8 +399,10 @@ impl PlatformRenderer for LinuxGlRenderer {
                     });
                 }
             });
-            self.active = Some(owned);
-        }
+            Ok(inner)
+        })?;
+
+        self.active = Some(inner);
         Ok(())
     }
 
@@ -458,8 +481,8 @@ impl PlatformRenderer for LinuxGlRenderer {
             if let Ok(mut slot) = inner.first_frame_cb.lock() {
                 *slot = Some(cb);
             }
-        } else {
-            self.first_frame_cb = Some(cb);
+        } else if let Ok(mut slot) = self.first_frame_cb.lock() {
+            *slot = Some(cb);
         }
     }
 
@@ -576,7 +599,13 @@ fn build_wayland_on_main_thread(
     unsafe impl Send for RawPtrs {}
 
     let raw = RawPtrs(wl_surface_ptr, wl_display_ptr);
-    run_on_glib_main(move || build_wayland(raw.0, raw.1))
+    // Destructure inside the closure so Rust's disjoint-capture analysis
+    // cannot split `RawPtrs` into two bare `*mut c_void` captures (which
+    // would drop the `Send` guarantee we added on the newtype).
+    run_on_glib_main(move || {
+        let RawPtrs(ws, wd) = raw;
+        build_wayland(ws, wd)
+    })
 }
 
 fn build_wayland(

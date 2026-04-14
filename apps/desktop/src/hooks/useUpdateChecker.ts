@@ -115,9 +115,7 @@ export const useUpdateChecker = (): UpdateState => {
 					} else if (event.event === "Progress") {
 						downloaded += event.data.chunkLength;
 						if (total) {
-							setProgress(
-								Math.min(100, Math.round((downloaded / total) * 100))
-							);
+							setProgress(Math.min(100, Math.round((downloaded / total) * 100)));
 						}
 					}
 				});
