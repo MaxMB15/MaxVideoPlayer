@@ -109,6 +109,32 @@ impl MpvEngine {
         );
     }
 
+    /// If mpv ended up with `aid=no` despite available audio tracks, force
+    /// `aid=auto` so the audio track gets selected. This can happen when a
+    /// system-wide config or internal mpv logic disables audio after our
+    /// initial `configure_audio()` call.
+    fn ensure_audio_selected(&self) {
+        let Some(ref mpv) = self.mpv else { return };
+        let aid = mpv.get_property::<String>("aid").unwrap_or_default();
+        if aid != "no" {
+            return;
+        }
+        let track_count = mpv
+            .get_property::<String>("track-list/count")
+            .and_then(|s| s.parse::<i64>().map_err(|_| libmpv2::Error::Null))
+            .unwrap_or(0);
+        if track_count == 0 {
+            return;
+        }
+        tracing::warn!(
+            "[MPV] aid=no despite {track_count} tracks — forcing aid=auto"
+        );
+        if let Err(e) = mpv.set_property("aid", "auto") {
+            tracing::error!("[MPV] failed to force aid=auto: {e}");
+        }
+        self.log_audio_state("after force-aid");
+    }
+
     /// Record the current URL (called by MpvState after loadfile succeeds).
     pub fn set_current_url(&mut self, url: &str) {
         self.current_url = Some(url.to_string());
@@ -221,13 +247,10 @@ impl MpvEngine {
             state.volume = mpv.get_property::<f64>("volume").unwrap_or(100.0);
             state.is_playing = !state.is_paused && state.current_url.is_some();
         }
-        // One-shot log once playback has actually begun: the first log from
-        // `loadfile` runs before mpv has opened an audio output, so it always
-        // shows `current-ao=<unset>`. This second log fires after decoding
-        // has started and reveals what mpv actually picked.
         if !self.audio_logged_playing && state.position > 0.0 {
             self.audio_logged_playing = true;
             self.log_audio_state("playing");
+            self.ensure_audio_selected();
         }
         state
     }

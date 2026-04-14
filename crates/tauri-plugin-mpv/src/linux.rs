@@ -834,11 +834,16 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // cannot handle the NV12→RGB interop.
         ("hwdec", "auto-copy"),
         ("ao", "auto"),
+        // Ignore config files so system-wide /etc/mpv/mpv.conf (or
+        // user-level) cannot silently set audio=no / aid=no.
+        ("config", "no"),
         ("video-sync", "audio"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        ("terminal", "yes"),
+        ("msg-level", "all=info"),
     ]
 }
 
@@ -847,11 +852,14 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hwdec", "auto"),
         ("ao", "auto"),
+        ("config", "no"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        ("terminal", "yes"),
+        ("msg-level", "all=info"),
     ]
 }
 
