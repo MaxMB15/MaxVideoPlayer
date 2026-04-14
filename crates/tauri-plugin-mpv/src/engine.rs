@@ -77,7 +77,7 @@ impl MpvEngine {
                 .unwrap_or_else(|_| "<unset>".to_string())
         };
         tracing::info!(
-            "[MPV audio {stage}] current-ao={} audio-device={} aid={} mute={} volume={} ao-volume={} audio-codec={} audio-params={}",
+            "[MPV audio {stage}] current-ao={} audio-device={} aid={} mute={} volume={} ao-volume={} audio-codec={} audio-params={} track-count={} track-list={}",
             get_str("current-ao"),
             get_str("audio-device"),
             get_str("aid"),
@@ -86,6 +86,8 @@ impl MpvEngine {
             get_f64("ao-volume"),
             get_str("audio-codec"),
             get_str("audio-params"),
+            get_str("track-list/count"),
+            get_str("track-list"),
         );
     }
 

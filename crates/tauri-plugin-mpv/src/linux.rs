@@ -834,6 +834,17 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // cannot handle the NV12→RGB interop.
         ("hwdec", "auto-copy"),
         ("ao", "auto"),
+        // Explicitly enable audio track auto-selection. If the user has a
+        // personal `~/.config/mpv/mpv.conf` with `audio=no` or `aid=no`,
+        // libmpv would otherwise pick it up and silently disable audio.
+        ("aid", "auto"),
+        ("audio", "yes"),
+        // Ignore the user's mpv config file and input bindings. We rely on
+        // the options we pass here being authoritative; a stray
+        // `~/.config/mpv/mpv.conf` should not change app behavior.
+        ("config", "no"),
+        ("input-default-bindings", "no"),
+        ("input-vo-keyboard", "no"),
         ("video-sync", "audio"),
         ("cache", "yes"),
         ("demuxer-max-bytes", "150MiB"),
