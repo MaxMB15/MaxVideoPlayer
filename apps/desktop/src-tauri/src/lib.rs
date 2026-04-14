@@ -5,68 +5,17 @@ use mvp_core::cache::store::CacheStore;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Install a SIGSEGV/SIGABRT handler that logs context before crashing.
-/// This helps diagnose GL driver crashes that produce no Rust-level output.
-#[cfg(target_os = "linux")]
-fn install_crash_handler() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| unsafe {
-        unsafe extern "C" fn crash_handler(sig: libc::c_int) {
-            // Write directly to stderr — no allocations, no locks (async-signal-safe).
-            let msg = match sig {
-                libc::SIGSEGV => b"[CRASH] SIGSEGV - segmentation fault in MaxVideoPlayer.\n\
-                         This typically indicates a GPU driver crash in the EGL/OpenGL rendering pipeline.\n\
-                         Try running with: GDK_BACKEND=x11 max-video-player\n\
-                         Or set MVP_DISABLE_EMBEDDED_RENDERER=1 to use fallback rendering.\n" as &[u8],
-                libc::SIGABRT => b"[CRASH] SIGABRT - abort signal in MaxVideoPlayer.\n" as &[u8],
-                _ => b"[CRASH] Fatal signal in MaxVideoPlayer.\n" as &[u8],
-            };
-            libc::write(2, msg.as_ptr() as *const _, msg.len());
-
-            // SA_RESETHAND already restored default disposition; re-raise to get core dump.
-            libc::kill(libc::getpid(), sig);
-            libc::_exit(128 + sig);
-        }
-
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_flags = libc::SA_RESETHAND;
-        action.sa_sigaction = crash_handler as *const () as usize;
-        libc::sigemptyset(&mut action.sa_mask);
-
-        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
-        libc::sigaction(libc::SIGABRT, &action, std::ptr::null_mut());
-    });
-}
-
-/// Work around WebKit2GTK DMABUF renderer issue that causes a black/blank
-/// window in AppImage builds on some Linux configurations.
-/// Only applied inside AppImage (detected via the APPIMAGE env var set by
-/// the AppImage runtime) — the workaround breaks embedded video on systems
-/// where the DMABUF renderer works correctly.
+/// Work around WebKit2GTK's DMABUF renderer causing a blank window inside the
+/// AppImage runtime on some Linux configurations. Only applied when running
+/// from an AppImage (detected via `APPIMAGE`, a variable the AppImage runtime
+/// sets itself — we only read it). The workaround is harmful outside the
+/// AppImage, which is why it is scoped to that runtime.
 #[cfg(target_os = "linux")]
 fn apply_linux_workarounds() {
     let is_appimage = std::env::var("APPIMAGE").is_ok();
     if is_appimage && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        tracing::info!("[Linux] AppImage detected — setting WEBKIT_DISABLE_DMABUF_RENDERER=1");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
-}
-
-/// Log system display environment info for diagnostics.
-#[cfg(target_os = "linux")]
-fn log_display_environment() {
-    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into());
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "unset".into());
-    let x11_display = std::env::var("DISPLAY").unwrap_or_else(|_| "unset".into());
-    let gdk_backend = std::env::var("GDK_BACKEND").unwrap_or_else(|_| "auto".into());
-    let disable_embedded = std::env::var("MVP_DISABLE_EMBEDDED_RENDERER").unwrap_or_else(|_| "0".into());
-    let webkit_dmabuf = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into());
-
-    tracing::info!(
-        "[diagnostics] session={} wayland={} x11={} gdk_backend={} disable_embedded={} webkit_dmabuf={}",
-        session_type, wayland_display, x11_display, gdk_backend, disable_embedded, webkit_dmabuf
-    );
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -81,11 +30,7 @@ pub fn run() {
         .init();
 
     #[cfg(target_os = "linux")]
-    {
-        apply_linux_workarounds();
-        install_crash_handler();
-        log_display_environment();
-    }
+    apply_linux_workarounds();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
