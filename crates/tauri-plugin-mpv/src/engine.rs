@@ -48,6 +48,24 @@ impl MpvEngine {
         Ok(self.mpv.as_mut().unwrap())
     }
 
+    /// Set audio properties after mpv_initialize. Options like `aid` and `mute`
+    /// must be set as properties (not init options) because `mpv_set_option_string`
+    /// rejects them with MPV_ERROR_OPTION_ERROR (-7) on many libmpv builds.
+    pub fn configure_audio(&self) -> Result<(), String> {
+        let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
+        if let Err(e) = mpv.set_property("aid", "auto") {
+            tracing::warn!("[MPV] set aid=auto failed: {e}");
+        }
+        if let Err(e) = mpv.set_property("mute", false) {
+            tracing::warn!("[MPV] set mute=false failed: {e}");
+        }
+        if let Err(e) = mpv.set_property("volume", 100.0_f64) {
+            tracing::warn!("[MPV] set volume=100 failed: {e}");
+        }
+        self.log_audio_state("after configure_audio");
+        Ok(())
+    }
+
     /// Issue the loadfile command. Must be called AFTER render context is attached.
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
         let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;

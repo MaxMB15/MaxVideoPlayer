@@ -141,6 +141,7 @@ impl MpvState {
         }
 
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.configure_audio()?;
         engine.loadfile(url)?;
         engine.set_current_url(url);
         Ok(())
@@ -189,6 +190,7 @@ impl MpvState {
     fn launch_fallback_impl(&self, url: &str, _reason: &str) -> Result<(), String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&linux_fallback_options())?;
+        engine.configure_audio()?;
         engine.loadfile(url)?;
         engine.set_current_url(url);
         Ok(())
