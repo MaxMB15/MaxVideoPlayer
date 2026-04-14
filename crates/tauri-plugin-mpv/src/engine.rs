@@ -18,11 +18,12 @@ pub struct PlayerState {
 pub struct MpvEngine {
     mpv: Option<Mpv>,
     current_url: Option<String>,
+    audio_logged_playing: bool,
 }
 
 impl MpvEngine {
     pub fn new() -> Self {
-        Self { mpv: None, current_url: None }
+        Self { mpv: None, current_url: None, audio_logged_playing: false }
     }
 
     /// Create a new Mpv instance with the provided options.
@@ -31,6 +32,7 @@ impl MpvEngine {
     /// before calling `loadfile`.
     pub fn create(&mut self, options: &[(&str, &str)]) -> Result<&mut Mpv, String> {
         self.stop();
+        tracing::info!("[MPV] create with options: {:?}", options);
         let opts: Vec<(String, String)> = options
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -50,7 +52,41 @@ impl MpvEngine {
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
         let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
         mpv.command("loadfile", &[url, "replace"])
-            .map_err(|e| format!("loadfile: {}", e))
+            .map_err(|e| format!("loadfile: {}", e))?;
+        self.log_audio_state("after loadfile");
+        Ok(())
+    }
+
+    /// Log audio-related mpv properties to help diagnose "no sound" reports.
+    /// Called both right after loadfile (before mpv has picked an output) and
+    /// from a delayed check once the decoder has started.
+    pub fn log_audio_state(&self, stage: &str) {
+        let Some(ref mpv) = self.mpv else { return };
+        let get_str = |k: &str| {
+            mpv.get_property::<String>(k)
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        let get_bool = |k: &str| {
+            mpv.get_property::<bool>(k)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        let get_f64 = |k: &str| {
+            mpv.get_property::<f64>(k)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        tracing::info!(
+            "[MPV audio {stage}] current-ao={} audio-device={} aid={} mute={} volume={} ao-volume={} audio-codec={} audio-params={}",
+            get_str("current-ao"),
+            get_str("audio-device"),
+            get_str("aid"),
+            get_bool("mute"),
+            get_f64("volume"),
+            get_f64("ao-volume"),
+            get_str("audio-codec"),
+            get_str("audio-params"),
+        );
     }
 
     /// Record the current URL (called by MpvState after loadfile succeeds).
@@ -65,6 +101,7 @@ impl MpvEngine {
         }
         self.mpv = None;
         self.current_url = None;
+        self.audio_logged_playing = false;
     }
 
     pub fn play(&self) -> Result<(), String> {
@@ -151,7 +188,7 @@ impl MpvEngine {
             .map_err(|e| e.to_string())
     }
 
-    pub fn get_state(&self) -> PlayerState {
+    pub fn get_state(&mut self) -> PlayerState {
         let mut state = PlayerState {
             current_url: self.current_url.clone(),
             volume: 100.0,
@@ -163,6 +200,14 @@ impl MpvEngine {
             state.is_paused = mpv.get_property::<bool>("pause").unwrap_or(false);
             state.volume = mpv.get_property::<f64>("volume").unwrap_or(100.0);
             state.is_playing = !state.is_paused && state.current_url.is_some();
+        }
+        // One-shot log once playback has actually begun: the first log from
+        // `loadfile` runs before mpv has opened an audio output, so it always
+        // shows `current-ao=<unset>`. This second log fires after decoding
+        // has started and reveals what mpv actually picked.
+        if !self.audio_logged_playing && state.position > 0.0 {
+            self.audio_logged_playing = true;
+            self.log_audio_state("playing");
         }
         state
     }
