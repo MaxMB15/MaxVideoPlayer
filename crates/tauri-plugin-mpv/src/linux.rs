@@ -338,7 +338,7 @@ impl PlatformRenderer for LinuxGlRenderer {
             // `*mut _` is inferred to `*mut mpv_handle` by the signature
             // of `RenderContext::new`; we never dereference it for any
             // other purpose.
-            let render_ctx = RenderContext::new(
+            let mut render_ctx = RenderContext::new(
                 unsafe { &mut *mpv_ptr.cast() },
                 vec![
                     RenderParam::ApiType(RenderParamApiType::OpenGl),
@@ -363,37 +363,38 @@ impl PlatformRenderer for LinuxGlRenderer {
             let _ = egl.swap_buffers(display, surface);
             let _ = egl.make_current(display, None, None, None);
 
-            let mut inner = Arc::new(Inner {
-                state: Mutex::new(SessionState {
-                    pending_resize: None,
-                    last_frame: (0, 0, 0, 0),
-                    csd_offset,
-                }),
-                first_frame_cb: Mutex::new(first_frame_cb),
-                video_active: AtomicBool::new(true),
-                valid: AtomicBool::new(true),
-                render_ctx,
-                egl: egl_res,
-                wayland,
-            });
-
-            // Wire the mpv update callback to a Weak<Inner>. If `detach`
-            // drops the only Arc before an idle callback runs,
-            // `upgrade()` returns None and the callback is a no-op — no
-            // dangling access possible.
+            // Build the Arc with `new_cyclic` so the mpv update callback can
+            // capture a `Weak<Inner>` that refers to the Arc currently being
+            // constructed. This avoids needing `Arc::get_mut` after the fact
+            // (which fails once a `Weak` exists, because `get_mut` requires
+            // both strong_count == 1 AND weak_count == 0).
             //
-            // `Arc::get_mut` is valid here because the Arc was just
-            // constructed in this scope and hasn't been cloned.
-            let weak = Arc::downgrade(&inner);
-            let inner_mut =
-                Arc::get_mut(&mut inner).expect("fresh Arc has no other refs");
-            inner_mut.render_ctx.set_update_callback(move || {
-                if let Some(alive) = weak.upgrade() {
-                    glib::idle_add_once(move || {
-                        if alive.valid.load(Ordering::Acquire) {
-                            render_frame(&alive);
-                        }
-                    });
+            // If `detach` drops the only strong Arc before an idle callback
+            // runs, `upgrade()` returns None and the callback is a no-op —
+            // no dangling access possible.
+            let inner = Arc::new_cyclic(move |weak: &std::sync::Weak<Inner>| {
+                let weak = weak.clone();
+                render_ctx.set_update_callback(move || {
+                    if let Some(alive) = weak.upgrade() {
+                        glib::idle_add_once(move || {
+                            if alive.valid.load(Ordering::Acquire) {
+                                render_frame(&alive);
+                            }
+                        });
+                    }
+                });
+                Inner {
+                    state: Mutex::new(SessionState {
+                        pending_resize: None,
+                        last_frame: (0, 0, 0, 0),
+                        csd_offset,
+                    }),
+                    first_frame_cb: Mutex::new(first_frame_cb),
+                    video_active: AtomicBool::new(true),
+                    valid: AtomicBool::new(true),
+                    render_ctx,
+                    egl: egl_res,
+                    wayland,
                 }
             });
             Ok(inner)
