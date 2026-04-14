@@ -126,6 +126,20 @@ impl MpvEngine {
         if track_count == 0 {
             return;
         }
+
+        let current_ao = mpv
+            .get_property::<String>("current-ao")
+            .unwrap_or_default();
+        if current_ao.is_empty() || current_ao == "<unset>" {
+            tracing::error!(
+                "[MPV] NO AUDIO OUTPUT DRIVER — libmpv has no AO backends compiled in. \
+                 Rebuild libmpv with audio support: \
+                 sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev && \
+                 ./scripts/build-libmpv.sh linux"
+            );
+            return;
+        }
+
         tracing::warn!(
             "[MPV] aid=no despite {track_count} tracks — forcing aid=auto"
         );
