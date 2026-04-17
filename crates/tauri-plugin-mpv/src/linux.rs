@@ -843,7 +843,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
         ("terminal", "yes"),
-        ("msg-level", "all=info,ao=debug"),
+        ("msg-level", "all=info"),
     ]
 }
 
@@ -859,7 +859,7 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
         ("terminal", "yes"),
-        ("msg-level", "all=info,ao=debug"),
+        ("msg-level", "all=info"),
     ]
 }
 
