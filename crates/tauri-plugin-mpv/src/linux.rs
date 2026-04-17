@@ -578,6 +578,13 @@ fn render_frame(inner: &Inner) {
     if egl.swap_buffers(display, surface).is_err() {
         return;
     }
+    // Bundled libwayland-egl (e.g. inside AppImage) may not mark the
+    // surface as damaged after eglSwapBuffers. Explicitly damage the
+    // full buffer and commit so the compositor always recomposites.
+    inner.wayland.child_surface.damage_buffer(0, 0, w, h);
+    inner.wayland.child_surface.commit();
+    let _ = inner.wayland.conn.flush();
+
     inner.render_ctx.report_swap();
 
     if let Ok(mut slot) = inner.first_frame_cb.lock() {

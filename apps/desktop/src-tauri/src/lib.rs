@@ -13,15 +13,19 @@ use tauri::Manager;
 #[cfg(target_os = "linux")]
 fn apply_linux_workarounds() {
     let is_appimage = std::env::var("APPIMAGE").is_ok();
-    if is_appimage && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    // Disable DMABUF only on X11 — on Wayland the DMABUF renderer is needed
+    // for correct compositing with the EGL video subsurface. The original
+    // workaround targeted blank-window bugs in some X11/AppImage configs.
+    if is_appimage && !is_wayland && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
     // The linuxdeploy-plugin-gtk AppRun hook forces GDK_BACKEND=x11 before
     // our binary starts. Override it back to wayland when a Wayland session
     // is available so GTK provides native wl_surface handles for embedded
-    // video rendering. This must be unconditional (not gated on is_err)
-    // because the hook has already set the variable.
-    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+    // video rendering. Scoped to AppImage only — .deb/.rpm use system GTK
+    // which auto-detects correctly.
+    if std::env::var("APPIMAGE").is_ok() && std::env::var("WAYLAND_DISPLAY").is_ok() {
         std::env::set_var("GDK_BACKEND", "wayland");
     }
 }
