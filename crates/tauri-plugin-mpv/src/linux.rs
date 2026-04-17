@@ -496,12 +496,19 @@ impl PlatformRenderer for LinuxGlRenderer {
         let Some(inner) = self.active.take() else { return };
         inner.valid.store(false, Ordering::Release);
 
-        // All tear-down (RenderContext -> OwnedEgl -> WaylandSession) must
-        // happen on the GLib main thread so it serializes behind any pending
-        // idle render callbacks and uses the correct EGL context thread.
+        // Drain all pending GLib idle callbacks (including queued render_frame
+        // calls) so they release their Arc<Inner> clones before we drop ours.
+        // Without this, engine.stop() can destroy the mpv handle while a
+        // render callback still holds a live RenderContext referencing it.
+        run_on_glib_main(|| {
+            let ctx = glib::MainContext::default();
+            while ctx.iteration(false) {}
+        });
+
+        // Now our Arc should be the sole owner (or close to it). Drop on the
+        // GLib main thread so RenderContext/EGL tear-down uses the correct
+        // thread.
         run_on_glib_main(move || {
-            // Dropping `inner` on this thread runs Drop for RenderContext,
-            // OwnedEgl, and WaylandSession in field order.
             drop(inner);
         });
     }
@@ -539,22 +546,28 @@ fn render_frame(inner: &Inner) {
     }
 
     let mut did_resize = false;
+    let mut resize_dims: Option<(i32, i32)> = None;
     if let Ok(mut state) = inner.state.lock() {
         if let Some((w, h)) = state.pending_resize.take() {
             inner.wayland.wl_egl_surface.resize(w, h, 0, 0);
-            // SAFETY: gl::load_with was called at attach time with this EGL
-            // context current; the context is current again on this thread.
             unsafe {
                 gl::Viewport(0, 0, w, h);
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
             did_resize = true;
+            resize_dims = Some((w, h));
         }
     }
 
-    let w = egl.query_surface(display, surface, egl::WIDTH).unwrap_or(0);
-    let h = egl.query_surface(display, surface, egl::HEIGHT).unwrap_or(0);
+    // Use the resize dimensions when we just resized — EGL surface queries
+    // can return stale sizes during rapid resize, causing libmpv to create
+    // textures with invalid dimensions (INVALID_VALUE / INVALID_OPERATION).
+    let (w, h) = resize_dims.unwrap_or_else(|| {
+        let w = egl.query_surface(display, surface, egl::WIDTH).unwrap_or(0);
+        let h = egl.query_surface(display, surface, egl::HEIGHT).unwrap_or(0);
+        (w, h)
+    });
     if w < 1 || h < 1 {
         return;
     }
