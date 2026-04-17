@@ -16,11 +16,12 @@ fn apply_linux_workarounds() {
     if is_appimage && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
-    // AppImage bundles its own GTK which may default to X11 (XWayland) even
-    // on a native Wayland session. Force the Wayland backend when a Wayland
-    // display is available so we get native wl_surface handles for embedded
-    // video rendering. Only set if the user hasn't overridden it.
-    if std::env::var("GDK_BACKEND").is_err() && std::env::var("WAYLAND_DISPLAY").is_ok() {
+    // The linuxdeploy-plugin-gtk AppRun hook forces GDK_BACKEND=x11 before
+    // our binary starts. Override it back to wayland when a Wayland session
+    // is available so GTK provides native wl_surface handles for embedded
+    // video rendering. This must be unconditional (not gated on is_err)
+    // because the hook has already set the variable.
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
         std::env::set_var("GDK_BACKEND", "wayland");
     }
 }
