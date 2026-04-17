@@ -69,11 +69,14 @@ fn link_libmpv() {
             .join("libs")
             .join("linux");
         if libs_linux.join("libmpv.so").exists() {
-            if let Ok(abs) = libs_linux.canonicalize() {
-                println!("cargo:rustc-link-search=native={}", abs.display());
-            } else {
-                println!("cargo:rustc-link-search=native={}", libs_linux.display());
-            }
+            let path = libs_linux.canonicalize().unwrap_or(libs_linux.clone());
+            println!("cargo:rustc-link-search=native={}", path.display());
+            // Bake RPATH into the binary so the freshly built libmpv.so (which
+            // has our required AO/VO backends) is preferred over the system
+            // /usr/lib/x86_64-linux-gnu/libmpv.so.2 at runtime. Without this
+            // the dynamic loader falls back to whatever libmpv-dev installed,
+            // which may or may not match what we linked against.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
             return;
         }
         // Fallback: system pkg-config (for development with libmpv-dev)
