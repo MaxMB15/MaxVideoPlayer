@@ -833,7 +833,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         // textures, which produces colour corruption on drivers that
         // cannot handle the NV12→RGB interop.
         ("hwdec", "auto-copy"),
-        ("ao", "auto"),
+        ("ao", "pulse,pipewire,alsa,"),
         // Ignore config files so system-wide /etc/mpv/mpv.conf (or
         // user-level) cannot silently set audio=no / aid=no.
         ("config", "no"),
@@ -843,7 +843,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
         ("terminal", "yes"),
-        ("msg-level", "all=info"),
+        ("msg-level", "all=info,ao=debug"),
     ]
 }
 
@@ -851,7 +851,7 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
 pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
     vec![
         ("hwdec", "auto"),
-        ("ao", "auto"),
+        ("ao", "pulse,pipewire,alsa,"),
         ("config", "no"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
@@ -859,7 +859,7 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
         ("terminal", "yes"),
-        ("msg-level", "all=info"),
+        ("msg-level", "all=info,ao=debug"),
     ]
 }
 
