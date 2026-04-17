@@ -257,7 +257,15 @@ impl LinuxGlRenderer {
             (RawWindowHandle::Wayland(wh), RawDisplayHandle::Wayland(dh)) => {
                 (wh.surface.as_ptr(), dh.display.as_ptr())
             }
-            _ => return Err("Embedded Linux renderer requires a Wayland session".into()),
+            _ => {
+                tracing::warn!(
+                    "[MPV] non-Wayland handles: window={:?}, display={:?}. \
+                     Set GDK_BACKEND=wayland if running on Wayland.",
+                    raw_window,
+                    raw_display,
+                );
+                return Err("Embedded Linux renderer requires a Wayland session".into());
+            }
         };
 
         let (egl_res, wayland) = build_wayland_on_main_thread(wl_surface_ptr, wl_display_ptr)?;
