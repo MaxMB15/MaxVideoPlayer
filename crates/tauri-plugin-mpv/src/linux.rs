@@ -175,6 +175,10 @@ struct SessionState {
     /// Pending `wl_egl_window_resize` queued by `set_frame`, applied by the
     /// GLib render thread while the EGL context is current.
     pending_resize: Option<(i32, i32)>,
+    /// Authoritative surface size — set when `wl_egl_window_resize` is applied.
+    /// Used instead of `eglQuerySurface` which can return stale dimensions
+    /// for one or more frames after a resize.
+    current_size: (i32, i32),
     /// Last content rect (x, y, w, h) — used to restore position after unhide.
     last_frame: (i32, i32, i32, i32),
     /// CSD offset (shadow margin + header bar) added to subsurface position.
@@ -394,6 +398,7 @@ impl PlatformRenderer for LinuxGlRenderer {
                 Inner {
                     state: Mutex::new(SessionState {
                         pending_resize: None,
+                        current_size: (1, 1),
                         last_frame: (0, 0, 0, 0),
                         csd_offset,
                     }),
@@ -544,28 +549,28 @@ fn render_frame(inner: &Inner) {
         return;
     }
 
-    if let Ok(mut state) = inner.state.lock() {
-        if let Some((w, h)) = state.pending_resize.take() {
-            inner.wayland.wl_egl_surface.resize(w, h, 0, 0);
+    let (w, h) = {
+        let mut state = match inner.state.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if let Some((nw, nh)) = state.pending_resize.take() {
+            inner.wayland.wl_egl_surface.resize(nw, nh, 0, 0);
+            state.current_size = (nw, nh);
             unsafe {
-                gl::Viewport(0, 0, w, h);
+                gl::Viewport(0, 0, nw, nh);
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
-            // Swap the cleared buffer so EGL reallocates its internal
-            // buffers at the new size. Do NOT call render_ctx.render()
-            // this frame — libmpv tries to create FBO textures matching
-            // the old surface size, causing GL INVALID_VALUE errors.
             let _ = egl.swap_buffers(display, surface);
-            inner.wayland.child_surface.damage_buffer(0, 0, w, h);
+            inner.wayland.child_surface.damage_buffer(0, 0, nw, nh);
             inner.wayland.child_surface.commit();
             let _ = inner.wayland.conn.flush();
             return;
         }
-    }
+        state.current_size
+    };
 
-    let w = egl.query_surface(display, surface, egl::WIDTH).unwrap_or(0);
-    let h = egl.query_surface(display, surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
         return;
     }
