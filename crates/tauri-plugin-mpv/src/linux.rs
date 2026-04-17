@@ -171,23 +171,16 @@ unsafe impl Sync for WaylandSession {}
 // =========================================================================
 
 struct SessionState {
-    /// Requested size from `set_frame`. Only applied to the EGL window after
-    /// a debounce period to avoid rapid texture recreation that corrupts
-    /// libmpv's internal render state on some GL drivers (VM, software).
-    target_size: Option<(i32, i32)>,
-    /// When the last resize request arrived. The resize is applied only after
-    /// this timestamp is older than `RESIZE_DEBOUNCE`.
-    resize_requested_at: std::time::Instant,
-    /// Current EGL window size — the size we last applied via
-    /// `wl_egl_window_resize`. All `render_ctx.render()` calls use this.
+    /// Pending `wl_egl_window_resize` queued by `set_frame`, applied by the
+    /// GLib render thread while the EGL context is current.
+    pending_resize: Option<(i32, i32)>,
+    /// Current EGL window size — set when `wl_egl_window_resize` is applied.
     current_size: (i32, i32),
     /// Last content rect (x, y, w, h) — used to restore position after unhide.
     last_frame: (i32, i32, i32, i32),
     /// CSD offset (shadow margin + header bar) added to subsurface position.
     csd_offset: (i32, i32),
 }
-
-const RESIZE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 // =========================================================================
 // Inner (shared between renderer and libmpv update callback)
@@ -401,8 +394,7 @@ impl PlatformRenderer for LinuxGlRenderer {
                 });
                 Inner {
                     state: Mutex::new(SessionState {
-                        target_size: None,
-                        resize_requested_at: std::time::Instant::now(),
+                        pending_resize: None,
                         current_size: (1, 1),
                         last_frame: (0, 0, 0, 0),
                         csd_offset,
@@ -431,7 +423,7 @@ impl PlatformRenderer for LinuxGlRenderer {
         let wi = (w as i32).max(1);
         let hi = (h as i32).max(1);
 
-        let needs_resize = {
+        {
             let mut state = match inner.state.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
@@ -439,45 +431,23 @@ impl PlatformRenderer for LinuxGlRenderer {
             let ax = x as i32 + state.csd_offset.0;
             let ay = y as i32 + state.csd_offset.1;
             state.last_frame = (ax, ay, wi, hi);
+            state.pending_resize = Some((wi, hi));
 
-            let size_changed = state.current_size != (wi, hi);
-            if size_changed {
-                state.target_size = Some((wi, hi));
-                state.resize_requested_at = std::time::Instant::now();
-            }
-
-            // Update subsurface position immediately.
             inner.wayland.subsurface.set_position(ax, ay);
             inner.wayland.child_surface.commit();
             let _ = inner.wayland.conn.flush();
-
-            size_changed
-        };
+        }
 
         drain_wayland_queue(inner);
 
-        if needs_resize {
-            // Schedule a render after the debounce period so the resize
-            // is applied even if no new frames arrive (e.g. paused video).
-            let weak = Arc::downgrade(inner);
-            glib::timeout_add_once(RESIZE_DEBOUNCE, move || {
-                if let Some(alive) = weak.upgrade() {
-                    if alive.valid.load(Ordering::Acquire) {
-                        render_frame(&alive);
-                    }
+        let weak = Arc::downgrade(inner);
+        glib::idle_add_once(move || {
+            if let Some(alive) = weak.upgrade() {
+                if alive.valid.load(Ordering::Acquire) {
+                    render_frame(&alive);
                 }
-            });
-        } else {
-            // No resize — just kick a render for the position change.
-            let weak = Arc::downgrade(inner);
-            glib::idle_add_once(move || {
-                if let Some(alive) = weak.upgrade() {
-                    if alive.valid.load(Ordering::Acquire) {
-                        render_frame(&alive);
-                    }
-                }
-            });
-        }
+            }
+        });
     }
 
     fn set_visible(&mut self, visible: bool) {
@@ -495,10 +465,7 @@ impl PlatformRenderer for LinuxGlRenderer {
             inner.wayland.subsurface.set_position(lx, ly);
             if lw > 0 && lh > 0 {
                 if let Ok(mut state) = inner.state.lock() {
-                    state.target_size = Some((lw, lh));
-                    state.resize_requested_at = std::time::Instant::now()
-                        .checked_sub(RESIZE_DEBOUNCE)
-                        .unwrap_or_else(std::time::Instant::now);
+                    state.pending_resize = Some((lw, lh));
                 }
             }
         } else {
@@ -579,31 +546,20 @@ fn render_frame(inner: &Inner) {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        // Apply pending resize only after the debounce period — avoids
-        // rapid `wl_egl_window_resize` + texture recreation that corrupts
-        // libmpv's internal render state on some GL drivers.
-        if let Some((nw, nh)) = state.target_size {
-            if state.resize_requested_at.elapsed() >= RESIZE_DEBOUNCE {
-                state.target_size = None;
-                inner.wayland.wl_egl_surface.resize(nw, nh, 0, 0);
-                state.current_size = (nw, nh);
-                // SAFETY: gl::load_with was called at attach time with
-                // this EGL context; the context is current on this thread.
-                unsafe {
-                    gl::Viewport(0, 0, nw, nh);
-                    gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT);
-                }
-                // Swap twice to flush all back buffers (double/triple
-                // buffered) so every buffer in the pool is at the new size
-                // before mpv renders.
-                let _ = egl.swap_buffers(display, surface);
-                let _ = egl.swap_buffers(display, surface);
-                inner.wayland.child_surface.damage_buffer(0, 0, nw, nh);
-                inner.wayland.child_surface.commit();
-                let _ = inner.wayland.conn.flush();
-                // Fall through to render at the new size immediately.
+        if let Some((nw, nh)) = state.pending_resize.take() {
+            inner.wayland.wl_egl_surface.resize(nw, nh, 0, 0);
+            state.current_size = (nw, nh);
+            unsafe {
+                gl::Viewport(0, 0, nw, nh);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                gl::Finish();
+                while gl::GetError() != gl::NO_ERROR {}
             }
+            let _ = egl.swap_buffers(display, surface);
+            inner.wayland.child_surface.damage_buffer(0, 0, nw, nh);
+            inner.wayland.child_surface.commit();
+            let _ = inner.wayland.conn.flush();
         }
         state.current_size
     };
