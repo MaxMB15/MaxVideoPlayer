@@ -494,20 +494,19 @@ impl PlatformRenderer for LinuxGlRenderer {
 
     fn detach(&mut self) {
         let Some(inner) = self.active.take() else { return };
+        // Stop render callbacks from touching GL/mpv resources.
         inner.valid.store(false, Ordering::Release);
+        inner.video_active.store(false, Ordering::Release);
 
-        // Drain all pending GLib idle callbacks (including queued render_frame
-        // calls) so they release their Arc<Inner> clones before we drop ours.
-        // Without this, engine.stop() can destroy the mpv handle while a
-        // render callback still holds a live RenderContext referencing it.
-        run_on_glib_main(|| {
-            let ctx = glib::MainContext::default();
-            while ctx.iteration(false) {}
-        });
-
-        // Now our Arc should be the sole owner (or close to it). Drop on the
-        // GLib main thread so RenderContext/EGL tear-down uses the correct
-        // thread.
+        // Drop on the GLib main thread. Any already-queued idle render
+        // callbacks hold Arc clones but check `valid` and bail immediately.
+        // Dropping Inner on GLib serializes behind those no-op callbacks
+        // (GLib processes idle sources in FIFO order) and tears down
+        // RenderContext → EGL → Wayland on the correct thread.
+        //
+        // We use `run_on_glib_main` (synchronous) so the caller can safely
+        // call engine.stop() afterwards — the RenderContext is guaranteed
+        // destroyed before the Mpv handle.
         run_on_glib_main(move || {
             drop(inner);
         });
@@ -545,8 +544,6 @@ fn render_frame(inner: &Inner) {
         return;
     }
 
-    let mut did_resize = false;
-    let mut resize_dims: Option<(i32, i32)> = None;
     if let Ok(mut state) = inner.state.lock() {
         if let Some((w, h)) = state.pending_resize.take() {
             inner.wayland.wl_egl_surface.resize(w, h, 0, 0);
@@ -555,29 +552,30 @@ fn render_frame(inner: &Inner) {
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
-            did_resize = true;
-            resize_dims = Some((w, h));
+            // Swap the cleared buffer so EGL reallocates its internal
+            // buffers at the new size. Do NOT call render_ctx.render()
+            // this frame — libmpv tries to create FBO textures matching
+            // the old surface size, causing GL INVALID_VALUE errors.
+            let _ = egl.swap_buffers(display, surface);
+            inner.wayland.child_surface.damage_buffer(0, 0, w, h);
+            inner.wayland.child_surface.commit();
+            let _ = inner.wayland.conn.flush();
+            return;
         }
     }
 
-    // Use the resize dimensions when we just resized — EGL surface queries
-    // can return stale sizes during rapid resize, causing libmpv to create
-    // textures with invalid dimensions (INVALID_VALUE / INVALID_OPERATION).
-    let (w, h) = resize_dims.unwrap_or_else(|| {
-        let w = egl.query_surface(display, surface, egl::WIDTH).unwrap_or(0);
-        let h = egl.query_surface(display, surface, egl::HEIGHT).unwrap_or(0);
-        (w, h)
-    });
+    let w = egl.query_surface(display, surface, egl::WIDTH).unwrap_or(0);
+    let h = egl.query_surface(display, surface, egl::HEIGHT).unwrap_or(0);
     if w < 1 || h < 1 {
         return;
     }
 
-    let should_render = match inner.render_ctx.update() {
-        Ok(flags) => (flags & mpv_render_update::Frame != 0) || did_resize,
-        Err(_) => did_resize,
+    let has_frame = match inner.render_ctx.update() {
+        Ok(flags) => flags & mpv_render_update::Frame != 0,
+        Err(_) => false,
     };
 
-    if !should_render {
+    if !has_frame {
         return;
     }
 

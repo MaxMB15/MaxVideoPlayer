@@ -111,6 +111,13 @@ export const PlayerView = () => {
 	// work immediately without requiring a click first.
 	useEffect(() => {
 		containerRef.current?.focus();
+	}, []);
+
+	// Re-focus after channel load completes (currentUrl changes).
+	useEffect(() => {
+		if (mpv.state.currentUrl) {
+			containerRef.current?.focus();
+		}
 	}, [mpv.state.currentUrl]);
 
 	// Report video container bounds to the Rust renderer. The CSD header bar

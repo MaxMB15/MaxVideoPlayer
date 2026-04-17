@@ -248,9 +248,15 @@ impl MpvState {
     }
 
     pub fn stop(&self) {
-        let old_renderer = self.renderer.lock().unwrap().take();
-        drop(old_renderer); // calls detach() with renderer mutex RELEASED
-        self.inner.lock().unwrap().stop();
+        let old_renderer = match self.renderer.lock() {
+            Ok(mut r) => r.take(),
+            Err(p) => p.into_inner().take(),
+        };
+        drop(old_renderer); // detach() runs synchronously on GLib main thread
+        match self.inner.lock() {
+            Ok(mut e) => e.stop(),
+            Err(p) => p.into_inner().stop(),
+        }
         self.idle_inhibitor.uninhibit();
     }
 
