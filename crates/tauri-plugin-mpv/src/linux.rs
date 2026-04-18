@@ -100,68 +100,55 @@ wayland_client::delegate_noop!(WlGlobals: ignore WlSubsurface);
 // RAII-owned platform resources
 // =========================================================================
 
-/// Owns the EGL context + surface. The EGL *display* is not terminated on
-/// drop because on Wayland it is shared with GTK/WebKit — terminating it
-/// would tear down the compositor connection for the whole window.
+/// Owns the EGL context. The initial surface is transported here but taken
+/// by `attach` and moved into `SessionState` (which handles ongoing
+/// surface lifecycle). The EGL *display* is not terminated on drop because
+/// on Wayland it is shared with GTK/WebKit.
 struct OwnedEgl {
     display: egl::Display,
-    surface: egl::Surface,
+    surface: Option<egl::Surface>,
     context: egl::Context,
+    config: egl::Config,
 }
 
 impl Drop for OwnedEgl {
     fn drop(&mut self) {
-        // SAFETY: Drop runs on the GLib main thread (`Inner` is dropped from
-        // there in `detach`/drop). `make_current(None)` is a no-op if the
-        // context is not current; `destroy_surface` / `destroy_context` are
-        // valid to call with no pending rendering on this thread.
         if let Ok(egl) = egl() {
             let _ = egl.make_current(self.display, None, None, None);
-            let _ = egl.destroy_surface(self.display, self.surface);
+            if let Some(s) = self.surface {
+                let _ = egl.destroy_surface(self.display, s);
+            }
             let _ = egl.destroy_context(self.display, self.context);
         }
     }
 }
 
-// SAFETY: The three handles are opaque pointers into libEGL's process-wide
-// state. Our architecture restricts every EGL call that reads those handles
-// (make_current, swap_buffers, destroy_*) to the GLib main thread. The Sync
-// impl exists only so `Arc<Inner>` is Sync; OwnedEgl is never mutated via
-// `&self` from multiple threads.
+// SAFETY: Opaque pointers into libEGL's process-wide state. All EGL calls
+// are restricted to the GLib main thread.
 unsafe impl Send for OwnedEgl {}
 unsafe impl Sync for OwnedEgl {}
 
-/// Owns the Wayland subsurface tree that backs the EGL window.
-///
-/// Field order is the drop order: we release the EGL window buffer (which
-/// decrements libEGL's reference on the child surface) before sending
-/// `destroy` for the subsurface, and drop the Connection last so the fd
-/// stays open while every protocol object on it is torn down.
+/// Owns the Wayland subsurface tree. The initial `WlEglSurface` is
+/// transported here but taken by `attach` and moved into `SessionState`.
 struct WaylandSession {
-    wl_egl_surface: WlEglSurface,
+    wl_egl_surface: Option<WlEglSurface>,
     subsurface: WlSubsurface,
     child_surface: WlSurface,
     queue: Mutex<EventQueue<WlGlobals>>,
     conn: Connection,
-    /// Native `wl_display *` — borrowed from the Tauri window handle and owned
-    /// by GTK. We keep it here as the value to pass as
-    /// `MPV_RENDER_PARAM_WL_DISPLAY` and never free it ourselves.
     wl_display_ptr: *mut c_void,
 }
 
 impl Drop for WaylandSession {
     fn drop(&mut self) {
+        drop(self.wl_egl_surface.take());
         self.subsurface.destroy();
         self.child_surface.commit();
         let _ = self.conn.flush();
-        // Remaining fields drop in declaration order (wl_egl_surface already
-        // dropped first because it is declared first — see field order above).
     }
 }
 
-// SAFETY: `WlEglSurface` wraps a `*mut wl_egl_window`. The resize operation is
-// not thread-safe relative to EGL rendering, so we restrict it to the GLib
-// main thread. Subsurface / surface protocol requests go through
+// SAFETY: Subsurface / surface protocol requests go through
 // wayland-client's internally-locked Backend and are safe from any thread.
 unsafe impl Send for WaylandSession {}
 unsafe impl Sync for WaylandSession {}
@@ -171,32 +158,41 @@ unsafe impl Sync for WaylandSession {}
 // =========================================================================
 
 struct SessionState {
-    /// Pending `wl_egl_window_resize` queued by `set_frame`, applied by the
-    /// GLib render thread while the EGL context is current.
+    egl_display: egl::Display,
+    egl_surface: egl::Surface,
+    wl_egl_surface: Option<WlEglSurface>,
     pending_resize: Option<(i32, i32)>,
-    /// Current EGL window size — set when `wl_egl_window_resize` is applied.
     current_size: (i32, i32),
-    /// Last content rect (x, y, w, h) — used to restore position after unhide.
     last_frame: (i32, i32, i32, i32),
-    /// CSD offset (shadow margin + header bar) added to subsurface position.
     csd_offset: (i32, i32),
 }
+
+impl Drop for SessionState {
+    fn drop(&mut self) {
+        if let Ok(egl) = egl() {
+            let _ = egl.destroy_surface(self.egl_display, self.egl_surface);
+        }
+    }
+}
+
+// SAFETY: `egl::Display`, `egl::Surface`, and `WlEglSurface` are opaque
+// handles only used on the GLib main thread via `render_frame`. The Mutex
+// ensures exclusive access.
+unsafe impl Send for SessionState {}
 
 // =========================================================================
 // Inner (shared between renderer and libmpv update callback)
 // =========================================================================
 
 struct Inner {
-    state: Mutex<SessionState>,
     first_frame_cb: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    /// Lockless hot-path flag toggled by `set_visible`.
     video_active: AtomicBool,
-    /// Set to `false` by `detach` so any in-flight idle callback exits
-    /// before touching resources that are about to be freed.
     valid: AtomicBool,
-    // Platform resources — dropped last (after the Mutex/Atomic fields) in
-    // field order: render_ctx → egl → wayland.
+    // Drop order: render_ctx (frees mpv GL resources) → state (destroys
+    // EGL surface + WlEglSurface) → egl (destroys GL context) → wayland
+    // (destroys subsurface tree and Wayland connection).
     render_ctx: RenderContext,
+    state: Mutex<SessionState>,
     egl: OwnedEgl,
     wayland: WaylandSession,
 }
@@ -324,29 +320,23 @@ impl PlatformRenderer for LinuxGlRenderer {
         let inner = run_on_glib_main(move || -> Result<Arc<Inner>, String> {
             let mpv_ptr = mpv_ptr_usize as *mut c_void;
             let egl = egl()?;
+            let mut egl_res = egl_res;
+            let mut wayland = wayland;
             let display = egl_res.display;
-            let surface = egl_res.surface;
             let context = egl_res.context;
+            let surface = egl_res.surface.take().expect("surface already taken");
+            let wl_egl = wayland.wl_egl_surface.take().expect("wl_egl already taken");
             let wl_display_ptr = wayland.wl_display_ptr;
 
             egl.make_current(display, Some(surface), Some(surface), Some(context))
                 .map_err(|e| format!("eglMakeCurrent (init): {e:?}"))?;
 
-            // Load `gl` crate's dispatch table while the context is current.
-            // This is the only `gl::load_with` call in the process; after
-            // this, every `gl::*` call in `render_frame` is a static lookup.
             gl::load_with(|name| gl_proc_address(name) as *const _);
 
             fn get_proc_address(_ctx: &*mut c_void, name: &str) -> *mut c_void {
                 gl_proc_address(name)
             }
 
-            // SAFETY: `mpv_ptr` (originally `NonNull<mpv_handle>::as_ptr`)
-            // remains valid for the duration of this call because the
-            // caller is holding the MpvEngine mutex. The cast to
-            // `*mut _` is inferred to `*mut mpv_handle` by the signature
-            // of `RenderContext::new`; we never dereference it for any
-            // other purpose.
             let mut render_ctx = RenderContext::new(
                 unsafe { &mut *mpv_ptr.cast() },
                 vec![
@@ -355,16 +345,11 @@ impl PlatformRenderer for LinuxGlRenderer {
                         get_proc_address,
                         ctx: std::ptr::null_mut::<c_void>(),
                     }),
-                    // Tells libmpv which Wayland display the GL context is
-                    // on so it can request dmabuf formats from the
-                    // compositor and match its presentation timing.
                     RenderParam::WaylandDisplay(wl_display_ptr as *const c_void),
                 ],
             )
             .map_err(|e| format!("mpv_render_context_create: {e}"))?;
 
-            // SAFETY: gl crate dispatch is valid on this thread because we
-            // just called `load_with` while the context was current.
             unsafe {
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
@@ -372,15 +357,6 @@ impl PlatformRenderer for LinuxGlRenderer {
             let _ = egl.swap_buffers(display, surface);
             let _ = egl.make_current(display, None, None, None);
 
-            // Build the Arc with `new_cyclic` so the mpv update callback can
-            // capture a `Weak<Inner>` that refers to the Arc currently being
-            // constructed. This avoids needing `Arc::get_mut` after the fact
-            // (which fails once a `Weak` exists, because `get_mut` requires
-            // both strong_count == 1 AND weak_count == 0).
-            //
-            // If `detach` drops the only strong Arc before an idle callback
-            // runs, `upgrade()` returns None and the callback is a no-op —
-            // no dangling access possible.
             let inner = Arc::new_cyclic(move |weak: &std::sync::Weak<Inner>| {
                 let weak = weak.clone();
                 render_ctx.set_update_callback(move || {
@@ -393,16 +369,19 @@ impl PlatformRenderer for LinuxGlRenderer {
                     }
                 });
                 Inner {
+                    first_frame_cb: Mutex::new(first_frame_cb),
+                    video_active: AtomicBool::new(true),
+                    valid: AtomicBool::new(true),
+                    render_ctx,
                     state: Mutex::new(SessionState {
+                        egl_display: display,
+                        egl_surface: surface,
+                        wl_egl_surface: Some(wl_egl),
                         pending_resize: None,
                         current_size: (1, 1),
                         last_frame: (0, 0, 0, 0),
                         csd_offset,
                     }),
-                    first_frame_cb: Mutex::new(first_frame_cb),
-                    video_active: AtomicBool::new(true),
-                    valid: AtomicBool::new(true),
-                    render_ctx,
                     egl: egl_res,
                     wayland,
                 }
@@ -491,19 +470,15 @@ impl PlatformRenderer for LinuxGlRenderer {
 
     fn detach(&mut self) {
         let Some(inner) = self.active.take() else { return };
-        // Stop render callbacks from touching GL/mpv resources.
         inner.valid.store(false, Ordering::Release);
         inner.video_active.store(false, Ordering::Release);
 
-        // Drop on the GLib main thread. Any already-queued idle render
-        // callbacks hold Arc clones but check `valid` and bail immediately.
-        // Dropping Inner on GLib serializes behind those no-op callbacks
-        // (GLib processes idle sources in FIFO order) and tears down
-        // RenderContext → EGL → Wayland on the correct thread.
-        //
-        // We use `run_on_glib_main` (synchronous) so the caller can safely
-        // call engine.stop() afterwards — the RenderContext is guaranteed
-        // destroyed before the Mpv handle.
+        // Hide subsurface before destroying to prevent a visible flash
+        // of the transparent WebView background.
+        inner.wayland.subsurface.set_position(-32000, -32000);
+        inner.wayland.child_surface.commit();
+        let _ = inner.wayland.conn.flush();
+
         run_on_glib_main(move || {
             drop(inner);
         });
@@ -529,10 +504,48 @@ fn render_frame(inner: &Inner) {
         return;
     }
     let Ok(egl) = egl() else { return };
-
     let display = inner.egl.display;
-    let surface = inner.egl.surface;
     let context = inner.egl.context;
+
+    let mut state = match inner.state.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+
+    // Recreate the EGL surface at the new size instead of calling
+    // wl_egl_window_resize, which corrupts mpv's internal textures
+    // on VM GL drivers (virgl/llvmpipe).
+    let resized = if let Some((nw, nh)) = state.pending_resize.take() {
+        let _ = egl.make_current(display, None, None, None);
+        let _ = egl.destroy_surface(display, state.egl_surface);
+        let old_wl = state.wl_egl_surface.take();
+        drop(old_wl);
+
+        let child_id = inner.wayland.child_surface.id();
+        match recreate_egl_surface(egl, display, inner.egl.config, child_id, nw, nh) {
+            Some((new_wl, new_egl)) => {
+                state.wl_egl_surface = Some(new_wl);
+                state.egl_surface = new_egl;
+                state.current_size = (nw, nh);
+                true
+            }
+            None => {
+                tracing::warn!("[MPV] EGL surface recreation failed on resize");
+                drop(state);
+                return;
+            }
+        }
+    } else {
+        false
+    };
+
+    let surface = state.egl_surface;
+    let (w, h) = state.current_size;
+    drop(state);
+
+    if w < 1 || h < 1 {
+        return;
+    }
 
     if egl
         .make_current(display, Some(surface), Some(surface), Some(context))
@@ -541,31 +554,16 @@ fn render_frame(inner: &Inner) {
         return;
     }
 
-    let (w, h) = {
-        let mut state = match inner.state.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if let Some((nw, nh)) = state.pending_resize.take() {
-            inner.wayland.wl_egl_surface.resize(nw, nh, 0, 0);
-            state.current_size = (nw, nh);
-            unsafe {
-                gl::Viewport(0, 0, nw, nh);
-                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-                gl::Finish();
-                while gl::GetError() != gl::NO_ERROR {}
-            }
-            let _ = egl.swap_buffers(display, surface);
-            inner.wayland.child_surface.damage_buffer(0, 0, nw, nh);
-            inner.wayland.child_surface.commit();
-            let _ = inner.wayland.conn.flush();
+    if resized {
+        unsafe {
+            gl::Viewport(0, 0, w, h);
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
         }
-        state.current_size
-    };
-
-    if w < 1 || h < 1 {
-        return;
+        let _ = egl.swap_buffers(display, surface);
+        inner.wayland.child_surface.damage_buffer(0, 0, w, h);
+        inner.wayland.child_surface.commit();
+        let _ = inner.wayland.conn.flush();
     }
 
     let has_frame = match inner.render_ctx.update() {
@@ -587,9 +585,6 @@ fn render_frame(inner: &Inner) {
     if egl.swap_buffers(display, surface).is_err() {
         return;
     }
-    // Bundled libwayland-egl (e.g. inside AppImage) may not mark the
-    // surface as damaged after eglSwapBuffers. Explicitly damage the
-    // full buffer and commit so the compositor always recomposites.
     inner.wayland.child_surface.damage_buffer(0, 0, w, h);
     inner.wayland.child_surface.commit();
     let _ = inner.wayland.conn.flush();
@@ -601,6 +596,27 @@ fn render_frame(inner: &Inner) {
             cb();
         }
     }
+}
+
+fn recreate_egl_surface(
+    egl: &egl::DynamicInstance<egl::EGL1_4>,
+    display: egl::Display,
+    config: egl::Config,
+    child_id: wayland_client::backend::ObjectId,
+    w: i32,
+    h: i32,
+) -> Option<(WlEglSurface, egl::Surface)> {
+    let new_wl = WlEglSurface::new(child_id, w, h).ok()?;
+    let new_egl = unsafe {
+        egl.create_window_surface(
+            display,
+            config,
+            new_wl.ptr() as egl::NativeWindowType,
+            None,
+        )
+    }
+    .ok()?;
+    Some((new_wl, new_egl))
 }
 
 // =========================================================================
@@ -732,11 +748,12 @@ fn build_wayland(
 
     let egl_res = OwnedEgl {
         display: egl_display,
-        surface: egl_surface,
+        surface: Some(egl_surface),
         context: egl_context,
+        config,
     };
     let wayland = WaylandSession {
-        wl_egl_surface,
+        wl_egl_surface: Some(wl_egl_surface),
         subsurface,
         child_surface,
         queue: Mutex::new(queue),
