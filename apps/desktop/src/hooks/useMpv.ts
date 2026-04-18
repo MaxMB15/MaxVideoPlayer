@@ -58,7 +58,11 @@ export const useMpv = () => {
 	useEffect(() => {
 		mpvGetState()
 			.then((s) => {
-				if (!loadingRef.current && !loadedThisMountRef.current && (s.isPlaying || s.isPaused)) {
+				if (
+					!loadingRef.current &&
+					!loadedThisMountRef.current &&
+					(s.isPlaying || s.isPaused)
+				) {
 					setFirstFrameReady(true);
 				}
 			})

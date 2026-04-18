@@ -18,11 +18,12 @@ pub struct PlayerState {
 pub struct MpvEngine {
     mpv: Option<Mpv>,
     current_url: Option<String>,
+    audio_logged_playing: bool,
 }
 
 impl MpvEngine {
     pub fn new() -> Self {
-        Self { mpv: None, current_url: None }
+        Self { mpv: None, current_url: None, audio_logged_playing: false }
     }
 
     /// Create a new Mpv instance with the provided options.
@@ -31,6 +32,7 @@ impl MpvEngine {
     /// before calling `loadfile`.
     pub fn create(&mut self, options: &[(&str, &str)]) -> Result<&mut Mpv, String> {
         self.stop();
+        tracing::info!("[MPV] create with options: {:?}", options);
         let opts: Vec<(String, String)> = options
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -46,11 +48,105 @@ impl MpvEngine {
         Ok(self.mpv.as_mut().unwrap())
     }
 
+    /// Set audio properties after mpv_initialize. Options like `aid` and `mute`
+    /// must be set as properties (not init options) because `mpv_set_option_string`
+    /// rejects them with MPV_ERROR_OPTION_ERROR (-7) on many libmpv builds.
+    pub fn configure_audio(&self) -> Result<(), String> {
+        let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
+        if let Err(e) = mpv.set_property("aid", "auto") {
+            tracing::warn!("[MPV] set aid=auto failed: {e}");
+        }
+        if let Err(e) = mpv.set_property("mute", false) {
+            tracing::warn!("[MPV] set mute=false failed: {e}");
+        }
+        if let Err(e) = mpv.set_property("volume", 100.0_f64) {
+            tracing::warn!("[MPV] set volume=100 failed: {e}");
+        }
+        self.log_audio_state("after configure_audio");
+        Ok(())
+    }
+
     /// Issue the loadfile command. Must be called AFTER render context is attached.
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
         let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
         mpv.command("loadfile", &[url, "replace"])
-            .map_err(|e| format!("loadfile: {}", e))
+            .map_err(|e| format!("loadfile: {}", e))?;
+        self.log_audio_state("after loadfile");
+        Ok(())
+    }
+
+    /// Log audio-related mpv properties to help diagnose "no sound" reports.
+    /// Called both right after loadfile (before mpv has picked an output) and
+    /// from a delayed check once the decoder has started.
+    pub fn log_audio_state(&self, stage: &str) {
+        let Some(ref mpv) = self.mpv else { return };
+        let get_str = |k: &str| {
+            mpv.get_property::<String>(k)
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        let get_bool = |k: &str| {
+            mpv.get_property::<bool>(k)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        let get_f64 = |k: &str| {
+            mpv.get_property::<f64>(k)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "<unset>".to_string())
+        };
+        tracing::info!(
+            "[MPV audio {stage}] current-ao={} audio-device={} aid={} mute={} volume={} ao-volume={} audio-codec={} audio-params={} track-count={} track-list={}",
+            get_str("current-ao"),
+            get_str("audio-device"),
+            get_str("aid"),
+            get_bool("mute"),
+            get_f64("volume"),
+            get_f64("ao-volume"),
+            get_str("audio-codec"),
+            get_str("audio-params"),
+            get_str("track-list/count"),
+            get_str("track-list"),
+        );
+    }
+
+    /// If mpv ended up with `aid=no` despite available audio tracks, force
+    /// `aid=auto` so the audio track gets selected. This can happen when a
+    /// system-wide config or internal mpv logic disables audio after our
+    /// initial `configure_audio()` call.
+    fn ensure_audio_selected(&self) {
+        let Some(ref mpv) = self.mpv else { return };
+        let aid = mpv.get_property::<String>("aid").unwrap_or_default();
+        if aid != "no" {
+            return;
+        }
+        let track_count = mpv
+            .get_property::<String>("track-list/count")
+            .and_then(|s| s.parse::<i64>().map_err(|_| libmpv2::Error::Null))
+            .unwrap_or(0);
+        if track_count == 0 {
+            return;
+        }
+
+        let current_ao = mpv
+            .get_property::<String>("current-ao")
+            .unwrap_or_default();
+        if current_ao.is_empty() || current_ao == "<unset>" {
+            tracing::error!(
+                "[MPV] NO AUDIO OUTPUT DRIVER — libmpv has no AO backends compiled in. \
+                 Rebuild libmpv with audio support: \
+                 sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev && \
+                 ./scripts/build-libmpv.sh linux"
+            );
+            return;
+        }
+
+        tracing::warn!(
+            "[MPV] aid=no despite {track_count} tracks — forcing aid=auto"
+        );
+        if let Err(e) = mpv.set_property("aid", "auto") {
+            tracing::error!("[MPV] failed to force aid=auto: {e}");
+        }
+        self.log_audio_state("after force-aid");
     }
 
     /// Record the current URL (called by MpvState after loadfile succeeds).
@@ -65,6 +161,7 @@ impl MpvEngine {
         }
         self.mpv = None;
         self.current_url = None;
+        self.audio_logged_playing = false;
     }
 
     pub fn play(&self) -> Result<(), String> {
@@ -151,7 +248,7 @@ impl MpvEngine {
             .map_err(|e| e.to_string())
     }
 
-    pub fn get_state(&self) -> PlayerState {
+    pub fn get_state(&mut self) -> PlayerState {
         let mut state = PlayerState {
             current_url: self.current_url.clone(),
             volume: 100.0,
@@ -163,6 +260,11 @@ impl MpvEngine {
             state.is_paused = mpv.get_property::<bool>("pause").unwrap_or(false);
             state.volume = mpv.get_property::<f64>("volume").unwrap_or(100.0);
             state.is_playing = !state.is_paused && state.current_url.is_some();
+        }
+        if !self.audio_logged_playing && state.position > 0.0 {
+            self.audio_logged_playing = true;
+            self.log_audio_state("playing");
+            self.ensure_audio_selected();
         }
         state
     }

@@ -117,7 +117,9 @@ case "$PLATFORM" in
       exit 1
     fi
 
-    # Check audio dev packages — at least one is required for playback with sound
+    # Check audio dev packages — at least one is REQUIRED for playback with sound.
+    # Without these, the resulting libmpv.so will have zero AO (audio output)
+    # drivers and mpv will silently disable all audio.
     AUDIO_FOUND=false
     for lib in libpulse alsa libpipewire-0.3; do
       if pkg-config --exists "$lib" 2>/dev/null; then
@@ -125,9 +127,18 @@ case "$PLATFORM" in
       fi
     done
     if [[ "$AUDIO_FOUND" != "true" ]]; then
-      echo "Warning: No audio dev packages found. Install at least one of:"
-      echo "  sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev"
-      echo "Without these, libmpv will have no audio output support."
+      echo ""
+      echo "============================================================"
+      echo "  ERROR: No audio dev packages found!"
+      echo "  libmpv will have NO audio output support without them."
+      echo ""
+      echo "  Install at least one:"
+      echo "    sudo apt-get install libpulse-dev libasound2-dev libpipewire-0.3-dev"
+      echo ""
+      echo "  Then re-run this script."
+      echo "============================================================"
+      echo ""
+      exit 1
     fi
 
     # Clone mpv source (same version as macOS for consistency)

@@ -62,13 +62,24 @@ ln -sf libmpv.so "$BUNDLE_DIR/libmpv.so.2"
 ln -sf libmpv.so "$BUNDLE_DIR/libmpv.so.1"
 
 # System libraries that must NOT be bundled — they are always present on the
-# target system and bundling them causes ABI conflicts.
+# target system and bundling them causes ABI conflicts. In particular, GPU
+# drivers (Mesa/VA-API/VDPAU) and their LLVM backend must always come from the
+# system: they dlopen kernel modules and must match the host kernel ABI. Mixing
+# bundled GLib/libffi with system Mesa corrupts internal GL dispatch tables.
 SYSTEM_LIBS_RE="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread"
 SYSTEM_LIBS_RE+="|librt\.so|libstdc\+\+|libgcc_s|libresolv|libnss_"
 SYSTEM_LIBS_RE+="|libX[a-z]|libxcb|libwayland|libdrm|libgbm"
-SYSTEM_LIBS_RE+="|libGL\.so|libEGL\.so|libGLX|libGLdispatch"
+# GL stack — always use system Mesa/vendor driver, never bundle.
+SYSTEM_LIBS_RE+="|libGL\.so|libEGL\.so|libGLX|libGLdispatch|libOpenGL"
+# GTK stack and its transitive deps — must match the system WebKit/GTK.
 SYSTEM_LIBS_RE+="|libgtk|libgdk|libglib|libgobject|libgio|libpango|libcairo|libatk"
-SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype"
+SYSTEM_LIBS_RE+="|libffi|libpcre|libharfbuzz|libfribidi|libgraphite"
+# Hardware video acceleration — always from the system to match GPU driver.
+SYSTEM_LIBS_RE+="|libva|libvdpau|libnvidia|libcuda"
+# LLVM backend used by Mesa shader compilers — must match Mesa version.
+SYSTEM_LIBS_RE+="|libLLVM|libclang"
+# Core system services.
+SYSTEM_LIBS_RE+="|libdbus|libsystemd|libfontconfig|libfreetype|libudev"
 
 # bundle_all_deps: recursively resolve and copy dependencies to a fixpoint.
 # Uses the bundle dir itself as the visited set — if a .so already exists
@@ -130,6 +141,18 @@ if [[ $AUDIO_LIBS -eq 0 ]]; then
   echo "    ⚠ WARNING: No audio libraries bundled. AppImage may have no audio output."
   echo "    Install audio dev packages and rebuild libmpv: sudo apt-get install libpulse-dev libasound2-dev"
 fi
+
+# CI audit: list every bundled library so regressions in SYSTEM_LIBS_RE are
+# visible in build logs. A GL/GTK lib showing up here would indicate the filter
+# regressed and will cause ABI conflicts at runtime.
+echo ""
+echo "==> Bundled libraries (full inventory for CI audit):"
+for so in "$BUNDLE_DIR"/*.so*; do
+  if [[ -f "$so" && ! -L "$so" ]]; then
+    size=$(stat -c%s "$so" 2>/dev/null || stat -f%z "$so" 2>/dev/null || echo "?")
+    printf "    %-50s %s bytes\n" "$(basename "$so")" "$size"
+  fi
+done
 
 echo ""
 echo "    Done. Bundled libs placed alongside binary in $BUNDLE_DIR"
