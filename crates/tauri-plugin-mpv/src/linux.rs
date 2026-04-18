@@ -49,9 +49,9 @@ fn egl() -> Result<&'static egl::DynamicInstance<egl::EGL1_4>, String> {
     static INSTANCE: OnceLock<Result<egl::DynamicInstance<egl::EGL1_4>, String>> = OnceLock::new();
     INSTANCE
         .get_or_init(|| {
-            // SAFETY: `load_required` wraps `dlopen("libEGL.so.1")`; dlopen is
-            // async-signal-safe and thread-safe, and the returned instance is
-            // valid for the lifetime of the process.
+            // SAFETY: `load_required` wraps `dlopen("libEGL.so.1")`. We rely on
+            // one-time initialization via `OnceLock` and on the loaded library
+            // remaining valid for the lifetime of the process.
             unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }
                 .map_err(|e| format!("Failed to load libEGL: {e}"))
         })
@@ -281,9 +281,14 @@ impl LinuxGlRenderer {
     /// Register a callback invoked once, on the first presented frame. Must
     /// be called before `attach`; it is moved into `Inner` at that point.
     pub fn set_first_frame_callback(&mut self, cb: Box<dyn FnOnce() + Send>) {
-        if let Ok(mut slot) = self.first_frame_cb.lock() {
-            *slot = Some(cb);
-        }
+        let mut slot = match self.first_frame_cb.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => {
+                tracing::warn!("[MPV] first_frame_cb mutex was poisoned; recovering");
+                poisoned.into_inner()
+            }
+        };
+        *slot = Some(cb);
     }
 }
 
@@ -571,7 +576,7 @@ fn render_frame(inner: &Inner) {
         Err(_) => false,
     };
 
-    if !has_frame {
+    if !has_frame && !resized {
         return;
     }
 
@@ -847,8 +852,13 @@ where
     main_ctx.invoke(move || {
         let _ = tx.send(f());
     });
-    rx.recv()
-        .expect("GLib main thread dispatch channel dropped before sending")
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!("[MPV] GLib main-thread dispatch timed out or disconnected: {e}");
+            panic!("GLib main-thread dispatch failed: {e}");
+        }
+    }
 }
 
 // =========================================================================
