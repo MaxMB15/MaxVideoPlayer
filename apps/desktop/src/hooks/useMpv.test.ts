@@ -108,7 +108,7 @@ describe("useMpv", () => {
 			await result.current.load("http://stream.url");
 		});
 
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url");
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url", undefined);
 		expect(result.current.state.currentUrl).toBe("http://stream.url");
 	});
 
@@ -137,7 +137,7 @@ describe("useMpv", () => {
 
 		// Only one call should have been made
 		expect(mockMpvLoad).toHaveBeenCalledTimes(1);
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url");
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url", undefined);
 
 		// Resolve first load
 		await act(async () => {

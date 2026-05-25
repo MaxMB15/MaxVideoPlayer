@@ -25,6 +25,39 @@ export const useMpv = () => {
 	const [error, setError] = useState<string | null>(null);
 	const [fallbackActive, setFallbackActive] = useState(false);
 	const [firstFrameReady, setFirstFrameReady] = useState(false);
+	// Set while the Rust-side reconnect monitor is re-issuing loadfile after
+	// a network-induced EndFile(Error). Cleared on the matching `mpv://reconnected`
+	// event or whenever the user starts a fresh load.
+	const [reconnecting, setReconnecting] = useState(false);
+	const [reconnectAttempt, setReconnectAttempt] = useState(0);
+	// `buffering` reflects mpv's `paused-for-cache` flag with a short debounce
+	// so brief stalls during startup / seeks don't flash the indicator.
+	const [buffering, setBuffering] = useState(false);
+	// Set to true when the Rust-side reconnect monitor has exhausted its
+	// retry budget. Indicates the URL is genuinely unreachable (DNS failure,
+	// server down, or the user is offline). Cleared on the next successful
+	// load / explicit stop.
+	const [loadFailed, setLoadFailed] = useState(false);
+	// `recentlyRecovered` is an explicit positive-acknowledgement signal that
+	// powers the green "Connection restored" banner. We drive it directly off
+	// the `mpv://reconnected` event (and the navigator.onLine auto-recovery
+	// path) rather than inferring it from "all flags are false now" because
+	// the flag transitions don't always collapse to idle in one render tick:
+	// e.g. when our `eof-reached` path triggered the retry, the demuxer EOF'd
+	// before the cache "refilled" event, so `mpv://buffered` may never fire
+	// and `buffering` stays stuck true — which would mask the recovered
+	// transition under the old flag-inference logic.
+	const [recentlyRecovered, setRecentlyRecovered] = useState(false);
+	const bufferingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const recoveredTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const flashRecovered = useCallback(() => {
+		if (recoveredTimerRef.current) clearTimeout(recoveredTimerRef.current);
+		setRecentlyRecovered(true);
+		recoveredTimerRef.current = setTimeout(() => {
+			setRecentlyRecovered(false);
+			recoveredTimerRef.current = null;
+		}, 2500);
+	}, []);
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const loadingRef = useRef(false);
 
@@ -49,6 +82,82 @@ export const useMpv = () => {
 		};
 	}, []);
 
+	// Listen for reconnect lifecycle events emitted by the Rust-side
+	// auto-reconnect monitor (see crates/tauri-plugin-mpv/src/reconnect.rs).
+	useEffect(() => {
+		const reconnectingP = listen<{ url: string; attempt: number }>(
+			"mpv://reconnecting",
+			(event) => {
+				console.warn(
+					`[useMpv] reconnecting (attempt #${event.payload.attempt}):`,
+					event.payload.url
+				);
+				setReconnecting(true);
+				setReconnectAttempt(event.payload.attempt);
+			}
+		);
+		const reconnectedP = listen<{ url: string }>("mpv://reconnected", (event) => {
+			console.info("[useMpv] reconnected:", event.payload.url);
+			setReconnecting(false);
+			setReconnectAttempt(0);
+			// Defensive: if our `eof-reached` path drove the retry, the
+			// demuxer EOF'd while paused-for-cache was already false, so the
+			// Rust monitor's "buffered" emission would never fire and
+			// `buffering` would stay stuck true. Clear it explicitly here so
+			// the recovered banner isn't masked by stale buffering state.
+			setBuffering(false);
+			if (bufferingTimerRef.current) {
+				clearTimeout(bufferingTimerRef.current);
+				bufferingTimerRef.current = null;
+			}
+			flashRecovered();
+		});
+		// Buffering lifecycle (paused-for-cache observation in Rust). Debounce
+		// the "true" transition by 1.5 s so brief stalls during startup or seek
+		// don't flash the connection-issues indicator.
+		const bufferingP = listen<{ url: string }>("mpv://buffering", () => {
+			if (bufferingTimerRef.current) clearTimeout(bufferingTimerRef.current);
+			bufferingTimerRef.current = setTimeout(() => {
+				console.warn("[useMpv] buffering (stream stalled)");
+				setBuffering(true);
+				bufferingTimerRef.current = null;
+			}, 1500);
+		});
+		const bufferedP = listen<{ url: string }>("mpv://buffered", () => {
+			if (bufferingTimerRef.current) {
+				clearTimeout(bufferingTimerRef.current);
+				bufferingTimerRef.current = null;
+			}
+			setBuffering(false);
+		});
+		const loadFailedP = listen<{ url: string }>("mpv://load-failed", (event) => {
+			console.error("[useMpv] load failed (retries exhausted):", event.payload.url);
+			setLoadFailed(true);
+			setReconnecting(false);
+			setReconnectAttempt(0);
+			setBuffering(false);
+			if (bufferingTimerRef.current) {
+				clearTimeout(bufferingTimerRef.current);
+				bufferingTimerRef.current = null;
+			}
+		});
+		return () => {
+			reconnectingP.then((fn) => fn());
+			reconnectedP.then((fn) => fn());
+			bufferingP.then((fn) => fn());
+			bufferedP.then((fn) => fn());
+			loadFailedP.then((fn) => fn());
+			if (bufferingTimerRef.current) {
+				clearTimeout(bufferingTimerRef.current);
+				bufferingTimerRef.current = null;
+			}
+			if (recoveredTimerRef.current) {
+				clearTimeout(recoveredTimerRef.current);
+				recoveredTimerRef.current = null;
+			}
+		};
+	}, [flashRecovered]);
+
 	// On mount, check if mpv is already playing (e.g. user navigated away and back).
 	// If so, restore firstFrameReady immediately so the background turns transparent.
 	// Skip if a load was triggered during this mount cycle — the loadedThisMountRef
@@ -58,24 +167,84 @@ export const useMpv = () => {
 	useEffect(() => {
 		mpvGetState()
 			.then((s) => {
-				if (!loadingRef.current && !loadedThisMountRef.current && (s.isPlaying || s.isPaused)) {
+				if (
+					!loadingRef.current &&
+					!loadedThisMountRef.current &&
+					(s.isPlaying || s.isPaused)
+				) {
 					setFirstFrameReady(true);
 				}
 			})
 			.catch(() => {});
 	}, []);
 
-	const load = useCallback(async (url: string) => {
+	// Refs that mirror state so the `online` listener (registered once)
+	// reads the latest values without re-binding on every poll.
+	const loadFailedRef = useRef(false);
+	const reconnectingRef = useRef(false);
+	const currentUrlRef = useRef<string | null>(null);
+	// Sticky last-good position. We need this (rather than `state.position`)
+	// for resume-on-recovery because during a Rust-side retry the polled
+	// position can briefly drop to 0 as the new loadfile is initialising —
+	// capturing the position at the moment of recovery would land us at
+	// 00:00. `lastKnownPositionRef` only ever takes ON forward progress,
+	// so an outage-time recovery sees the pre-outage position.
+	const lastKnownPositionRef = useRef(0);
+	useEffect(() => {
+		loadFailedRef.current = loadFailed;
+	}, [loadFailed]);
+	useEffect(() => {
+		reconnectingRef.current = reconnecting;
+	}, [reconnecting]);
+	useEffect(() => {
+		currentUrlRef.current = state.currentUrl;
+	}, [state.currentUrl]);
+	useEffect(() => {
+		if (state.position > 1.0) {
+			lastKnownPositionRef.current = state.position;
+		}
+	}, [state.position]);
+
+	// `load(url)` is a fresh start from 00:00 (used for channel switches /
+	// initial play). `load(url, startPos)` is a resume — used by the
+	// `online`-triggered auto-recovery and by the Retry button to preserve
+	// playback position across a hard restart of the mpv instance.
+	const load = useCallback(async (url: string, startPos?: number) => {
 		if (loadingRef.current) return;
 		loadingRef.current = true;
 		loadedThisMountRef.current = true;
 		setError(null);
 		setFallbackActive(false);
 		setFirstFrameReady(false);
+		setReconnecting(false);
+		setReconnectAttempt(0);
+		setBuffering(false);
+		setLoadFailed(false);
+		setRecentlyRecovered(false);
+		if (bufferingTimerRef.current) {
+			clearTimeout(bufferingTimerRef.current);
+			bufferingTimerRef.current = null;
+		}
+		if (recoveredTimerRef.current) {
+			clearTimeout(recoveredTimerRef.current);
+			recoveredTimerRef.current = null;
+		}
+		// Fresh-start load resets the sticky position so a subsequent
+		// recovery for this URL can't accidentally resume into a position
+		// inherited from a previous channel.
+		if (startPos === undefined) {
+			lastKnownPositionRef.current = 0;
+		}
 		// Reset playing state and position immediately so the bar doesn't show stale values.
-		setState((s) => ({ ...s, isPlaying: false, isPaused: false, position: 0, duration: 0 }));
+		setState((s) => ({
+			...s,
+			isPlaying: false,
+			isPaused: false,
+			position: startPos ?? 0,
+			duration: 0,
+		}));
 		try {
-			await mpvLoad(url);
+			await mpvLoad(url, startPos);
 			// Don't set isPlaying optimistically — let the next poll confirm it from Rust
 			// so transparency only kicks in once MPV is actually rendering frames.
 			setState((s) => ({ ...s, currentUrl: url }));
@@ -87,6 +256,38 @@ export const useMpv = () => {
 			loadingRef.current = false;
 		}
 	}, []);
+
+	// Auto-recover when the OS reports the network came back online while
+	// we're either parked in `loadFailed` OR actively `reconnecting`. The
+	// Rust-side reconnect monitor sits on an exponential backoff between
+	// attempts (up to 30 s); without this hook the red banner would stay up
+	// for the full backoff window even though the user knows their internet
+	// is already back. By calling `load(currentUrl)` we hard-reset the mpv
+	// instance immediately: the new load clears `reconnecting`/`loadFailed`
+	// in the same tick, and `flashRecovered()` lights the green "Connection
+	// restored" banner so the user gets positive confirmation.
+	useEffect(() => {
+		const handleOnline = () => {
+			const url = currentUrlRef.current;
+			const needsRecover = loadFailedRef.current || reconnectingRef.current;
+			if (needsRecover && url) {
+				const resumeAt = lastKnownPositionRef.current;
+				console.info(
+					`[useMpv] online event (loadFailed=${loadFailedRef.current} reconnecting=${reconnectingRef.current}) — auto-recovering at pos=${resumeAt.toFixed(2)}:`,
+					url
+				);
+				load(url, resumeAt > 1.0 ? resumeAt : undefined)
+					.then(() => {
+						flashRecovered();
+					})
+					.catch((e) => {
+						console.warn("[useMpv] auto-recover load failed:", e);
+					});
+			}
+		};
+		window.addEventListener("online", handleOnline);
+		return () => window.removeEventListener("online", handleOnline);
+	}, [load, flashRecovered]);
 
 	const play = useCallback(async () => {
 		console.log("[useMpv] play called");
@@ -170,6 +371,11 @@ export const useMpv = () => {
 		error,
 		fallbackActive,
 		firstFrameReady,
+		reconnecting,
+		reconnectAttempt,
+		buffering,
+		loadFailed,
+		recentlyRecovered,
 		load,
 		play,
 		pause,

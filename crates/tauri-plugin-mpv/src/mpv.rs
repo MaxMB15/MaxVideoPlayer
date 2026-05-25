@@ -7,7 +7,7 @@ use crate::idle_inhibit::IdleInhibitor;
 use crate::renderer::PlatformRenderer;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
 
 #[cfg(target_os = "macos")]
@@ -21,6 +21,19 @@ pub struct MpvState {
     renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
     fallback_active: AtomicBool,
     idle_inhibitor: IdleInhibitor,
+    /// Kill flag for the in-flight reconnect monitor thread, if any.
+    ///
+    /// The watcher created by `crate::reconnect::spawn` owns a libmpv client
+    /// handle (`mpv_create_client`). Per the libmpv docs, that handle holds
+    /// a STRONG reference to the player core — so even after we drop our
+    /// `Mpv` instance, the core stays alive until the client is dropped.
+    /// On macOS that leaks the hardware decoder + audio device, causing
+    /// `Error while decoding frame (hardware decoding)!` on the next load.
+    ///
+    /// We trip this flag BEFORE destroying the parent `Mpv` so the watcher
+    /// exits the next time it wakes from `wait_event`, dropping its client
+    /// and releasing the core.
+    reconnect_kill: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl MpvState {
@@ -30,14 +43,31 @@ impl MpvState {
             renderer: Mutex::new(None),
             fallback_active: AtomicBool::new(false),
             idle_inhibitor: IdleInhibitor::new(),
+            reconnect_kill: Mutex::new(None),
+        }
+    }
+
+    /// Trip the current reconnect monitor's kill flag (if one exists) so it
+    /// exits on the next event-loop iteration. Must be called BEFORE the
+    /// parent `Mpv` is dropped — see the field docstring.
+    fn cancel_reconnect_monitor(&self) {
+        if let Ok(mut guard) = self.reconnect_kill.lock() {
+            if let Some(flag) = guard.take() {
+                flag.store(true, Ordering::Release);
+            }
         }
     }
 
     pub fn load<R: tauri::Runtime>(
         &self,
         url: &str,
+        start_pos: Option<f64>,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
+        // Trip the old reconnect monitor BEFORE we destroy the parent mpv,
+        // so its client handle is dropped on the next loop iteration and the
+        // old libmpv core is actually released (see field docstring).
+        self.cancel_reconnect_monitor();
         // Take the old renderer OUT of the mutex before dropping it.
         // detach() calls Queue::main().exec_sync(), which blocks the background thread
         // until the main thread processes the closure. The main thread's on_window_event
@@ -49,23 +79,52 @@ impl MpvState {
         self.idle_inhibitor.uninhibit();
         self.fallback_active.store(false, Ordering::Release);
 
-        let result = self.load_impl(url, app);
+        let result = self.load_impl(url, start_pos, app);
         if result.is_ok() {
             self.idle_inhibitor.inhibit();
         }
         result
     }
 
+    /// Helper: spawn the auto-reconnect monitor for the currently loaded URL.
+    /// `client` may be `None` if the engine failed to create one — we just log
+    /// and continue without auto-recovery in that case rather than failing the
+    /// load.
+    ///
+    /// Allocates a fresh `Arc<AtomicBool>` kill flag, stores it on the state,
+    /// and passes a clone to the watcher. Any pre-existing flag should already
+    /// have been tripped by `cancel_reconnect_monitor()` before this point;
+    /// we overwrite the slot here so the new monitor "owns" cancellation.
+    fn spawn_reconnect_monitor<R: tauri::Runtime>(
+        &self,
+        client: Option<libmpv2::Mpv>,
+        url: &str,
+        app: &tauri::AppHandle<R>,
+    ) {
+        let Some(c) = client else {
+            tracing::warn!(
+                "[MPV] auto-reconnect disabled for this stream — failed to create event client"
+            );
+            return;
+        };
+        let kill = Arc::new(AtomicBool::new(false));
+        if let Ok(mut slot) = self.reconnect_kill.lock() {
+            *slot = Some(kill.clone());
+        }
+        crate::reconnect::spawn(c, url.to_string(), app.clone(), kill);
+    }
+
     #[cfg(target_os = "macos")]
     fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
+        start_pos: Option<f64>,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
         // Create the NSOpenGLView renderer (main-thread work happens inside new()).
         let mut gl_renderer = match MacosGlRenderer::new(app) {
             Ok(r) => r,
-            Err(e) => return self.launch_fallback(url, app, &e),
+            Err(e) => return self.launch_fallback(url, start_pos, app, &e),
         };
 
         // Emit mpv://first-frame when the first video frame is rendered so the
@@ -89,7 +148,7 @@ impl MpvState {
 
         if let Err(e) = attach_result {
             self.inner.lock().map_err(|e| e.to_string())?.stop();
-            return self.launch_fallback(url, app, &e);
+            return self.launch_fallback(url, start_pos, app, &e);
         }
 
         {
@@ -97,9 +156,13 @@ impl MpvState {
             *renderer = Some(Box::new(gl_renderer));
         }
 
-        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.loadfile(url)?;
-        engine.set_current_url(url);
+        let event_client = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            engine.loadfile(url, start_pos)?;
+            engine.set_current_url(url);
+            engine.create_event_client("reconnect-watcher").ok()
+        };
+        self.spawn_reconnect_monitor(event_client, url, app);
         Ok(())
     }
 
@@ -107,11 +170,12 @@ impl MpvState {
     fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
+        start_pos: Option<f64>,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
         let mut gl_renderer = match LinuxGlRenderer::new(app) {
             Ok(r) => r,
-            Err(e) => return self.launch_fallback(url, app, &e),
+            Err(e) => return self.launch_fallback(url, start_pos, app, &e),
         };
 
         {
@@ -132,7 +196,7 @@ impl MpvState {
 
         if let Err(e) = attach_result {
             self.inner.lock().map_err(|e| e.to_string())?.stop();
-            return self.launch_fallback(url, app, &e);
+            return self.launch_fallback(url, start_pos, app, &e);
         }
 
         {
@@ -140,9 +204,13 @@ impl MpvState {
             *renderer = Some(Box::new(gl_renderer));
         }
 
-        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.loadfile(url)?;
-        engine.set_current_url(url);
+        let event_client = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            engine.loadfile(url, start_pos)?;
+            engine.set_current_url(url);
+            engine.create_event_client("reconnect-watcher").ok()
+        };
+        self.spawn_reconnect_monitor(event_client, url, app);
         Ok(())
     }
 
@@ -150,18 +218,24 @@ impl MpvState {
     fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
-        _app: &tauri::AppHandle<R>,
+        start_pos: Option<f64>,
+        app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&[])?;
-        engine.loadfile(url)?;
-        engine.set_current_url(url);
+        let event_client = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            engine.create(&[])?;
+            engine.loadfile(url, start_pos)?;
+            engine.set_current_url(url);
+            engine.create_event_client("reconnect-watcher").ok()
+        };
+        self.spawn_reconnect_monitor(event_client, url, app);
         Ok(())
     }
 
     fn launch_fallback<R: tauri::Runtime>(
         &self,
         url: &str,
+        start_pos: Option<f64>,
         app: &tauri::AppHandle<R>,
         reason: &str,
     ) -> Result<(), String> {
@@ -173,20 +247,32 @@ impl MpvState {
         self.fallback_active.store(true, Ordering::Release);
         let _ = app.emit("mpv://render-fallback", serde_json::json!({ "reason": reason }));
 
-        self.launch_fallback_impl(url, reason)
-    }
-
-    #[cfg(target_os = "macos")]
-    fn launch_fallback_impl(&self, url: &str, _reason: &str) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&fallback_options())?;
-        engine.loadfile(url)?;
-        engine.set_current_url(url);
+        let client = self.launch_fallback_impl(url, start_pos, reason)?;
+        self.spawn_reconnect_monitor(client, url, app);
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
+    fn launch_fallback_impl(
+        &self,
+        url: &str,
+        start_pos: Option<f64>,
+        _reason: &str,
+    ) -> Result<Option<libmpv2::Mpv>, String> {
+        let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+        engine.create(&fallback_options())?;
+        engine.loadfile(url, start_pos)?;
+        engine.set_current_url(url);
+        Ok(engine.create_event_client("reconnect-watcher").ok())
+    }
+
     #[cfg(target_os = "linux")]
-    fn launch_fallback_impl(&self, url: &str, reason: &str) -> Result<(), String> {
+    fn launch_fallback_impl(
+        &self,
+        url: &str,
+        start_pos: Option<f64>,
+        reason: &str,
+    ) -> Result<Option<libmpv2::Mpv>, String> {
         // If the GPU is blocklisted, vo=gpu will also crash. Use software-only output.
         let gpu_blocklisted = reason.contains("blocklisted");
         let opts = if gpu_blocklisted {
@@ -197,18 +283,23 @@ impl MpvState {
         };
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&opts)?;
-        engine.loadfile(url)?;
+        engine.loadfile(url, start_pos)?;
         engine.set_current_url(url);
-        Ok(())
+        Ok(engine.create_event_client("reconnect-watcher").ok())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn launch_fallback_impl(&self, url: &str, _reason: &str) -> Result<(), String> {
+    fn launch_fallback_impl(
+        &self,
+        url: &str,
+        start_pos: Option<f64>,
+        _reason: &str,
+    ) -> Result<Option<libmpv2::Mpv>, String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
         engine.create(&[])?;
-        engine.loadfile(url)?;
+        engine.loadfile(url, start_pos)?;
         engine.set_current_url(url);
-        Ok(())
+        Ok(engine.create_event_client("reconnect-watcher").ok())
     }
 
     /// Reposition the video surface to a CSS-pixel rect reported by the frontend.
@@ -254,6 +345,10 @@ impl MpvState {
     }
 
     pub fn stop(&self) {
+        // Same ordering rule as `load()`: cancel the monitor BEFORE the
+        // engine drops the parent `Mpv`, otherwise the watcher's client
+        // keeps the libmpv core alive (hardware decoder + audio device).
+        self.cancel_reconnect_monitor();
         let old_renderer = self.renderer.lock().unwrap().take();
         drop(old_renderer); // calls detach() with renderer mutex RELEASED
         self.inner.lock().unwrap().stop();

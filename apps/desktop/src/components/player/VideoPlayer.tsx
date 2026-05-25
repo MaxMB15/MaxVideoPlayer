@@ -1,5 +1,6 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
+import { ConnectionStatusOverlay } from "./ConnectionStatusOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
@@ -551,6 +552,23 @@ export const PlayerView = () => {
 					</span>
 				</div>
 			)}
+
+			<ConnectionStatusOverlay
+				reconnecting={mpv.reconnecting}
+				reconnectAttempt={mpv.reconnectAttempt}
+				buffering={mpv.buffering}
+				loadFailed={mpv.loadFailed}
+				recentlyRecovered={mpv.recentlyRecovered}
+				onRetry={() => {
+					const url = mpv.state.currentUrl;
+					if (!url) return;
+					// Preserve playback position across the hard restart so
+					// the user resumes where they were when the stream broke,
+					// not from the beginning of the movie/episode.
+					const resumeAt = mpv.state.position > 1.0 ? mpv.state.position : undefined;
+					mpv.load(url, resumeAt).catch(() => {});
+				}}
+			/>
 
 			<div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent">
 				{mpv.error && (
