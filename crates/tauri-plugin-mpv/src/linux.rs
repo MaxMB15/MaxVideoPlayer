@@ -875,6 +875,19 @@ fn drain_wayland_queue(inner: &Inner) {
 // MPV option sets
 // =========================================================================
 
+/// FFmpeg (lavf) reconnect options — passed through `stream-lavf-o`.
+/// Absorbs brief network outages at the demuxer layer so the IPTV stream
+/// keeps flowing without mpv emitting an EndFile event. The Rust-side
+/// reconnect monitor (`crates/tauri-plugin-mpv/src/reconnect.rs`) handles
+/// failures that escape this first line of defence.
+///
+/// - `reconnect=1`             — enable HTTP reconnect on read failure
+/// - `reconnect_streamed=1`    — also reconnect non-seekable streams
+/// - `reconnect_on_network_error=1` — covers socket-level errors, not just HTTP
+/// - `reconnect_delay_max=5`   — cap exponential backoff at 5 s
+const LAVF_RECONNECT_OPTS: &str =
+    "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5";
+
 /// Options for embedded playback via the OpenGL render context (vo=libmpv).
 pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -890,9 +903,14 @@ pub fn embedded_options() -> Vec<(&'static str, &'static str)> {
         ("config", "no"),
         ("video-sync", "audio"),
         ("cache", "yes"),
+        ("cache-secs", "30"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        // Pre-emptive FFmpeg-level reconnect for transient network blips.
+        // See LAVF_RECONNECT_OPTS docstring.
+        ("stream-lavf-o", LAVF_RECONNECT_OPTS),
+        ("network-timeout", "30"),
         ("terminal", "yes"),
         ("msg-level", "all=info"),
     ]
@@ -906,9 +924,12 @@ pub fn fallback_options() -> Vec<(&'static str, &'static str)> {
         ("config", "no"),
         ("video-sync", "display-resample"),
         ("cache", "yes"),
+        ("cache-secs", "30"),
         ("demuxer-max-bytes", "150MiB"),
         ("demuxer-max-back-bytes", "75MiB"),
         ("keep-open", "yes"),
+        ("stream-lavf-o", LAVF_RECONNECT_OPTS),
+        ("network-timeout", "30"),
         ("terminal", "yes"),
         ("msg-level", "all=info"),
     ]

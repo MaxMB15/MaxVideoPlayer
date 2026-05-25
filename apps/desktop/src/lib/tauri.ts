@@ -16,7 +16,8 @@ import type {
 
 // --- MPV Player Commands ---
 
-export const mpvLoad = (url: string): Promise<void> => invoke("plugin:mpv|mpv_load", { url });
+export const mpvLoad = (url: string, startPos?: number): Promise<void> =>
+	invoke("plugin:mpv|mpv_load", { url, startPos: startPos ?? null });
 
 export const mpvPlay = (): Promise<void> => invoke("plugin:mpv|mpv_play");
 

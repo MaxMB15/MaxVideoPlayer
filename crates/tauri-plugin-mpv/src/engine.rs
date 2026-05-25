@@ -66,13 +66,51 @@ impl MpvEngine {
         Ok(())
     }
 
-    /// Issue the loadfile command. Must be called AFTER render context is attached.
-    pub fn loadfile(&self, url: &str) -> Result<(), String> {
+    /// Issue a `loadfile <url> replace` command. Must be called AFTER the
+    /// render context is attached.
+    ///
+    /// When `start_pos` is `Some(p)` with `p > 1.0`, attach a `start=+<p>`
+    /// per-file option so playback resumes at the given position (used by
+    /// the reconnect / auto-recovery paths). For non-seekable inputs mpv
+    /// silently ignores `start=`, so it's always safe to pass through.
+    ///
+    /// Matches the 4-arg form `loadfile <url> <flags> <index> <options>`
+    /// used by `crates/tauri-plugin-mpv/src/reconnect.rs` for its internal
+    /// retries — keeping both paths on the same syntax avoids divergent
+    /// per-file option handling.
+    pub fn loadfile(&self, url: &str, start_pos: Option<f64>) -> Result<(), String> {
         let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
-        mpv.command("loadfile", &[url, "replace"])
-            .map_err(|e| format!("loadfile: {}", e))?;
+        let resume_opt = start_pos.filter(|p| *p > 1.0).map(|p| format!("start=+{p:.3}"));
+        let result = if let Some(ref opts) = resume_opt {
+            mpv.command("loadfile", &[url, "replace", "0", opts])
+        } else {
+            mpv.command("loadfile", &[url, "replace"])
+        };
+        result.map_err(|e| format!("loadfile: {}", e))?;
+        if let Some(p) = start_pos.filter(|p| *p > 1.0) {
+            tracing::info!("[MPV engine] loadfile resumed at start=+{p:.3} url={url}");
+        }
         self.log_audio_state("after loadfile");
         Ok(())
+    }
+
+    /// Create an independent client handle for use on a dedicated event-monitor
+    /// thread. The returned `Mpv` shares the same underlying player but has its
+    /// own event queue, so `wait_event` calls from the reconnect watcher do not
+    /// compete with the main-thread accesses.
+    ///
+    /// **Lifetime caveat.** Per the libmpv docs, the handle returned by
+    /// `mpv_create_client` holds a *strong* reference to the player core —
+    /// dropping our parent `Mpv` does NOT terminate the core (or fire
+    /// `MPV_EVENT_SHUTDOWN`) while a client is still alive. Callers that
+    /// need deterministic teardown (so the next load gets a clean hardware
+    /// decoder + audio device on macOS) must explicitly signal the monitor
+    /// thread to drop this client. See `MpvState::reconnect_kill` and the
+    /// kill-flag flow in `crates/tauri-plugin-mpv/src/reconnect.rs`.
+    pub fn create_event_client(&self, name: &str) -> Result<libmpv2::Mpv, String> {
+        let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
+        mpv.create_client(Some(name))
+            .map_err(|e| format!("mpv_create_client: {}", e))
     }
 
     /// Log audio-related mpv properties to help diagnose "no sound" reports.

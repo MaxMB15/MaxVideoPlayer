@@ -1,5 +1,6 @@
 import { Controls } from "./Controls";
 import { ChannelOverlay } from "./ChannelOverlay";
+import { ConnectionStatusOverlay } from "./ConnectionStatusOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
@@ -564,6 +565,27 @@ export const PlayerView = () => {
 					</span>
 				</div>
 			)}
+
+			<ConnectionStatusOverlay
+				reconnecting={mpv.reconnecting}
+				reconnectAttempt={mpv.reconnectAttempt}
+				buffering={mpv.buffering}
+				loadFailed={mpv.loadFailed}
+				recentlyRecovered={mpv.recentlyRecovered}
+				onRetry={() => {
+					const url = mpv.state.currentUrl;
+					if (!url) return;
+					// Preserve playback position across the hard restart so
+					// the user resumes where they were when the stream broke,
+					// not from the beginning of the movie/episode. We use the
+					// sticky `getLastKnownPosition()` (rather than the polled
+					// `state.position`) so the retry is symmetric with the
+					// `online`-triggered auto-recovery and robust to the
+					// transient position=0 window during the `loadfile`.
+					const resumeAt = mpv.getLastKnownPosition();
+					mpv.load(url, resumeAt > 1.0 ? resumeAt : undefined).catch(() => {});
+				}}
+			/>
 
 			<div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent">
 				{mpv.error && (
