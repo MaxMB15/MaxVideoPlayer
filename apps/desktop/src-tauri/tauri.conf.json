@@ -1,7 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/nichobi/tauri-apps/tauri-v2/core/tauri-config-schema/schema.json",
 	"productName": "MaxVideoPlayer",
-	"version": "0.4.6",
+	"version": "0.4.8",
 	"identifier": "com.maxvideoplayer.app",
 	"build": {
 		"beforeDevCommand": "npm run dev",
@@ -63,10 +63,24 @@
 		},
 		"linux": {
 			"deb": {
-				"depends": ["libmpv2 | libmpv1", "libegl1", "libgtk-3-0", "libwebkit2gtk-4.1-0"]
+				"depends": [
+					"libmpv2 | libmpv1",
+					"libegl1",
+					"libgtk-3-0",
+					"libwebkit2gtk-4.1-0",
+					"libpulse0 | libasound2",
+					"libass9"
+				]
 			},
 			"rpm": {
-				"depends": ["mpv-libs", "mesa-libEGL", "gtk3", "webkit2gtk4.1"]
+				"depends": [
+					"mpv-libs",
+					"mesa-libEGL",
+					"gtk3",
+					"webkit2gtk4.1",
+					"pulseaudio-libs",
+					"libass"
+				]
 			}
 		}
 	}

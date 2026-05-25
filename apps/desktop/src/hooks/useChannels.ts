@@ -141,8 +141,6 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 			setProviders(await getProviders());
 		} catch (e) {
 			setError(String(e));
-		} finally {
-			setInitialized(true);
 		}
 	}, []);
 
@@ -258,13 +256,16 @@ export const useChannelsProvider = (): ChannelsContextValue => {
 		[channelIndex]
 	);
 
-	// Initial load — ref guard prevents StrictMode double-mount from firing twice
+	// Initial load — ref guard prevents StrictMode double-mount from firing twice.
+	// Both providers and channels must load before `initialized` is set so the
+	// splash screen does not dismiss before the UI has data to display.
 	const didInit = useRef(false);
 	useEffect(() => {
 		if (didInit.current) return;
 		didInit.current = true;
-		refreshProviders();
-		refreshChannels();
+		Promise.all([refreshProviders(), refreshChannels()]).finally(() => {
+			setInitialized(true);
+		});
 	}, [refreshProviders, refreshChannels]);
 
 	// Keep providers ref current so interval can read it without re-registering

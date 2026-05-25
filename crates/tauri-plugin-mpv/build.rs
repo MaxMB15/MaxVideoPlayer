@@ -61,7 +61,25 @@ fn link_libmpv() {
 
     #[cfg(target_os = "linux")]
     {
-        // Use pkg-config if available; libmpv2-sys may handle this, but we ensure the link
+        // Prefer libs/linux/ (source build with audio support) over system pkg-config
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let libs_linux = std::path::Path::new(&manifest_dir)
+            .join("..")
+            .join("..")
+            .join("libs")
+            .join("linux");
+        if libs_linux.join("libmpv.so").exists() {
+            let path = libs_linux.canonicalize().unwrap_or(libs_linux.clone());
+            println!("cargo:rustc-link-search=native={}", path.display());
+            // Bake RPATH into the binary so the freshly built libmpv.so (which
+            // has our required AO/VO backends) is preferred over the system
+            // /usr/lib/x86_64-linux-gnu/libmpv.so.2 at runtime. Without this
+            // the dynamic loader falls back to whatever libmpv-dev installed,
+            // which may or may not match what we linked against.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
+            return;
+        }
+        // Fallback: system pkg-config (for development with libmpv-dev)
         if let Ok(output) = std::process::Command::new("pkg-config")
             .args(["--libs", "--cflags", "libmpv"])
             .output()
@@ -75,17 +93,6 @@ fn link_libmpv() {
                 }
                 return;
             }
-        }
-        // Fallback: libs/linux/ at workspace root
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let libs_linux = std::path::Path::new(&manifest_dir)
-            .join("..")
-            .join("..")
-            .join("libs")
-            .join("linux");
-        if libs_linux.join("libmpv.so").exists() {
-            println!("cargo:rustc-link-search=native={}", libs_linux.display());
-            return;
         }
     }
 

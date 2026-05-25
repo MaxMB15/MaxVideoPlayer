@@ -1270,14 +1270,32 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
     drop(file);
 
     // 3. Install via pkexec (async so we do not block the Tokio worker for the whole GUI prompt)
+    // For deb: prefer apt-get install which resolves dependencies automatically,
+    // fall back to dpkg -i for systems without apt-get.
     let output = match info.install_type.as_str() {
-        "deb" => tokio::process::Command::new("pkexec")
-            .arg("dpkg")
-            .arg("-i")
-            .arg(&tmp_path)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run installer: {e}"))?,
+        "deb" => {
+            let apt_result = tokio::process::Command::new("pkexec")
+                .arg("apt-get")
+                .arg("install")
+                .arg("-y")
+                .arg("--allow-downgrades")
+                .arg(&tmp_path)
+                .output()
+                .await;
+            match apt_result {
+                Ok(o) if o.status.success() => o,
+                _ => {
+                    // Fallback to dpkg -i (no dependency resolution)
+                    tokio::process::Command::new("pkexec")
+                        .arg("dpkg")
+                        .arg("-i")
+                        .arg(&tmp_path)
+                        .output()
+                        .await
+                        .map_err(|e| format!("Failed to run installer: {e}"))?
+                }
+            }
+        },
         "rpm" => tokio::process::Command::new("pkexec")
             .arg("rpm")
             .arg("-U")

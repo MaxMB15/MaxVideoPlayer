@@ -14,7 +14,7 @@ use std::sync::{
 use crate::macos::{embedded_options, fallback_options, MacosGlRenderer};
 
 #[cfg(target_os = "linux")]
-use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, software_fallback_options as linux_software_fallback_options, LinuxGlRenderer};
+use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, LinuxGlRenderer};
 
 pub struct MpvState {
     inner: Mutex<MpvEngine>,
@@ -220,6 +220,7 @@ impl MpvState {
 
         let event_client = {
             let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            engine.configure_audio()?;
             engine.loadfile(url, start_pos)?;
             engine.set_current_url(url);
             engine.create_event_client("reconnect-watcher").ok()
@@ -285,18 +286,11 @@ impl MpvState {
         &self,
         url: &str,
         start_pos: Option<f64>,
-        reason: &str,
+        _reason: &str,
     ) -> Result<Option<libmpv2::Mpv>, String> {
-        // If the GPU is blocklisted, vo=gpu will also crash. Use software-only output.
-        let gpu_blocklisted = reason.contains("blocklisted");
-        let opts = if gpu_blocklisted {
-            tracing::info!("[MPV] GPU blocklisted - using software video output (vo=x11, hwdec=no)");
-            linux_software_fallback_options()
-        } else {
-            linux_fallback_options()
-        };
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&opts)?;
+        engine.create(&linux_fallback_options())?;
+        engine.configure_audio()?;
         engine.loadfile(url, start_pos)?;
         engine.set_current_url(url);
         Ok(engine.create_event_client("reconnect-watcher").ok())
@@ -362,10 +356,17 @@ impl MpvState {
         // Same ordering rule as `load()`: cancel the monitor BEFORE the
         // engine drops the parent `Mpv`, otherwise the watcher's client
         // keeps the libmpv core alive (hardware decoder + audio device).
+        // `cancel_reconnect_monitor` itself is poison-tolerant.
         self.cancel_reconnect_monitor();
-        let old_renderer = self.renderer.lock().unwrap().take();
-        drop(old_renderer); // calls detach() with renderer mutex RELEASED
-        self.inner.lock().unwrap().stop();
+        let old_renderer = match self.renderer.lock() {
+            Ok(mut r) => r.take(),
+            Err(p) => p.into_inner().take(),
+        };
+        drop(old_renderer); // detach() runs synchronously on GLib main thread
+        match self.inner.lock() {
+            Ok(mut e) => e.stop(),
+            Err(p) => p.into_inner().stop(),
+        }
         self.idle_inhibitor.uninhibit();
     }
 

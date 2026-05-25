@@ -234,7 +234,13 @@ export const CategoryManager = ({
 				.map((e) => e.sortOrder);
 			const newSortOrder =
 				siblingSortOrders.length > 0 ? Math.max(...siblingSortOrders) + 1 : 0;
-			await updateGroupHierarchyEntry(providerId, contentType, groupName, targetCategory, newSortOrder);
+			await updateGroupHierarchyEntry(
+				providerId,
+				contentType,
+				groupName,
+				targetCategory,
+				newSortOrder
+			);
 			await load();
 			onHierarchyChanged();
 			setMovingGroup(null);

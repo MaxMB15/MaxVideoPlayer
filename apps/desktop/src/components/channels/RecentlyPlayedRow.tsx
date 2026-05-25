@@ -103,11 +103,10 @@ export const RecentlyPlayedRow = ({ contentType, onPlay, channels }: RecentlyPla
 							>
 								<X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
 							</button>
-							<button
-								className="w-full text-left"
-								onClick={() => onPlay(entry)}
-							>
-								<div className="text-xs font-medium truncate pr-4">{displayName}</div>
+							<button className="w-full text-left" onClick={() => onPlay(entry)}>
+								<div className="text-xs font-medium truncate pr-4">
+									{displayName}
+								</div>
 								{contentType === "live" && (
 									<div className="text-[9px] text-primary mt-1">&#9679; LIVE</div>
 								)}
