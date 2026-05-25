@@ -78,9 +78,14 @@ impl MpvEngine {
     /// own event queue, so `wait_event` calls from the reconnect watcher do not
     /// compete with the main-thread accesses.
     ///
-    /// When the parent `Mpv` is destroyed (via `stop()` or a new `loadfile`),
-    /// the client's `wait_event` returns `MPV_EVENT_SHUTDOWN`, giving the
-    /// monitor thread a natural exit signal.
+    /// **Lifetime caveat.** Per the libmpv docs, the handle returned by
+    /// `mpv_create_client` holds a *strong* reference to the player core —
+    /// dropping our parent `Mpv` does NOT terminate the core (or fire
+    /// `MPV_EVENT_SHUTDOWN`) while a client is still alive. Callers that
+    /// need deterministic teardown (so the next load gets a clean hardware
+    /// decoder + audio device on macOS) must explicitly signal the monitor
+    /// thread to drop this client. See `MpvState::reconnect_kill` and the
+    /// kill-flag flow in `crates/tauri-plugin-mpv/src/reconnect.rs`.
     pub fn create_event_client(&self, name: &str) -> Result<libmpv2::Mpv, String> {
         let mpv = self.mpv.as_ref().ok_or("no mpv instance")?;
         mpv.create_client(Some(name))

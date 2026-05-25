@@ -50,11 +50,18 @@ impl MpvState {
     /// Trip the current reconnect monitor's kill flag (if one exists) so it
     /// exits on the next event-loop iteration. Must be called BEFORE the
     /// parent `Mpv` is dropped — see the field docstring.
+    ///
+    /// We recover from a poisoned mutex by taking the inner guard. This entire
+    /// teardown path exists specifically to prevent the libmpv-core /
+    /// hardware-decoder leak on macOS; silently bailing on a poisoned lock
+    /// would re-introduce exactly the bug it's here to prevent.
     fn cancel_reconnect_monitor(&self) {
-        if let Ok(mut guard) = self.reconnect_kill.lock() {
-            if let Some(flag) = guard.take() {
-                flag.store(true, Ordering::Release);
-            }
+        let mut guard = self
+            .reconnect_kill
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(flag) = guard.take() {
+            flag.store(true, Ordering::Release);
         }
     }
 
@@ -108,9 +115,16 @@ impl MpvState {
             return;
         };
         let kill = Arc::new(AtomicBool::new(false));
-        if let Ok(mut slot) = self.reconnect_kill.lock() {
-            *slot = Some(kill.clone());
-        }
+        // Recover from a poisoned mutex by taking the inner guard. If we
+        // failed to store the flag here, the next `cancel_reconnect_monitor`
+        // would have nothing to trip and the watcher would keep its client
+        // handle alive — leaking the libmpv core on the next load.
+        let mut slot = self
+            .reconnect_kill
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *slot = Some(kill.clone());
+        drop(slot);
         crate::reconnect::spawn(c, url.to_string(), app.clone(), kill);
     }
 

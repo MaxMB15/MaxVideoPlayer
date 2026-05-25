@@ -62,10 +62,19 @@
 //!   playback has actually started.
 //! - The thread owns its own `Mpv` client handle (independent event queue,
 //!   but full command capability — it can re-issue `loadfile`).
-//! - The thread exits cleanly on `MPV_EVENT_SHUTDOWN`, which fires when the
-//!   parent `Mpv` is dropped. This means we *never* need an explicit kill
-//!   flag: `stop()` / a new `load()` drop the engine, which destroys the
-//!   parent, which terminates the client, which wakes the thread.
+//! - **Cancellation is driven by an explicit `Arc<AtomicBool>` kill flag**,
+//!   tripped by `MpvState::cancel_reconnect_monitor` before the parent `Mpv`
+//!   is dropped (i.e. before every `stop()` and the start of every new
+//!   `load()`). We cannot rely on `MPV_EVENT_SHUTDOWN` for teardown because
+//!   per the libmpv docs the client handle returned by `mpv_create_client`
+//!   holds a *strong* reference to the player core — so dropping the parent
+//!   `Mpv` alone does NOT trigger Shutdown until the client is also dropped.
+//!   Leaving the watcher alive after teardown would leak the libmpv core,
+//!   the macOS hardware decoder, and the audio device into the next load.
+//! - The thread checks `kill.load(Acquire)` at the top of every loop
+//!   iteration (and the `wait_event(1.0)` 1-second timeout bounds the worst
+//!   case latency on a cancellation). When the flag is set, the thread
+//!   returns, drops its client, and the core is finally released.
 
 use libmpv2::{
     events::{Event, PropertyData},

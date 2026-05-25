@@ -345,4 +345,246 @@ describe("useMpv", () => {
 		// Hook should still be usable
 		expect(result.current.state).toBeDefined();
 	});
+
+	// ── Reconnect / buffering / recovery ──────────────────────────────
+	//
+	// Covers the auto-reconnect lifecycle wired up to the Rust monitor in
+	// `crates/tauri-plugin-mpv/src/reconnect.rs`:
+	//   mpv://reconnecting   →  red banner + attempt counter
+	//   mpv://reconnected    →  clears red, flashes green, clears buffering
+	//   mpv://buffering      →  amber banner (debounced 1.5 s)
+	//   mpv://buffered       →  clears amber
+	//   mpv://load-failed    →  red "Stream unavailable" + retries exhausted
+	//   online (navigator)   →  hard-reset load when reconnecting/loadFailed,
+	//                           resuming at the sticky last-known position
+	describe("reconnect lifecycle", () => {
+		it("mpv://reconnecting sets reconnecting + attempt counter", async () => {
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+			const cb = mockListenCallbacks.get("mpv://reconnecting");
+			expect(cb).toBeDefined();
+
+			act(() => {
+				cb!({ payload: { url: "http://s", attempt: 3 } });
+			});
+
+			expect(result.current.reconnecting).toBe(true);
+			expect(result.current.reconnectAttempt).toBe(3);
+		});
+
+		it("mpv://reconnected clears reconnecting and lights recentlyRecovered", async () => {
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+			act(() => {
+				mockListenCallbacks.get("mpv://reconnecting")!({
+					payload: { url: "http://s", attempt: 2 },
+				});
+			});
+			expect(result.current.reconnecting).toBe(true);
+
+			act(() => {
+				mockListenCallbacks.get("mpv://reconnected")!({ payload: { url: "http://s" } });
+			});
+
+			expect(result.current.reconnecting).toBe(false);
+			expect(result.current.reconnectAttempt).toBe(0);
+			expect(result.current.recentlyRecovered).toBe(true);
+		});
+
+		it("mpv://reconnected defensively clears buffering (stuck via eof-reached path)", async () => {
+			vi.useFakeTimers();
+			try {
+				const { result } = renderHook(() => useMpv());
+				await mockMpvGetState.mock.results[0]?.value;
+
+				act(() => {
+					mockListenCallbacks.get("mpv://buffering")!({ payload: { url: "http://s" } });
+				});
+				act(() => {
+					vi.advanceTimersByTime(1500);
+				});
+				expect(result.current.buffering).toBe(true);
+
+				act(() => {
+					mockListenCallbacks.get("mpv://reconnected")!({
+						payload: { url: "http://s" },
+					});
+				});
+
+				expect(result.current.buffering).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it("mpv://buffering is debounced and mpv://buffered cancels the pending flip", async () => {
+			vi.useFakeTimers();
+			try {
+				const { result } = renderHook(() => useMpv());
+				await mockMpvGetState.mock.results[0]?.value;
+
+				act(() => {
+					mockListenCallbacks.get("mpv://buffering")!({ payload: { url: "http://s" } });
+				});
+				expect(result.current.buffering).toBe(false);
+
+				act(() => {
+					vi.advanceTimersByTime(1000);
+				});
+				expect(result.current.buffering).toBe(false);
+
+				act(() => {
+					mockListenCallbacks.get("mpv://buffered")!({ payload: { url: "http://s" } });
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(result.current.buffering).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it("mpv://buffering flips to true after the 1.5s debounce", async () => {
+			vi.useFakeTimers();
+			try {
+				const { result } = renderHook(() => useMpv());
+				await mockMpvGetState.mock.results[0]?.value;
+
+				act(() => {
+					mockListenCallbacks.get("mpv://buffering")!({ payload: { url: "http://s" } });
+				});
+				act(() => {
+					vi.advanceTimersByTime(1500);
+				});
+
+				expect(result.current.buffering).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it("mpv://load-failed sets loadFailed and clears reconnecting/buffering", async () => {
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+			act(() => {
+				mockListenCallbacks.get("mpv://reconnecting")!({
+					payload: { url: "http://s", attempt: 5 },
+				});
+			});
+
+			act(() => {
+				mockListenCallbacks.get("mpv://load-failed")!({ payload: { url: "http://s" } });
+			});
+
+			expect(result.current.loadFailed).toBe(true);
+			expect(result.current.reconnecting).toBe(false);
+			expect(result.current.reconnectAttempt).toBe(0);
+			expect(result.current.buffering).toBe(false);
+		});
+
+		it("recentlyRecovered auto-clears after 2.5s", async () => {
+			vi.useFakeTimers();
+			try {
+				const { result } = renderHook(() => useMpv());
+				await mockMpvGetState.mock.results[0]?.value;
+
+				act(() => {
+					mockListenCallbacks.get("mpv://reconnected")!({
+						payload: { url: "http://s" },
+					});
+				});
+				expect(result.current.recentlyRecovered).toBe(true);
+
+				act(() => {
+					vi.advanceTimersByTime(2500);
+				});
+				expect(result.current.recentlyRecovered).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
+	describe("online auto-recovery", () => {
+		it("online event triggers load when reconnecting + currentUrl is set", async () => {
+			// Polled state seeds the currentUrl ref the online listener reads.
+			mockMpvGetState.mockResolvedValue({
+				isPlaying: true,
+				isPaused: false,
+				currentUrl: "http://s",
+				volume: 100,
+				position: 42,
+				duration: 120,
+			} as never);
+
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(result.current.state.currentUrl).toBe("http://s"));
+			await waitFor(() => expect(result.current.state.position).toBe(42));
+
+			act(() => {
+				mockListenCallbacks.get("mpv://reconnecting")!({
+					payload: { url: "http://s", attempt: 1 },
+				});
+			});
+
+			mockMpvLoad.mockClear();
+			await act(async () => {
+				window.dispatchEvent(new Event("online"));
+			});
+
+			expect(mockMpvLoad).toHaveBeenCalledTimes(1);
+			expect(mockMpvLoad).toHaveBeenCalledWith("http://s", 42);
+		});
+
+		it("online event is a no-op when not in a failure state", async () => {
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+			expect(result.current.reconnecting).toBe(false);
+			expect(result.current.loadFailed).toBe(false);
+
+			mockMpvLoad.mockClear();
+			act(() => {
+				window.dispatchEvent(new Event("online"));
+			});
+
+			expect(mockMpvLoad).not.toHaveBeenCalled();
+		});
+
+		it("getLastKnownPosition reflects forward progress and survives state.position=0", async () => {
+			// Seed with forward progress so the sticky ref captures 42.
+			mockMpvGetState.mockResolvedValue({
+				isPlaying: true,
+				isPaused: false,
+				currentUrl: "http://s",
+				volume: 100,
+				position: 42,
+				duration: 120,
+			} as never);
+
+			const { result } = renderHook(() => useMpv());
+			await waitFor(() => expect(result.current.state.position).toBe(42));
+			expect(result.current.getLastKnownPosition()).toBe(42);
+
+			// Now mid-retry: position drops to 0. The sticky ref must hold.
+			mockMpvGetState.mockResolvedValue({
+				isPlaying: false,
+				isPaused: false,
+				currentUrl: "http://s",
+				volume: 100,
+				position: 0,
+				duration: 0,
+			} as never);
+			await act(async () => {
+				await result.current.refresh();
+			});
+
+			expect(result.current.state.position).toBe(0);
+			expect(result.current.getLastKnownPosition()).toBe(42);
+		});
+	});
 });

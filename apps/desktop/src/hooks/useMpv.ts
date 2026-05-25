@@ -339,6 +339,13 @@ export const useMpv = () => {
 		}
 	}, []);
 
+	// Read-only accessor for the sticky last-known position. Callers (e.g.
+	// the Retry button) should prefer this over `state.position` for resume
+	// points across hard restarts — `state.position` is polled and can read 0
+	// transiently if a fresh `loadfile` is in flight; `lastKnownPositionRef`
+	// only ever takes ON forward progress, so it survives the retry window.
+	const getLastKnownPosition = useCallback(() => lastKnownPositionRef.current, []);
+
 	const refresh = useCallback(async () => {
 		try {
 			const s = await mpvGetState();
@@ -377,6 +384,7 @@ export const useMpv = () => {
 		loadFailed,
 		recentlyRecovered,
 		load,
+		getLastKnownPosition,
 		play,
 		pause,
 		stop,
