@@ -116,6 +116,7 @@ export const ChannelList = () => {
 	const [seriesModalData, setSeriesModalData] = useState<{
 		showTitle: string;
 		episodes: Channel[];
+		seriesChannelId: string;
 	} | null>(null);
 	const [seriesLoading, setSeriesLoading] = useState(false);
 	const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
@@ -340,7 +341,11 @@ export const ChannelList = () => {
 					setSeriesLoading(true);
 					try {
 						const eps = await getXtreamSeriesEpisodes(channel.id);
-						setSeriesModalData({ showTitle: showName, episodes: eps });
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
 					} catch (e) {
 						console.error("[Xtream] failed to fetch series episodes:", e);
 					} finally {
@@ -350,7 +355,11 @@ export const ChannelList = () => {
 					const eps = byType.series.filter(
 						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
 					);
-					setSeriesModalData({ showTitle: showName, episodes: eps });
+					setSeriesModalData({
+						showTitle: showName,
+						episodes: eps,
+						seriesChannelId: channel.id,
+					});
 				}
 			} else if (currentTab === "movie" && channel.sources.length > 0) {
 				setSelectedMovie(channel);
@@ -361,7 +370,11 @@ export const ChannelList = () => {
 						setSeriesLoading(true);
 						try {
 							const eps = await getXtreamSeriesEpisodes(channel.id);
-							setSeriesModalData({ showTitle: showName, episodes: eps });
+							setSeriesModalData({
+								showTitle: showName,
+								episodes: eps,
+								seriesChannelId: channel.id,
+							});
 						} catch (e) {
 							console.error("[Xtream] failed to fetch series episodes:", e);
 						} finally {
@@ -371,7 +384,11 @@ export const ChannelList = () => {
 						const eps = byType.series.filter(
 							(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
 						);
-						setSeriesModalData({ showTitle: showName, episodes: eps });
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
 					}
 				} else if (channel.contentType === "movie" && channel.sources.length > 0) {
 					setSelectedMovie(channel);
@@ -417,7 +434,13 @@ export const ChannelList = () => {
 				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
 					setSeriesLoading(true);
 					getXtreamSeriesEpisodes(seriesContainer.id)
-						.then((eps) => setSeriesModalData({ showTitle: seriesName, episodes: eps }))
+						.then((eps) =>
+							setSeriesModalData({
+								showTitle: seriesName,
+								episodes: eps,
+								seriesChannelId: seriesContainer.id,
+							})
+						)
 						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
 						.finally(() => setSeriesLoading(false));
 				} else {
@@ -425,7 +448,11 @@ export const ChannelList = () => {
 						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === seriesName
 					);
 					if (eps.length > 0) {
-						setSeriesModalData({ showTitle: seriesName, episodes: eps });
+						setSeriesModalData({
+							showTitle: seriesName,
+							episodes: eps,
+							seriesChannelId: seriesContainer?.id ?? entry.channelId,
+						});
 					}
 				}
 			} else if (entry.contentType === "movie") {
@@ -831,6 +858,7 @@ export const ChannelList = () => {
 				<SeriesDetailModal
 					showTitle={seriesModalData.showTitle}
 					episodes={seriesModalData.episodes}
+					seriesChannelId={seriesModalData.seriesChannelId}
 					onClose={() => setSeriesModalData(null)}
 					onPlay={(ch) => {
 						const sorted = [...seriesModalData.episodes].sort((a, b) => {

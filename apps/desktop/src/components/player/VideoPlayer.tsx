@@ -347,6 +347,18 @@ export const PlayerView = () => {
 		);
 	}, [activeChannel, channels]);
 
+	// Series container id used to group download records — matches the series
+	// card id in the channel list so download state stays consistent.
+	const seriesContainerId = useMemo(() => {
+		if (!activeChannel) return "";
+		if (activeChannel.contentType !== "series") return activeChannel.id;
+		const title = activeChannel.seriesTitle ?? showTitle(activeChannel.name);
+		const container = channels.find(
+			(ch) => ch.contentType === "series" && (ch.seriesTitle ?? showTitle(ch.name)) === title
+		);
+		return container?.id ?? activeChannel.id;
+	}, [activeChannel, channels]);
+
 	const sortedEpisodes = useMemo(() => {
 		const source = seriesEpisodes.length > 0 ? seriesEpisodes : localSeriesEpisodes;
 		return sortEpisodes(source);
@@ -711,6 +723,7 @@ export const PlayerView = () => {
 				<SeriesDetailModal
 					showTitle={showTitleForDrawer}
 					episodes={episodesForDrawer}
+					seriesChannelId={seriesContainerId}
 					onClose={() => setShowInfoDrawer(false)}
 					onPlay={(ch) => playEpisode(ch)}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
