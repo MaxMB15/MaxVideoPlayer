@@ -1,3 +1,4 @@
+use crate::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
 use crate::iptv::m3u::parse_series_name;
 use crate::iptv::mdblist::MdbListData;
 use crate::iptv::omdb::OmdbData;
@@ -230,6 +231,26 @@ impl CacheStore {
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (provider_id, content_type, group_name)
             );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS downloads (
+                id                 TEXT PRIMARY KEY,
+                channel_id         TEXT NOT NULL,
+                title              TEXT NOT NULL,
+                kind               TEXT NOT NULL,
+                series_channel_id  TEXT,
+                status             TEXT NOT NULL,
+                dest_path          TEXT NOT NULL,
+                total_bytes        INTEGER,
+                downloaded_bytes   INTEGER NOT NULL DEFAULT 0,
+                avg_rate_bps       INTEGER,
+                error              TEXT,
+                created_at         INTEGER NOT NULL,
+                finished_at        INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_downloads_channel ON downloads(channel_id);
+            CREATE INDEX IF NOT EXISTS idx_downloads_series ON downloads(series_channel_id);
+            CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);",
         )?;
         Ok(())
     }
@@ -1133,6 +1154,86 @@ impl CacheStore {
         })?.collect::<Result<Vec<_>, _>>()?;
         Ok(pins)
     }
+
+    // --- Downloads ---
+
+    pub fn upsert_download(&self, rec: &DownloadRecord) -> Result<(), CacheError> {
+        let kind = match rec.kind {
+            DownloadKind::Movie => "movie",
+            DownloadKind::Episode => "episode",
+        };
+        self.conn.execute(
+            "INSERT INTO downloads
+                (id, channel_id, title, kind, series_channel_id, status, dest_path,
+                 total_bytes, downloaded_bytes, avg_rate_bps, error, created_at, finished_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+             ON CONFLICT(id) DO UPDATE SET
+                status=excluded.status,
+                dest_path=excluded.dest_path,
+                total_bytes=excluded.total_bytes,
+                downloaded_bytes=excluded.downloaded_bytes,
+                avg_rate_bps=excluded.avg_rate_bps,
+                error=excluded.error,
+                finished_at=excluded.finished_at",
+            params![
+                rec.id, rec.channel_id, rec.title, kind, rec.series_channel_id,
+                rec.status.as_str(), rec.dest_path, rec.total_bytes, rec.downloaded_bytes,
+                rec.avg_rate_bps, rec.error, rec.created_at, rec.finished_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // Column order in SELECT * matches CREATE TABLE:
+    // 0=id, 1=channel_id, 2=title, 3=kind, 4=series_channel_id, 5=status,
+    // 6=dest_path, 7=total_bytes, 8=downloaded_bytes, 9=avg_rate_bps,
+    // 10=error, 11=created_at, 12=finished_at
+    fn row_to_download(row: &rusqlite::Row) -> SqlResult<DownloadRecord> {
+        let kind_str: String = row.get(3)?;
+        let status_str: String = row.get(5)?;
+        Ok(DownloadRecord {
+            id: row.get(0)?,
+            channel_id: row.get(1)?,
+            title: row.get(2)?,
+            kind: if kind_str == "episode" {
+                DownloadKind::Episode
+            } else {
+                DownloadKind::Movie
+            },
+            series_channel_id: row.get(4)?,
+            status: DownloadStatus::from_str(&status_str).unwrap_or(DownloadStatus::Failed),
+            dest_path: row.get(6)?,
+            total_bytes: row.get(7)?,
+            downloaded_bytes: row.get(8)?,
+            avg_rate_bps: row.get(9)?,
+            error: row.get(10)?,
+            created_at: row.get(11)?,
+            finished_at: row.get(12)?,
+        })
+    }
+
+    pub fn get_download(&self, id: &str) -> Result<Option<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare("SELECT * FROM downloads WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_download)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_downloads(&self) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM downloads ORDER BY created_at DESC")?;
+        let rows = stmt.query_map([], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    pub fn delete_download(&self, id: &str) -> Result<(), CacheError> {
+        self.conn
+            .execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
+        Ok(())
+    }
 }
 
 /// For series channels loaded from an older cache that has NULL series_title/season/episode,
@@ -1917,5 +2018,47 @@ mod tests {
         let pins = store.get_pinned_groups("p1", "live").unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].group_name, "UK: News");
+    }
+
+    // --- Downloads Tests ---
+
+    use crate::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
+
+    fn movie_record(id: &str, channel: &str) -> DownloadRecord {
+        DownloadRecord {
+            id: id.into(),
+            channel_id: channel.into(),
+            title: "A Movie".into(),
+            kind: DownloadKind::Movie,
+            series_channel_id: None,
+            status: DownloadStatus::Queued,
+            dest_path: format!("/tmp/{id}.mkv.part"),
+            total_bytes: None,
+            downloaded_bytes: 0,
+            avg_rate_bps: None,
+            error: None,
+            created_at: 100,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn insert_and_get_download() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let rec = movie_record("d1", "c1");
+        store.upsert_download(&rec).unwrap();
+
+        let got = store.get_download("d1").unwrap().unwrap();
+        assert_eq!(got, rec);
+        assert!(store.get_download("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn list_downloads_returns_all() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&movie_record("d1", "c1")).unwrap();
+        store.upsert_download(&movie_record("d2", "c2")).unwrap();
+        let all = store.list_downloads().unwrap();
+        assert_eq!(all.len(), 2);
     }
 }
