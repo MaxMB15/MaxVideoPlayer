@@ -3,15 +3,8 @@ import { Play, Tv2, Heart, Film } from "lucide-react";
 import type { Channel, EpgProgram } from "@/lib/types";
 import { EpgTimelineBar } from "./EpgTimelineBar";
 import { useDownloads, aggregateForSeries } from "@/hooks/useDownloads";
-import {
-	DownloadButton,
-	type DownloadIconState,
-} from "@/components/downloads/DownloadButton";
-import {
-	enqueueMovieDownload,
-	stopDownload,
-	removeDownload,
-} from "@/lib/tauri";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
+import { enqueueMovieDownload, stopDownload, removeDownload } from "@/lib/tauri";
 
 /** Module-level cache of URLs that failed to load — persists across remounts from virtual list scrolling. */
 const brokenImageUrls = new Set<string>();
@@ -179,7 +172,7 @@ const PosterCard = ({
 
 	const iconState: DownloadIconState = isSeries
 		? // totalEpisodes is unknown at the card level (resolved in the drawer),
-		  // so pass 0 → aggregateForSeries never returns "complete" here.
+			// so pass 0 → aggregateForSeries never returns "complete" here.
 			aggregateToIcon(aggregateForSeries(seriesEps, 0))
 		: dl?.status === "completed"
 			? "complete"
@@ -250,20 +243,18 @@ const PosterCard = ({
 							/>
 						</div>
 					)}
-					{!isSeries &&
-						dl &&
-						(dl.status === "downloading" || dl.status === "queued") && (
-							<div className="absolute left-0 right-0 bottom-0 px-1.5 pb-1 pt-3 bg-gradient-to-t from-black/90 to-transparent">
-								<div className="h-1 rounded-full bg-white/20 overflow-hidden">
-									<div
-										className="h-full bg-blue-400"
-										style={{
-											width: `${dl.totalBytes ? Math.min(100, Math.round((dl.downloadedBytes / dl.totalBytes) * 100)) : 0}%`,
-										}}
-									/>
-								</div>
+					{!isSeries && dl && (dl.status === "downloading" || dl.status === "queued") && (
+						<div className="absolute left-0 right-0 bottom-0 px-1.5 pb-1 pt-3 bg-gradient-to-t from-black/90 to-transparent">
+							<div className="h-1 rounded-full bg-white/20 overflow-hidden">
+								<div
+									className="h-full bg-blue-400"
+									style={{
+										width: `${dl.totalBytes ? Math.min(100, Math.round((dl.downloadedBytes / dl.totalBytes) * 100)) : 0}%`,
+									}}
+								/>
 							</div>
-						)}
+						</div>
+					)}
 				</div>
 				<p className="text-xs leading-snug line-clamp-2 text-foreground/85 group-hover:text-foreground transition-colors px-0.5">
 					{channel.name}

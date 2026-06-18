@@ -1,11 +1,4 @@
-import {
-	createContext,
-	useContext,
-	useEffect,
-	useState,
-	useCallback,
-	type ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { listDownloads } from "@/lib/tauri";
 import type { DownloadRecord, AggregateDownloadState } from "@/lib/types";
@@ -13,18 +6,12 @@ import type { DownloadRecord, AggregateDownloadState } from "@/lib/types";
 /** Pure: compute a series card's aggregate state from its episode downloads. */
 export const aggregateForSeries = (
 	episodeDownloads: DownloadRecord[],
-	totalEpisodes: number,
+	totalEpisodes: number
 ): AggregateDownloadState => {
 	if (episodeDownloads.length === 0) return "none";
-	if (
-		episodeDownloads.some(
-			(d) => d.status === "downloading" || d.status === "queued",
-		)
-	)
+	if (episodeDownloads.some((d) => d.status === "downloading" || d.status === "queued"))
 		return "downloading";
-	const completed = episodeDownloads.filter(
-		(d) => d.status === "completed",
-	).length;
+	const completed = episodeDownloads.filter((d) => d.status === "completed").length;
 	if (completed === 0) return "none";
 	if (totalEpisodes > 0 && completed >= totalEpisodes) return "complete";
 	return "partial";
@@ -73,9 +60,7 @@ export const DownloadsProvider = ({ children }: { children: ReactNode }) => {
 	}
 
 	return (
-		<DownloadsContext.Provider
-			value={{ downloads, byChannel, bySeries, refresh }}
-		>
+		<DownloadsContext.Provider value={{ downloads, byChannel, bySeries, refresh }}>
 			{children}
 		</DownloadsContext.Provider>
 	);
@@ -83,7 +68,6 @@ export const DownloadsProvider = ({ children }: { children: ReactNode }) => {
 
 export const useDownloads = (): DownloadsContextValue => {
 	const ctx = useContext(DownloadsContext);
-	if (!ctx)
-		throw new Error("useDownloads must be used within DownloadsProvider");
+	if (!ctx) throw new Error("useDownloads must be used within DownloadsProvider");
 	return ctx;
 };

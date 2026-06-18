@@ -321,40 +321,33 @@ export const enqueueMovieDownload = (channelId: string): Promise<string> =>
 export const enqueueEpisodeDownload = (
 	episode: Channel,
 	seriesChannelId: string,
-	seriesTitle: string,
-): Promise<string> =>
-	invoke("enqueue_episode_download", { episode, seriesChannelId, seriesTitle });
+	seriesTitle: string
+): Promise<string> => invoke("enqueue_episode_download", { episode, seriesChannelId, seriesTitle });
 
 export const enqueueEpisodesBatch = (
 	episodes: Channel[],
 	seriesChannelId: string,
-	seriesTitle: string,
+	seriesTitle: string
 ): Promise<string[]> =>
 	invoke("enqueue_episodes_batch", { episodes, seriesChannelId, seriesTitle });
 
-export const listDownloads = (): Promise<DownloadRecord[]> =>
-	invoke("list_downloads");
+export const listDownloads = (): Promise<DownloadRecord[]> => invoke("list_downloads");
 
-export const stopDownload = (id: string): Promise<void> =>
-	invoke("stop_download", { id });
+export const stopDownload = (id: string): Promise<void> => invoke("stop_download", { id });
 
-export const stopDownloads = (ids: string[]): Promise<void> =>
-	invoke("stop_downloads", { ids });
+export const stopDownloads = (ids: string[]): Promise<void> => invoke("stop_downloads", { ids });
 
-export const removeDownload = (id: string): Promise<void> =>
-	invoke("remove_download", { id });
+export const removeDownload = (id: string): Promise<void> => invoke("remove_download", { id });
 
 export const removeDownloads = (ids: string[]): Promise<void> =>
 	invoke("remove_downloads", { ids });
 
-export const getDownloadConcurrency = (): Promise<number> =>
-	invoke("get_download_concurrency");
+export const getDownloadConcurrency = (): Promise<number> => invoke("get_download_concurrency");
 
 export const setDownloadConcurrency = (n: number): Promise<void> =>
 	invoke("set_download_concurrency", { n });
 
-export const getDownloadFolder = (): Promise<string> =>
-	invoke("get_download_folder");
+export const getDownloadFolder = (): Promise<string> => invoke("get_download_folder");
 
 export const setDownloadFolder = (path: string): Promise<void> =>
 	invoke("set_download_folder", { path });

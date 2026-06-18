@@ -178,12 +178,7 @@ export interface PinnedGroup {
 	sortOrder: number;
 }
 
-export type DownloadStatus =
-	| "queued"
-	| "downloading"
-	| "completed"
-	| "failed"
-	| "cancelled";
+export type DownloadStatus = "queued" | "downloading" | "completed" | "failed" | "cancelled";
 
 export interface DownloadRecord {
 	id: string;
@@ -202,8 +197,4 @@ export interface DownloadRecord {
 }
 
 /** Aggregate download state for a series card (computed in the hook). */
-export type AggregateDownloadState =
-	| "none"
-	| "downloading"
-	| "partial"
-	| "complete";
+export type AggregateDownloadState = "none" | "downloading" | "partial" | "complete";
