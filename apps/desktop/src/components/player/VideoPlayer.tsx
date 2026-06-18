@@ -21,11 +21,18 @@ import {
 	readSubtitleFile,
 	mpvSubAdd,
 	mpvSubRemove,
+	resolveLocalDownload,
+	enqueueMovieDownload,
+	enqueueEpisodeDownload,
+	stopDownload,
+	removeDownload,
 } from "@/lib/tauri";
 import { parseSrt } from "@/lib/subtitle-parser";
 import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
+import { useDownloads } from "@/hooks/useDownloads";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
 
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
 
@@ -52,6 +59,25 @@ const sortEpisodes = (eps: Channel[]): Channel[] =>
 export const PlayerView = () => {
 	const mpv = useMpv();
 	const { channels } = useChannels();
+	const { byChannel } = useDownloads();
+
+	// Load a channel, preferring a completed local download when one exists so
+	// playback works offline. Falls back to the remote URL on any failure.
+	const loadLocalOrRemote = useCallback(
+		async (channelId: string | undefined, url: string, startPos?: number) => {
+			let target = url;
+			if (channelId) {
+				try {
+					const local = await resolveLocalDownload(channelId);
+					if (local) target = local;
+				} catch {
+					// fall back to the remote URL
+				}
+			}
+			await mpv.load(target, startPos);
+		},
+		[mpv]
+	);
 	const location = useLocation();
 	const navigate = useNavigate();
 	const [showControls, setShowControls] = useState(true);
@@ -164,7 +190,7 @@ export const PlayerView = () => {
 
 	useEffect(() => {
 		if (navState?.url) {
-			mpv.load(navState.url).catch(() => {});
+			loadLocalOrRemote(navState.channel?.id, navState.url).catch(() => {});
 			setActiveChannelName(navState.channelName ?? null);
 			setActiveChannel(navState.channel ?? null);
 			if (navState.seriesEpisodes?.length) {
@@ -326,14 +352,14 @@ export const PlayerView = () => {
 				channel.contentType
 			).catch(() => {});
 
-			mpv.load(channel.url).catch(() => {});
+			loadLocalOrRemote(channel.id, channel.url).catch(() => {});
 			setActiveChannelName(channel.name);
 			setActiveChannel(channel);
 			setSeriesEpisodes([]);
 			setSelectedSubtitleId(null);
 			setSubtitleCues([]);
 		},
-		[mpv]
+		[loadLocalOrRemote]
 	);
 
 	// --- Series episode navigation ---
@@ -385,7 +411,7 @@ export const PlayerView = () => {
 			playStartTimeRef.current = Date.now();
 			recordPlayStart(ep.id, ep.name, ep.logoUrl ?? null, ep.contentType).catch(() => {});
 
-			mpv.load(ep.url).catch(() => {});
+			loadLocalOrRemote(ep.id, ep.url).catch(() => {});
 			setActiveChannelName(ep.name);
 			setActiveChannel(ep);
 			setShowInfoDrawer(false);
@@ -397,7 +423,7 @@ export const PlayerView = () => {
 			// Increment trigger so the auto-load effect fires for this episode.
 			setAutoLoadTrigger((t) => t + 1);
 		},
-		[mpv]
+		[loadLocalOrRemote]
 	);
 
 	// --- Autoplay next episode ---
@@ -555,6 +581,37 @@ export const PlayerView = () => {
 	const episodesForDrawer = sortedEpisodes.length > 0 ? sortedEpisodes : localSeriesEpisodes;
 	const showTitleForDrawer = activeChannel?.seriesTitle ?? showTitle(activeChannel?.name ?? "");
 
+	// --- Player download control (movies + series episodes only) ---
+	const playerDl = activeChannel ? byChannel.get(activeChannel.id) : undefined;
+	const playerDownloadState: DownloadIconState =
+		playerDl?.status === "completed"
+			? "complete"
+			: playerDl?.status === "downloading" || playerDl?.status === "queued"
+				? "downloading"
+				: "idle";
+	const showPlayerDownload =
+		!!activeChannel &&
+		(activeChannel.contentType === "movie" || activeChannel.contentType === "series");
+	const downloadSlot = showPlayerDownload ? (
+		<DownloadButton
+			state={playerDownloadState}
+			onStart={() => {
+				if (!activeChannel) return;
+				if (activeChannel.contentType === "series") {
+					void enqueueEpisodeDownload(
+						activeChannel,
+						seriesContainerId,
+						showTitleForDrawer
+					);
+				} else {
+					void enqueueMovieDownload(activeChannel.id);
+				}
+			}}
+			onStop={() => playerDl && void stopDownload(playerDl.id)}
+			onRemove={() => playerDl && void removeDownload(playerDl.id)}
+		/>
+	) : undefined;
+
 	return (
 		<div
 			ref={containerRef}
@@ -654,6 +711,7 @@ export const PlayerView = () => {
 					onSubtitles={
 						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
 					}
+					downloadSlot={downloadSlot}
 				/>
 			)}
 
@@ -750,7 +808,7 @@ export const PlayerView = () => {
 						);
 
 						setShowInfoDrawer(false);
-						mpv.load(ch.url).catch(() => {});
+						loadLocalOrRemote(ch.id, ch.url).catch(() => {});
 						setActiveChannelName(ch.name);
 						setActiveChannel(ch);
 					}}

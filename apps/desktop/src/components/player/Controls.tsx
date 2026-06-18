@@ -35,6 +35,8 @@ interface ControlsProps {
 	onAutoplayChange?: (v: boolean) => void;
 	onSubtitles?: () => void;
 	hasSubtitles?: boolean;
+	/** Optional download control rendered in the right cluster. */
+	downloadSlot?: React.ReactNode;
 }
 
 export const Controls = ({
@@ -54,6 +56,7 @@ export const Controls = ({
 	onAutoplayChange,
 	onSubtitles,
 	hasSubtitles,
+	downloadSlot,
 }: ControlsProps) => {
 	const [localPos, setLocalPos] = useState(state.position);
 	const isSeeking = useRef(false);
@@ -243,6 +246,12 @@ export const Controls = ({
 					>
 						<Subtitles className="h-5 w-5" />
 					</Button>
+				)}
+
+				{downloadSlot && (
+					<div className="flex items-center justify-center h-9 w-9 text-white">
+						{downloadSlot}
+					</div>
 				)}
 
 				{/* Fullscreen */}
