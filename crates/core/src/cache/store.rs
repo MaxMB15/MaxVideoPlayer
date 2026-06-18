@@ -551,6 +551,52 @@ impl CacheStore {
         Ok(new_val == 1)
     }
 
+    /// Insert or update a single channel row, keyed on `channel.id`.
+    /// On conflict, mutable fields are updated but `is_favorite` and `provider_id` are preserved.
+    /// Ensures the `provider_id` row exists in the `providers` table (idempotent INSERT OR IGNORE).
+    pub fn upsert_channel(&self, provider_id: &str, ch: &Channel) -> Result<(), CacheError> {
+        // Satisfy the FK constraint: ensure the provider row exists.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO providers (id, name, provider_type, url, channel_count) VALUES (?1, ?2, 'sentinel', '', 0)",
+            params![provider_id, provider_id],
+        )?;
+
+        let sources_json = serde_json::to_string(&ch.sources).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "INSERT INTO channels (id, provider_id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET
+               name         = excluded.name,
+               url          = excluded.url,
+               logo_url     = excluded.logo_url,
+               group_title  = excluded.group_title,
+               tvg_id       = excluded.tvg_id,
+               tvg_name     = excluded.tvg_name,
+               content_type = excluded.content_type,
+               sources      = excluded.sources,
+               series_title = excluded.series_title,
+               season       = excluded.season,
+               episode      = excluded.episode",
+            params![
+                ch.id,
+                provider_id,
+                ch.name,
+                ch.url,
+                ch.logo_url,
+                ch.group_title,
+                ch.tvg_id,
+                ch.tvg_name,
+                ch.is_favorite as i32,
+                &ch.content_type,
+                sources_json,
+                ch.series_title,
+                ch.season.map(|s| s as i64),
+                ch.episode.map(|e| e as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
     // --- EPG Cache ---
 
     pub fn save_epg_data(&self, channel_id: &str, json: &str) -> Result<(), CacheError> {
@@ -2132,5 +2178,54 @@ mod tests {
         assert!(ids.contains(&"d1"));
         assert!(ids.contains(&"d2"));
         assert!(!ids.contains(&"d3"));
+    }
+
+    #[test]
+    fn upsert_channel_insert_and_update() {
+        let store = CacheStore::open_in_memory().unwrap();
+        // upsert_channel uses a sentinel provider_id that need not exist in providers table.
+        let ch = Channel {
+            id: "ep-001".into(),
+            name: "Episode 1".into(),
+            url: "http://stream.example.com/ep001".into(),
+            logo_url: None,
+            group_title: "Drama".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: Some("Great Show".into()),
+            season: Some(1),
+            episode: Some(1),
+        };
+
+        // Insert via upsert_channel.
+        store.upsert_channel("__downloads__", &ch).unwrap();
+
+        // Read it back.
+        let loaded = store.get_channel_by_id("ep-001").unwrap().expect("channel should exist");
+        assert_eq!(loaded.id, "ep-001");
+        assert_eq!(loaded.name, "Episode 1");
+        assert_eq!(loaded.url, "http://stream.example.com/ep001");
+        assert_eq!(loaded.content_type, "series");
+        assert_eq!(loaded.series_title, Some("Great Show".into()));
+        assert_eq!(loaded.season, Some(1));
+        assert_eq!(loaded.episode, Some(1));
+        assert!(!loaded.is_favorite);
+
+        // Upsert again with a changed name; is_favorite should NOT be overwritten.
+        let ch2 = Channel {
+            name: "Episode 1 (Updated)".into(),
+            url: "http://stream.example.com/ep001v2".into(),
+            ..ch.clone()
+        };
+        store.upsert_channel("__downloads__", &ch2).unwrap();
+
+        let updated = store.get_channel_by_id("ep-001").unwrap().expect("channel should still exist");
+        assert_eq!(updated.name, "Episode 1 (Updated)");
+        assert_eq!(updated.url, "http://stream.example.com/ep001v2");
+        // is_favorite must be preserved (not overwritten).
+        assert!(!updated.is_favorite);
     }
 }

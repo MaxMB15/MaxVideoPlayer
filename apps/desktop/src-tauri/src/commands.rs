@@ -1,4 +1,6 @@
+use crate::downloads::manager;
 use mvp_core::cache::store::{CacheStore, GroupHierarchyEntry, PinnedGroup, WatchHistoryEntry};
+use mvp_core::downloads::model::DownloadKind;
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
@@ -1314,4 +1316,84 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Enqueue a single movie download.
+#[command]
+pub async fn enqueue_movie_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<String, String> {
+    let (title, url) = {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        let ch = cache
+            .get_channel_by_id(&channel_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("channel not found")?;
+        (ch.name, ch.url)
+    };
+    let id = manager::enqueue_record(
+        &app, &channel_id, &title, &url, DownloadKind::Movie, None, None,
+    )?;
+    manager::pump(&app)?;
+    Ok(id)
+}
+
+/// Enqueue a single already-resolved episode (the frontend passes the episode
+/// Channel from get_xtream_series_episodes, plus the parent series channel id).
+#[command]
+pub async fn enqueue_episode_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    episode: Channel,
+    series_channel_id: String,
+    series_title: String,
+) -> Result<String, String> {
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        cache.upsert_channel("__downloads__", &episode).map_err(|e| e.to_string())?;
+    }
+    let id = manager::enqueue_record(
+        &app,
+        &episode.id,
+        &episode.name,
+        &episode.url,
+        DownloadKind::Episode,
+        Some(series_channel_id),
+        Some(&series_title),
+    )?;
+    manager::pump(&app)?;
+    Ok(id)
+}
+
+/// Enqueue every episode in `episodes`. Used for whole-season, whole-series,
+/// and "download all missing". The frontend resolves/filters the list.
+#[command]
+pub async fn enqueue_episodes_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    episodes: Vec<Channel>,
+    series_channel_id: String,
+    series_title: String,
+) -> Result<Vec<String>, String> {
+    let mut ids = Vec::new();
+    for ep in episodes {
+        {
+            let cache = state.cache.lock().map_err(|e| e.to_string())?;
+            cache.upsert_channel("__downloads__", &ep).map_err(|e| e.to_string())?;
+        }
+        let id = manager::enqueue_record(
+            &app,
+            &ep.id,
+            &ep.name,
+            &ep.url,
+            DownloadKind::Episode,
+            Some(series_channel_id.clone()),
+            Some(&series_title),
+        )?;
+        ids.push(id);
+    }
+    manager::pump(&app)?;
+    Ok(ids)
 }
