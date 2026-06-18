@@ -119,6 +119,7 @@ pub fn run() {
             commands::get_download_concurrency,
             commands::set_download_folder,
             commands::get_download_folder,
+            commands::resolve_local_download,
         ])
         .setup(|app| {
             let app_dir = app

@@ -1474,3 +1474,24 @@ pub async fn set_download_folder(
 pub async fn get_download_folder(manager: State<'_, DownloadManager>) -> Result<String, String> {
     Ok(manager.root().to_string_lossy().to_string())
 }
+
+/// Given a channel id, return the local file path if a completed download
+/// exists (and the file is present on disk), else None. The frontend calls this
+/// before playback and passes the local path to mpvLoad when present.
+#[command]
+pub async fn resolve_local_download(
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<Option<String>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let rec = cache
+        .completed_download_for_channel(&channel_id)
+        .map_err(|e| e.to_string())?;
+    Ok(rec.and_then(|r| {
+        if std::path::Path::new(&r.dest_path).exists() {
+            Some(r.dest_path)
+        } else {
+            None
+        }
+    }))
+}
