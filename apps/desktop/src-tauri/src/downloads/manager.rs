@@ -270,6 +270,44 @@ pub fn start_process<R: Runtime>(app: &AppHandle<R>, mut rec: DownloadRecord) ->
     Ok(())
 }
 
+/// Stop a single in-progress or queued download: mark Cancelled, kill the child
+/// if running, and delete any partial file. Safe to call on any state.
+pub fn stop_one<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    // Mark cancelled first so the spawn task's exit handler won't flip it to Failed.
+    update_record(app, id, |r| {
+        if r.status == DownloadStatus::Queued || r.status == DownloadStatus::Downloading {
+            r.status = DownloadStatus::Cancelled;
+            r.finished_at = Some(now_secs());
+        }
+    });
+
+    // Kill the running child if present.
+    let child = {
+        let manager = app.state::<DownloadManager>();
+        let mut running = manager.running.lock().unwrap();
+        running.remove(id)
+    };
+    if let Some(handle) = child {
+        let _ = handle.child.kill();
+    }
+
+    // Remove partial file.
+    let dest_path = {
+        let app_state = app.state::<AppState>();
+        let Ok(cache) = app_state.cache.lock() else {
+            emit_progress(app, id);
+            return Ok(());
+        };
+        cache.get_download(id).ok().flatten().map(|r| r.dest_path)
+    };
+    if let Some(path) = dest_path {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    emit_progress(app, id);
+    Ok(())
+}
+
 fn update_record<R: Runtime>(
     app: &AppHandle<R>,
     id: &str,
