@@ -1,16 +1,19 @@
 use crate::commands::AppState;
 use crate::downloads::scheduler::ids_to_start;
+use mvp_core::downloads::ffmpeg::{build_ffmpeg_args, fold_progress_line, ProgressUpdate};
 use mvp_core::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
 use mvp_core::downloads::paths::derive_dest_path;
+use mvp_core::downloads::redact::redact_credentials;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, Runtime};
-use tokio::process::Child;
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 
-/// Per-item runtime handle to a running ffmpeg child.
-pub struct RunningChild {
-    pub child: Child,
+/// Wrapper so we store the plugin's CommandChild (which exposes `kill`).
+pub struct RunningChildHandle {
+    pub child: tauri_plugin_shell::process::CommandChild,
 }
 
 /// Tauri managed state. Holds config + the live child-process map.
@@ -19,7 +22,7 @@ pub struct RunningChild {
 pub struct DownloadManager {
     pub concurrency: Mutex<usize>,
     pub root: Mutex<PathBuf>,
-    pub running: Mutex<HashMap<String, RunningChild>>,
+    pub running: Mutex<HashMap<String, RunningChildHandle>>,
 }
 
 impl DownloadManager {
@@ -128,7 +131,178 @@ fn uuid_like() -> String {
     format!("{nanos:x}")
 }
 
-// TEMPORARY stub — replaced by the real implementation in Task 10.
-pub fn start_process<R: Runtime>(_app: &AppHandle<R>, _rec: DownloadRecord) -> Result<(), String> {
+/// Probe Content-Length so the UI can show a byte-based percentage. Best-effort.
+async fn probe_total_bytes(url: &str) -> Option<i64> {
+    let client = reqwest::Client::new();
+    let resp = client.head(url).send().await.ok()?;
+    resp.headers()
+        .get(reqwest::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+}
+
+/// Start ffmpeg for a single record. Spawns the sidecar, streams progress,
+/// persists updates, emits `download://progress`, and finalizes on exit.
+pub fn start_process<R: Runtime>(app: &AppHandle<R>, mut rec: DownloadRecord) -> Result<(), String> {
+    let app_state = app.state::<AppState>();
+    let url = {
+        let cache = app_state.cache.lock().map_err(|e| e.to_string())?;
+        cache
+            .get_channel_by_id(&rec.channel_id)
+            .map_err(|e| e.to_string())?
+            .map(|c| c.url)
+            .ok_or_else(|| format!("channel not found: {}", rec.channel_id))?
+    };
+
+    // Ensure destination directory exists.
+    if let Some(parent) = std::path::Path::new(&rec.dest_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    // Mark downloading + persist.
+    rec.status = DownloadStatus::Downloading;
+    {
+        let cache = app_state.cache.lock().map_err(|e| e.to_string())?;
+        cache.upsert_download(&rec).map_err(|e| e.to_string())?;
+    }
+
+    let args = build_ffmpeg_args(&url, &rec.dest_path);
+    let sidecar = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| redact_credentials(&e.to_string()))?
+        .args(args);
+
+    let (mut rx, child) = sidecar
+        .spawn()
+        .map_err(|e| redact_credentials(&e.to_string()))?;
+
+    // Track the child so it can be killed on stop.
+    {
+        let manager = app.state::<DownloadManager>();
+        let mut running = manager.running.lock().unwrap();
+        running.insert(rec.id.clone(), RunningChildHandle { child });
+    }
+
+    let app = app.clone();
+    let id = rec.id.clone();
+    let url_for_probe = url.clone();
+    // rec.dest_path is the ".part" path; the final path strips that suffix.
+    let final_path = rec.dest_path.trim_end_matches(".part").to_string();
+    let started = now_secs();
+
+    tauri::async_runtime::spawn(async move {
+        // Probe size up front (best-effort).
+        let total = probe_total_bytes(&url_for_probe).await;
+        if let Some(t) = total {
+            update_record(&app, &id, |r| r.total_bytes = Some(t));
+        }
+
+        let mut acc = ProgressUpdate::default();
+        let mut last_bytes: i64 = 0;
+        let mut exit_ok = false;
+        let mut err_text: Option<String> = None;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    let line = String::from_utf8_lossy(&line);
+                    if fold_progress_line(&mut acc, &line) {
+                        if let Some(size) = acc.total_size {
+                            last_bytes = size;
+                        }
+                        let elapsed = (now_secs() - started).max(1);
+                        let rate = last_bytes / elapsed;
+                        update_record(&app, &id, |r| {
+                            r.downloaded_bytes = last_bytes;
+                            r.avg_rate_bps = Some(rate);
+                        });
+                        emit_progress(&app, &id);
+                        acc = ProgressUpdate::default();
+                    }
+                }
+                CommandEvent::Stderr(line) => {
+                    let line = String::from_utf8_lossy(&line);
+                    err_text = Some(redact_credentials(&line));
+                }
+                CommandEvent::Terminated(payload) => {
+                    exit_ok = payload.code == Some(0);
+                }
+                _ => {}
+            }
+        }
+
+        // Remove from running map.
+        {
+            let manager = app.state::<DownloadManager>();
+            manager.running.lock().unwrap().remove(&id);
+        }
+
+        if exit_ok {
+            // Rename .part -> final.
+            let _ = std::fs::rename(format!("{final_path}.part"), &final_path);
+            update_record(&app, &id, |r| {
+                r.status = DownloadStatus::Completed;
+                r.dest_path = final_path.clone();
+                r.finished_at = Some(now_secs());
+            });
+        } else {
+            // If it was cancelled (child killed), status was already set to
+            // Cancelled by stop_download; don't overwrite that.
+            let was_cancelled = current_status(&app, &id) == Some(DownloadStatus::Cancelled);
+            if !was_cancelled {
+                update_record(&app, &id, |r| {
+                    r.status = DownloadStatus::Failed;
+                    r.error = err_text.clone().or(Some("ffmpeg exited non-zero".into()));
+                    r.finished_at = Some(now_secs());
+                });
+            }
+            let _ = std::fs::remove_file(format!("{final_path}.part"));
+        }
+        emit_progress(&app, &id);
+
+        // A slot freed up — schedule the next queued item.
+        let _ = pump(&app);
+    });
+
     Ok(())
+}
+
+fn update_record<R: Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    f: impl FnOnce(&mut DownloadRecord),
+) {
+    let app_state = app.state::<AppState>();
+    let Ok(cache) = app_state.cache.lock() else {
+        return;
+    };
+    if let Ok(Some(mut rec)) = cache.get_download(id) {
+        f(&mut rec);
+        let _ = cache.upsert_download(&rec);
+    }
+}
+
+fn current_status<R: Runtime>(app: &AppHandle<R>, id: &str) -> Option<DownloadStatus> {
+    let app_state = app.state::<AppState>();
+    let status = {
+        let cache = app_state.cache.lock().ok()?;
+        cache.get_download(id).ok().flatten().map(|r| r.status)
+    };
+    status
+}
+
+fn emit_progress<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    let app_state = app.state::<AppState>();
+    let rec = {
+        let Ok(cache) = app_state.cache.lock() else {
+            return;
+        };
+        cache.get_download(id).ok().flatten()
+    };
+    if let Some(rec) = rec {
+        let _ = app.emit("download://progress", rec);
+    }
 }
