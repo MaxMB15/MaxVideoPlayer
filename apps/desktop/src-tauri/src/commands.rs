@@ -1,6 +1,6 @@
-use crate::downloads::manager;
+use crate::downloads::manager::{self, DownloadManager};
 use mvp_core::cache::store::{CacheStore, GroupHierarchyEntry, PinnedGroup, WatchHistoryEntry};
-use mvp_core::downloads::model::DownloadKind;
+use mvp_core::downloads::model::{DownloadKind, DownloadRecord};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
@@ -1396,4 +1396,81 @@ pub async fn enqueue_episodes_batch(
     }
     manager::pump(&app)?;
     Ok(ids)
+}
+
+#[command]
+pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadRecord>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.list_downloads().map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn stop_download(app: AppHandle, id: String) -> Result<(), String> {
+    manager::stop_one(&app, &id)
+}
+
+/// Stop a set of active (queued + downloading) items (series or season scope).
+#[command]
+pub async fn stop_downloads(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    for id in ids {
+        manager::stop_one(&app, &id)?;
+    }
+    manager::pump(&app)?;
+    Ok(())
+}
+
+/// Remove a completed download: delete the file and the DB row.
+#[command]
+pub async fn remove_download(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let path = {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        cache.get_download(&id).map_err(|e| e.to_string())?.map(|r| r.dest_path)
+    };
+    if let Some(p) = path {
+        let _ = std::fs::remove_file(&p);
+    }
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.delete_download(&id).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn remove_downloads(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    for id in ids {
+        if let Ok(Some(rec)) = cache.get_download(&id) {
+            let _ = std::fs::remove_file(&rec.dest_path);
+        }
+        cache.delete_download(&id).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[command]
+pub async fn set_download_concurrency(
+    manager: State<'_, DownloadManager>,
+    app: AppHandle,
+    n: usize,
+) -> Result<(), String> {
+    manager.set_concurrency(n);
+    manager::pump(&app)?;
+    Ok(())
+}
+
+#[command]
+pub async fn get_download_concurrency(manager: State<'_, DownloadManager>) -> Result<usize, String> {
+    Ok(manager.concurrency())
+}
+
+#[command]
+pub async fn set_download_folder(
+    manager: State<'_, DownloadManager>,
+    path: String,
+) -> Result<(), String> {
+    manager.set_root(std::path::PathBuf::from(path));
+    Ok(())
+}
+
+#[command]
+pub async fn get_download_folder(manager: State<'_, DownloadManager>) -> Result<String, String> {
+    Ok(manager.root().to_string_lossy().to_string())
 }

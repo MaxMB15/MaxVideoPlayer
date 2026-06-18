@@ -107,6 +107,18 @@ pub fn run() {
             commands::delete_super_category,
             commands::get_install_info,
             commands::package_update,
+            commands::enqueue_movie_download,
+            commands::enqueue_episode_download,
+            commands::enqueue_episodes_batch,
+            commands::list_downloads,
+            commands::stop_download,
+            commands::stop_downloads,
+            commands::remove_download,
+            commands::remove_downloads,
+            commands::set_download_concurrency,
+            commands::get_download_concurrency,
+            commands::set_download_folder,
+            commands::get_download_folder,
         ])
         .setup(|app| {
             let app_dir = app
@@ -122,6 +134,9 @@ pub fn run() {
             app.manage(AppState {
                 cache: Mutex::new(cache),
             });
+
+            let downloads_root = app_dir.join("downloads");
+            app.manage(crate::downloads::manager::DownloadManager::new(downloads_root));
 
             {
                 use tauri_plugin_shell::ShellExt;
