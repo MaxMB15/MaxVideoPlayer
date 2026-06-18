@@ -52,6 +52,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_mpv::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::load_m3u_playlist,
             commands::load_m3u_file,
@@ -120,6 +121,14 @@ pub fn run() {
             app.manage(AppState {
                 cache: Mutex::new(cache),
             });
+
+            {
+                use tauri_plugin_shell::ShellExt;
+                match app.shell().sidecar("ffmpeg") {
+                    Ok(_) => tracing::info!("ffmpeg sidecar resolved"),
+                    Err(e) => tracing::error!("ffmpeg sidecar missing: {e}"),
+                }
+            }
 
             // Set the WebView's native background to fully transparent so the
             // video surface (positioned below the WebView) is visible through it.
