@@ -1,4 +1,5 @@
 mod commands;
+mod downloads;
 
 use commands::AppState;
 use mvp_core::cache::store::CacheStore;
