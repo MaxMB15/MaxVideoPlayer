@@ -1234,6 +1234,41 @@ impl CacheStore {
             .execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    pub fn list_downloads_for_series(
+        &self,
+        series_channel_id: &str,
+    ) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE series_channel_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![series_channel_id], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    /// Queued or actively downloading items, oldest first (FIFO scheduling).
+    pub fn list_active_downloads(&self) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE status IN ('queued','downloading') ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    /// Whether a completed download already exists for a given channel id.
+    pub fn completed_download_for_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<Option<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE channel_id = ?1 AND status = 'completed' LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![channel_id], Self::row_to_download)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// For series channels loaded from an older cache that has NULL series_title/season/episode,
@@ -2060,5 +2095,42 @@ mod tests {
         store.upsert_download(&movie_record("d2", "c2")).unwrap();
         let all = store.list_downloads().unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    fn episode_record(id: &str, series: &str, status: DownloadStatus) -> DownloadRecord {
+        let mut r = movie_record(id, id);
+        r.kind = DownloadKind::Episode;
+        r.series_channel_id = Some(series.into());
+        r.status = status;
+        r
+    }
+
+    #[test]
+    fn lists_downloads_for_series() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&episode_record("e1", "S1", DownloadStatus::Completed)).unwrap();
+        store.upsert_download(&episode_record("e2", "S1", DownloadStatus::Downloading)).unwrap();
+        store.upsert_download(&episode_record("e3", "S2", DownloadStatus::Completed)).unwrap();
+
+        let s1 = store.list_downloads_for_series("S1").unwrap();
+        assert_eq!(s1.len(), 2);
+    }
+
+    #[test]
+    fn lists_active_downloads() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&movie_record("d1", "c1")).unwrap(); // queued
+        let mut dl = movie_record("d2", "c2");
+        dl.status = DownloadStatus::Downloading;
+        store.upsert_download(&dl).unwrap();
+        let mut done = movie_record("d3", "c3");
+        done.status = DownloadStatus::Completed;
+        store.upsert_download(&done).unwrap();
+
+        let active = store.list_active_downloads().unwrap();
+        let ids: Vec<_> = active.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"d1"));
+        assert!(ids.contains(&"d2"));
+        assert!(!ids.contains(&"d3"));
     }
 }
