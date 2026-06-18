@@ -177,3 +177,33 @@ export interface PinnedGroup {
 	groupName: string;
 	sortOrder: number;
 }
+
+export type DownloadStatus =
+	| "queued"
+	| "downloading"
+	| "completed"
+	| "failed"
+	| "cancelled";
+
+export interface DownloadRecord {
+	id: string;
+	channelId: string;
+	title: string;
+	kind: "movie" | "episode";
+	seriesChannelId: string | null;
+	status: DownloadStatus;
+	destPath: string;
+	totalBytes: number | null;
+	downloadedBytes: number;
+	avgRateBps: number | null;
+	error: string | null;
+	createdAt: number;
+	finishedAt: number | null;
+}
+
+/** Aggregate download state for a series card (computed in the hook). */
+export type AggregateDownloadState =
+	| "none"
+	| "downloading"
+	| "partial"
+	| "complete";
