@@ -1059,7 +1059,12 @@ export const PlayerView = () => {
 
 			{showChannelOsd && (
 				<ChannelOverlay
-					onClose={() => setShowChannelOsd(false)}
+					onClose={() => {
+						setShowChannelOsd(false);
+						// Focus may have been in the overlay's filter box; hand it back
+						// to the player so hotkeys keep working.
+						containerRef.current?.focus();
+					}}
 					onSelectChannel={handleSelectChannel}
 				/>
 			)}
