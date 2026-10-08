@@ -28,6 +28,7 @@ import {
 	searchEpgProgrammes,
 } from "@/lib/tauri";
 import { consumeBrowseState, saveBrowseSearch, saveBrowseTab } from "@/lib/browse-state";
+import { findEpisode, sortEpisodes } from "@/lib/episodes";
 import type {
 	Channel,
 	Category,
@@ -525,29 +526,40 @@ export const ChannelList = () => {
 				const seriesContainer = byType.series.find(
 					(s) => (s.seriesTitle ?? showTitle(s.name)) === seriesName
 				);
-				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
-					setSeriesLoading(true);
-					fetchXtreamShowEpisodes(seriesName, seriesContainer)
-						.then((eps) =>
-							setSeriesModalData({
-								showTitle: seriesName,
-								episodes: eps,
-								seriesChannelId: seriesContainer.id,
-							})
-						)
-						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
-						.finally(() => setSeriesLoading(false));
-				} else {
-					const eps = byType.series.filter(
-						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === seriesName
-					);
-					if (eps.length > 0) {
+				const seriesChannelId = seriesContainer?.id ?? entry.channelId;
+				// Play the watched episode directly; if it's no longer listed, fall
+				// back to the series picker.
+				const playOrPick = (eps: Channel[]) => {
+					const ep = findEpisode(eps, entry.channelId, entry.channelName);
+					if (ep) {
+						navigate("/player", {
+							state: {
+								url: ep.url,
+								channelName: ep.name,
+								channel: ep,
+								seriesEpisodes: sortEpisodes(eps),
+							},
+						});
+					} else if (eps.length > 0) {
 						setSeriesModalData({
 							showTitle: seriesName,
 							episodes: eps,
-							seriesChannelId: seriesContainer?.id ?? entry.channelId,
+							seriesChannelId,
 						});
 					}
+				};
+				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
+					setSeriesLoading(true);
+					fetchXtreamShowEpisodes(seriesName, seriesContainer)
+						.then(playOrPick)
+						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
+						.finally(() => setSeriesLoading(false));
+				} else {
+					playOrPick(
+						byType.series.filter(
+							(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === seriesName
+						)
+					);
 				}
 			} else if (entry.contentType === "movie") {
 				const movie = byType.movie.find((ch) => ch.name === entry.channelName);
@@ -953,18 +965,12 @@ export const ChannelList = () => {
 					seriesChannelId={seriesModalData.seriesChannelId}
 					onClose={() => setSeriesModalData(null)}
 					onPlay={(ch) => {
-						const sorted = [...seriesModalData.episodes].sort((a, b) => {
-							const sa = a.season ?? 0,
-								sb = b.season ?? 0;
-							if (sa !== sb) return sa - sb;
-							return (a.episode ?? 0) - (b.episode ?? 0);
-						});
 						navigate("/player", {
 							state: {
 								url: ch.url,
 								channelName: ch.name,
 								channel: ch,
-								seriesEpisodes: sorted,
+								seriesEpisodes: sortEpisodes(seriesModalData.episodes),
 							},
 						});
 					}}

@@ -40,6 +40,7 @@ import { useDownloads } from "@/hooks/useDownloads";
 import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
 import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "@/lib/playback";
 import { channelSources, withSource } from "@/lib/sources";
+import { sortEpisodes } from "@/lib/episodes";
 import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
 import { formatTime } from "@/lib/format";
 import { markWatchEnded, markWatchStarted } from "@/lib/browse-state";
@@ -116,13 +117,6 @@ interface EnrichedMeta {
 	whatsonData: WhatsonData | null;
 }
 
-const sortEpisodes = (eps: Channel[]): Channel[] =>
-	[...eps].sort((a, b) => {
-		const sa = a.season ?? 0,
-			sb = b.season ?? 0;
-		if (sa !== sb) return sa - sb;
-		return (a.episode ?? 0) - (b.episode ?? 0);
-	});
 
 export const PlayerView = () => {
 	const mpv = useMpv();

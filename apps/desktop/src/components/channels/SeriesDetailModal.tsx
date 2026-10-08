@@ -20,6 +20,7 @@ import {
 } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 import { channelSources, withSource, describeSource } from "@/lib/sources";
+import { dedupeEpisodes } from "@/lib/episodes";
 import { useDownloads, aggregateForSeries } from "@/hooks/useDownloads";
 import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
 import { ConfirmDialog } from "@/components/downloads/ConfirmDialog";
@@ -48,24 +49,6 @@ const isCovered = (r: DownloadRecord | undefined): boolean =>
 const episodeTitle = (name: string): string => {
 	const stripped = name.replace(/^.*?\bS\d{1,3}E\d{1,3}\s*/i, "").trim();
 	return stripped || name;
-};
-
-const dedupeEpisodes = (episodes: Channel[]): Channel[] => {
-	const seen = new Map<string, { ch: Channel; extraSources: string[] }>();
-	for (const ep of episodes) {
-		const key = `${ep.season ?? 0}x${ep.episode ?? ep.name}`;
-		if (!seen.has(key)) {
-			seen.set(key, { ch: { ...ep }, extraSources: [...ep.sources] });
-		} else {
-			const entry = seen.get(key)!;
-			entry.extraSources.push(ep.url, ...ep.sources);
-			if (!entry.ch.logoUrl && ep.logoUrl) entry.ch.logoUrl = ep.logoUrl;
-		}
-	}
-	return Array.from(seen.values()).map(({ ch, extraSources }) => ({
-		...ch,
-		sources: extraSources,
-	}));
 };
 
 type Step = "seasons" | "episodes" | "sources";
