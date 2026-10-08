@@ -16,6 +16,7 @@ import {
 	stopDownloads,
 	removeDownload,
 	removeDownloads,
+	cacheSeriesEpisodes,
 } from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
 import { useDownloads, aggregateForSeries } from "@/hooks/useDownloads";
@@ -142,10 +143,17 @@ export const SeriesDetailModal = ({
 		return map;
 	}, [bySeries, seriesChannelId]);
 
+	// Persist the full episode list so the selector works offline once any
+	// episode of this series has been downloaded.
+	const persistEpisodeList = () => {
+		void cacheSeriesEpisodes(seriesChannelId, episodes);
+	};
+
 	/** Enqueue a batch, prompting first when it's large (≥10 episodes). */
 	const startBatch = (missing: Channel[]) => {
 		if (missing.length === 0) return;
 		const run = () => {
+			persistEpisodeList();
 			void enqueueEpisodesBatch(missing, seriesChannelId, showTitle);
 		};
 		if (missing.length >= 10) {
@@ -526,13 +534,14 @@ export const SeriesDetailModal = ({
 									</button>
 									<DownloadButton
 										state={epState}
-										onStart={() =>
+										onStart={() => {
+											persistEpisodeList();
 											void enqueueEpisodeDownload(
 												ep,
 												seriesChannelId,
 												showTitle
-											)
-										}
+											);
+										}}
 										onStop={() => epDl && void stopDownload(epDl.id)}
 										onRemove={() => epDl && void removeDownload(epDl.id)}
 										className="shrink-0 h-8 w-8 justify-center rounded-md hover:bg-accent"

@@ -333,6 +333,12 @@ export const enqueueEpisodesBatch = (
 
 export const listDownloads = (): Promise<DownloadRecord[]> => invoke("list_downloads");
 
+export const cacheSeriesEpisodes = (seriesChannelId: string, episodes: Channel[]): Promise<void> =>
+	invoke("cache_series_episodes", { seriesChannelId, episodes });
+
+export const getCachedSeriesEpisodes = (seriesChannelId: string): Promise<Channel[]> =>
+	invoke("get_cached_series_episodes", { seriesChannelId });
+
 export const stopDownload = (id: string): Promise<void> => invoke("stop_download", { id });
 
 export const stopDownloads = (ids: string[]): Promise<void> => invoke("stop_downloads", { ids });

@@ -252,6 +252,15 @@ impl CacheStore {
             CREATE INDEX IF NOT EXISTS idx_downloads_series ON downloads(series_channel_id);
             CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);",
         )?;
+        // Full episode list per series, cached so the season/episode selector
+        // works offline once any episode of the series has been downloaded.
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS series_episode_cache (
+                series_channel_id  TEXT PRIMARY KEY,
+                episodes_json      TEXT NOT NULL,
+                updated_at         INTEGER NOT NULL
+            );",
+        )?;
         Ok(())
     }
 
@@ -1356,6 +1365,47 @@ impl CacheStore {
             None => Ok(None),
         }
     }
+
+    // --- Series episode cache (for offline season/episode selector) ---
+
+    /// Persist the full episode list for a series so its selector works offline.
+    pub fn save_series_episodes(
+        &self,
+        series_channel_id: &str,
+        episodes: &[Channel],
+    ) -> Result<(), CacheError> {
+        let json = serde_json::to_string(episodes).unwrap_or_else(|_| "[]".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO series_episode_cache (series_channel_id, episodes_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(series_channel_id) DO UPDATE SET
+               episodes_json = excluded.episodes_json,
+               updated_at    = excluded.updated_at",
+            params![series_channel_id, json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Read the cached episode list for a series (empty if nothing cached).
+    pub fn get_series_episodes(
+        &self,
+        series_channel_id: &str,
+    ) -> Result<Vec<Channel>, CacheError> {
+        let json: Result<String, rusqlite::Error> = self.conn.query_row(
+            "SELECT episodes_json FROM series_episode_cache WHERE series_channel_id = ?1",
+            params![series_channel_id],
+            |row| row.get(0),
+        );
+        match json {
+            Ok(s) => Ok(serde_json::from_str(&s).unwrap_or_default()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 /// For series channels loaded from an older cache that has NULL series_title/season/episode,
@@ -2315,5 +2365,40 @@ mod tests {
         assert_eq!(updated.url, "http://stream.example.com/ep001v2");
         // is_favorite must be preserved (not overwritten).
         assert!(!updated.is_favorite);
+    }
+
+    #[test]
+    fn series_episode_cache_round_trips() {
+        let store = CacheStore::open_in_memory().unwrap();
+
+        // Empty before anything is cached.
+        assert!(store.get_series_episodes("series-1").unwrap().is_empty());
+
+        let make_ep = |id: &str, ep: u32| Channel {
+            id: id.into(),
+            name: format!("S01E{ep:02}"),
+            url: format!("http://h/ep/{id}"),
+            logo_url: None,
+            group_title: "Drama".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: Some("Homeland".into()),
+            season: Some(1),
+            episode: Some(ep),
+        };
+        let eps = vec![make_ep("e1", 1), make_ep("e2", 2)];
+        store.save_series_episodes("series-1", &eps).unwrap();
+
+        let loaded = store.get_series_episodes("series-1").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "e1");
+        assert_eq!(loaded[1].episode, Some(2));
+
+        // Overwrite replaces the previous list.
+        store.save_series_episodes("series-1", &[make_ep("e1", 1)]).unwrap();
+        assert_eq!(store.get_series_episodes("series-1").unwrap().len(), 1);
     }
 }

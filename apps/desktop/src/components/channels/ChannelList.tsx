@@ -20,7 +20,12 @@ import { DownloadsTab } from "./DownloadsTab";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { useDownloads } from "@/hooks/useDownloads";
-import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
+import {
+	getXtreamSeriesEpisodes,
+	getCachedSeriesEpisodes,
+	getEpgForLiveChannels,
+	searchEpgProgrammes,
+} from "@/lib/tauri";
 import type {
 	Channel,
 	Category,
@@ -363,6 +368,46 @@ export const ChannelList = () => {
 				}
 			} else if (currentTab === "movie" && channel.sources.length > 0) {
 				setSelectedMovie(channel);
+			} else if (currentTab === "downloads") {
+				if (channel.contentType === "series") {
+					const showName = channel.seriesTitle ?? showTitle(channel.name);
+					setSeriesLoading(true);
+					try {
+						let eps: Channel[] = [];
+						if (channel.url.startsWith("xtream://series/")) {
+							// Prefer a live fetch; fall back to the offline cache.
+							try {
+								eps = await getXtreamSeriesEpisodes(channel.id);
+							} catch (e) {
+								console.warn(
+									"[Downloads] live episode fetch failed, using cache:",
+									e
+								);
+							}
+							if (eps.length === 0) eps = await getCachedSeriesEpisodes(channel.id);
+						} else {
+							eps = byType.series.filter(
+								(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
+							);
+							if (eps.length === 0) eps = await getCachedSeriesEpisodes(channel.id);
+						}
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
+					} catch (e) {
+						console.error("[Downloads] failed to load series episodes:", e);
+					} finally {
+						setSeriesLoading(false);
+					}
+				} else if (channel.contentType === "movie" && channel.sources.length > 0) {
+					setSelectedMovie(channel);
+				} else {
+					navigate("/player", {
+						state: { url: channel.url, channelName: channel.name, channel },
+					});
+				}
 			} else if (currentTab === "favorites") {
 				if (channel.contentType === "series") {
 					const showName = channel.seriesTitle ?? showTitle(channel.name);

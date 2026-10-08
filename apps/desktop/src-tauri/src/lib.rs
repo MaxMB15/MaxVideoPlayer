@@ -111,6 +111,8 @@ pub fn run() {
             commands::enqueue_episode_download,
             commands::enqueue_episodes_batch,
             commands::list_downloads,
+            commands::cache_series_episodes,
+            commands::get_cached_series_episodes,
             commands::stop_download,
             commands::stop_downloads,
             commands::remove_download,

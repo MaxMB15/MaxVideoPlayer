@@ -1404,6 +1404,32 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadRe
     cache.list_downloads().map_err(|e| e.to_string())
 }
 
+/// Persist a series' full episode list so the season/episode selector works
+/// offline. Called when the user downloads any episode of the series.
+#[command]
+pub async fn cache_series_episodes(
+    state: State<'_, AppState>,
+    series_channel_id: String,
+    episodes: Vec<Channel>,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .save_series_episodes(&series_channel_id, &episodes)
+        .map_err(|e| e.to_string())
+}
+
+/// Read the cached episode list for a series (empty if nothing cached).
+#[command]
+pub async fn get_cached_series_episodes(
+    state: State<'_, AppState>,
+    series_channel_id: String,
+) -> Result<Vec<Channel>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .get_series_episodes(&series_channel_id)
+        .map_err(|e| e.to_string())
+}
+
 #[command]
 pub async fn stop_download(app: AppHandle, id: String) -> Result<(), String> {
     manager::stop_one(&app, &id)
