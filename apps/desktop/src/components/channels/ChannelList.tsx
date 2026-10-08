@@ -21,6 +21,7 @@ import { DownloadsTab } from "./DownloadsTab";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { useDownloads } from "@/hooks/useDownloads";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import {
 	getXtreamSeriesEpisodes,
 	getCachedSeriesEpisodes,
@@ -144,6 +145,8 @@ export const ChannelList = () => {
 		seriesChannelId: string;
 	} | null>(null);
 	const [seriesLoading, setSeriesLoading] = useState(false);
+	// Episode lists usually load in a moment; only show the overlay when they don't.
+	const showSeriesLoading = useDelayedFlag(seriesLoading, 300);
 	const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
 
 	// EPG data: tvgId → EpgProgram[] (all programs in the fetch window)
@@ -949,7 +952,7 @@ export const ChannelList = () => {
 			)}
 
 			{/* Series loading overlay */}
-			{seriesLoading && (
+			{showSeriesLoading && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
 					<div className="flex items-center gap-3 bg-card rounded-2xl px-6 py-4 shadow-2xl">
 						<Loader2 className="h-5 w-5 animate-spin text-primary" />
