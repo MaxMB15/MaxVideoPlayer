@@ -117,7 +117,6 @@ interface EnrichedMeta {
 	whatsonData: WhatsonData | null;
 }
 
-
 export const PlayerView = () => {
 	const mpv = useMpv();
 	const { channels } = useChannels();
