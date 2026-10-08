@@ -1,6 +1,8 @@
 use crate::commands::AppState;
 use crate::downloads::scheduler::ids_to_start;
-use mvp_core::downloads::ffmpeg::{build_ffmpeg_args, fold_progress_line, ProgressUpdate};
+use mvp_core::downloads::ffmpeg::{
+    build_ffmpeg_args, container_from_part_path, fold_progress_line, ProgressUpdate,
+};
 use mvp_core::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
 use mvp_core::downloads::paths::derive_dest_path;
 use mvp_core::downloads::redact::redact_credentials;
@@ -167,8 +169,12 @@ pub fn start_process<R: Runtime>(app: &AppHandle<R>, mut rec: DownloadRecord) ->
         let cache = app_state.cache.lock().map_err(|e| e.to_string())?;
         cache.upsert_download(&rec).map_err(|e| e.to_string())?;
     }
+    // Surface the downloading transition immediately.
+    emit_progress(app, &rec.id);
 
-    let args = build_ffmpeg_args(&url, &rec.dest_path);
+    // The final file's extension (dest_path minus ".part") selects the muxer.
+    let container = container_from_part_path(&rec.dest_path).to_string();
+    let args = build_ffmpeg_args(&url, &rec.dest_path, &container);
     let sidecar = app
         .shell()
         .sidecar("ffmpeg")
