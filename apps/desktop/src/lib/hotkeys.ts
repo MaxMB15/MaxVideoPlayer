@@ -1,0 +1,115 @@
+/** Player keyboard actions. Resolved from key events by `resolvePlayerHotkey`. */
+export type PlayerAction =
+	| { type: "togglePlay" }
+	| { type: "toggleFullscreen" }
+	| { type: "toggleMute" }
+	| { type: "seekBy"; seconds: number }
+	| { type: "seekToPercent"; percent: number }
+	| { type: "volumeBy"; delta: number }
+	| { type: "nextEpisode" }
+	| { type: "prevEpisode" }
+	| { type: "toggleSubtitles" }
+	| { type: "toggleInfo" }
+	| { type: "toggleChannelList" }
+	| { type: "toggleShortcuts" }
+	| { type: "escape" };
+
+export const SEEK_SHORT = 10;
+export const SEEK_LONG = 30;
+export const VOLUME_STEP = 5;
+
+interface KeyLike {
+	key: string;
+	shiftKey: boolean;
+	ctrlKey: boolean;
+	metaKey: boolean;
+	altKey: boolean;
+}
+
+/**
+ * Map a keydown event to a player action, or null if the key isn't bound.
+ * Combinations with Cmd/Ctrl/Alt are never handled so OS and app shortcuts
+ * (Cmd+F, Cmd+M, Cmd+Q, …) keep working.
+ */
+export const resolvePlayerHotkey = (e: KeyLike): PlayerAction | null => {
+	if (e.ctrlKey || e.metaKey || e.altKey) return null;
+
+	// Digit keys: 0–9 jump to 0%–90% of the runtime (YouTube convention).
+	if (/^[0-9]$/.test(e.key)) return { type: "seekToPercent", percent: Number(e.key) * 10 };
+
+	switch (e.key) {
+		case " ":
+		case "k":
+		case "K":
+			return { type: "togglePlay" };
+		case "f":
+		case "F":
+			return { type: "toggleFullscreen" };
+		case "m":
+		case "M":
+			return { type: "toggleMute" };
+		case "ArrowLeft":
+			return { type: "seekBy", seconds: e.shiftKey ? -SEEK_LONG : -SEEK_SHORT };
+		case "ArrowRight":
+			return { type: "seekBy", seconds: e.shiftKey ? SEEK_LONG : SEEK_SHORT };
+		case "j":
+		case "J":
+			return { type: "seekBy", seconds: -SEEK_SHORT };
+		case "l":
+		case "L":
+			return { type: "seekBy", seconds: SEEK_SHORT };
+		case "Home":
+			return { type: "seekToPercent", percent: 0 };
+		case "ArrowUp":
+			return { type: "volumeBy", delta: VOLUME_STEP };
+		case "ArrowDown":
+			return { type: "volumeBy", delta: -VOLUME_STEP };
+		case "n":
+		case "N":
+			return { type: "nextEpisode" };
+		case "p":
+		case "P":
+			return { type: "prevEpisode" };
+		case "s":
+		case "S":
+			return { type: "toggleSubtitles" };
+		case "i":
+		case "I":
+			return { type: "toggleInfo" };
+		case "c":
+		case "C":
+			return { type: "toggleChannelList" };
+		case "?":
+			return { type: "toggleShortcuts" };
+		case "Escape":
+			return { type: "escape" };
+		default:
+			return null;
+	}
+};
+
+/** Shortcut reference shown in the player's "?" overlay. */
+export const PLAYER_SHORTCUTS: { keys: string[]; label: string }[] = [
+	{ keys: ["Space", "K"], label: "Play / pause" },
+	{ keys: ["F"], label: "Toggle fullscreen (or double-click)" },
+	{ keys: ["M"], label: "Mute / unmute" },
+	{ keys: ["←", "→"], label: `Seek ${SEEK_SHORT}s back / forward` },
+	{ keys: ["Shift ←", "Shift →"], label: `Seek ${SEEK_LONG}s back / forward` },
+	{ keys: ["J", "L"], label: `Seek ${SEEK_SHORT}s back / forward` },
+	{ keys: ["0–9"], label: "Jump to 0%–90%" },
+	{ keys: ["Home"], label: "Jump to start" },
+	{ keys: ["↑", "↓"], label: "Volume up / down" },
+	{ keys: ["N", "P"], label: "Next / previous episode" },
+	{ keys: ["S"], label: "Subtitles" },
+	{ keys: ["I"], label: "Info" },
+	{ keys: ["C"], label: "Channel list" },
+	{ keys: ["?"], label: "Show / hide this list" },
+	{ keys: ["Esc"], label: "Exit fullscreen / close panel / leave player" },
+];
+
+/** True when the event target is a text field, so typing shouldn't trigger hotkeys. */
+export const isTypingTarget = (target: EventTarget | null): boolean => {
+	if (!(target instanceof HTMLElement)) return false;
+	const tag = target.tagName;
+	return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+};

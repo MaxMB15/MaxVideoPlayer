@@ -10,6 +10,7 @@ import {
 	SkipBack,
 	SkipForward,
 	Subtitles,
+	Keyboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -27,6 +28,7 @@ interface ControlsProps {
 	onStop: () => void;
 	onSeek: (position: number) => void;
 	onVolumeChange: (volume: number) => void;
+	onToggleMute?: () => void;
 	onFullscreen?: () => void;
 	onInfo?: () => void;
 	onPrevEpisode?: () => void;
@@ -35,6 +37,7 @@ interface ControlsProps {
 	onAutoplayChange?: (v: boolean) => void;
 	onSubtitles?: () => void;
 	hasSubtitles?: boolean;
+	onShortcuts?: () => void;
 }
 
 export const Controls = ({
@@ -46,6 +49,7 @@ export const Controls = ({
 	onStop,
 	onSeek,
 	onVolumeChange,
+	onToggleMute,
 	onFullscreen,
 	onInfo,
 	onPrevEpisode,
@@ -54,6 +58,7 @@ export const Controls = ({
 	onAutoplayChange,
 	onSubtitles,
 	hasSubtitles,
+	onShortcuts,
 }: ControlsProps) => {
 	const [localPos, setLocalPos] = useState(state.position);
 	const isSeeking = useRef(false);
@@ -150,8 +155,9 @@ export const Controls = ({
 					<Button
 						variant="ghost"
 						size="icon"
-						onClick={() => onVolumeChange(state.volume > 0 ? 0 : 100)}
+						onClick={onToggleMute ?? (() => onVolumeChange(state.volume > 0 ? 0 : 100))}
 						className="text-white hover:bg-white/20"
+						aria-label={state.volume === 0 ? "Unmute" : "Mute"}
 					>
 						{state.volume === 0 ? (
 							<VolumeX className="h-5 w-5" />
@@ -242,6 +248,19 @@ export const Controls = ({
 						aria-label="Subtitles"
 					>
 						<Subtitles className="h-5 w-5" />
+					</Button>
+				)}
+
+				{onShortcuts && (
+					<Button
+						variant="ghost"
+						size="icon"
+						className="text-white hover:bg-white/20"
+						onClick={onShortcuts}
+						aria-label="Keyboard shortcuts"
+						title="Keyboard shortcuts (?)"
+					>
+						<Keyboard className="h-5 w-5" />
 					</Button>
 				)}
 

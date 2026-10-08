@@ -3,6 +3,7 @@ import { ChannelOverlay } from "./ChannelOverlay";
 import { ConnectionStatusOverlay } from "./ConnectionStatusOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
 import { SubtitleOverlay } from "./SubtitleOverlay";
+import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
 import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
 import { LiveInfoDrawer } from "@/components/channels/LiveInfoDrawer";
@@ -26,6 +27,10 @@ import { parseSrt } from "@/lib/subtitle-parser";
 import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
+import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
+import { formatTime } from "@/lib/format";
+
+const MAX_VOLUME = 150;
 
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
 
@@ -74,6 +79,10 @@ export const PlayerView = () => {
 	const [subtitleDelay, setSubtitleDelay] = useState(0);
 	const [subtitleEditMode, setSubtitleEditMode] = useState(false);
 	const [autoplay, setAutoplay] = useState(true);
+	const [showShortcuts, setShowShortcuts] = useState(false);
+	// Brief centre-screen feedback for keyboard actions ("+10s", "Volume 80%", …).
+	const [osdText, setOsdText] = useState<{ text: string; id: number } | null>(null);
+	const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Remembers which language + rank-within-language the user last picked so the
 	// same subtitle can be auto-selected when navigating to the next episode.
@@ -469,35 +478,92 @@ export const PlayerView = () => {
 	}, [isFullscreen, setFullscreen]);
 
 	// --- Keyboard ---
+	const flashOsd = useCallback((text: string) => {
+		if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
+		setOsdText({ text, id: Date.now() });
+		osdTimerRef.current = setTimeout(() => setOsdText(null), 900);
+	}, []);
+	useEffect(
+		() => () => {
+			if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
+		},
+		[]
+	);
+
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			if (isTypingTarget(e.target)) return;
 			// While the subtitle settings pane is open, arrow keys belong to subtitle
 			// position/delay handlers — don't let them also seek or change volume.
 			const isArrow = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key);
 			if (subtitleEditMode && isArrow) return;
 
-			switch (e.key) {
-				case " ":
-					e.preventDefault();
-					mpv.state.isPaused ? mpv.play() : mpv.pause();
+			const action = resolvePlayerHotkey(e);
+			if (!action) return;
+			if (showShortcuts && action.type !== "toggleShortcuts" && action.type !== "escape")
+				return;
+			e.preventDefault();
+
+			const s = mpv.state;
+			switch (action.type) {
+				case "togglePlay":
+					if (s.isPaused || !s.isPlaying) {
+						mpv.play();
+					} else {
+						mpv.pause();
+					}
 					break;
-				case "ArrowLeft":
-					mpv.seek(Math.max(0, mpv.state.position - 10));
+				case "toggleFullscreen":
+					toggleFullscreen();
 					break;
-				case "ArrowRight":
-					mpv.seek(mpv.state.position + 10);
+				case "toggleMute":
+					mpv.toggleMute();
+					flashOsd(s.volume > 0 ? "Muted" : "Unmuted");
 					break;
-				case "ArrowUp":
-					mpv.setVolume(Math.min(150, mpv.state.volume + 5));
+				case "seekBy": {
+					const target = Math.max(0, s.position + action.seconds);
+					mpv.seek(s.duration > 0 ? Math.min(target, s.duration - 1) : target);
+					flashOsd(`${action.seconds > 0 ? "+" : "−"}${Math.abs(action.seconds)}s`);
 					break;
-				case "ArrowDown":
-					mpv.setVolume(Math.max(0, mpv.state.volume - 5));
+				}
+				case "seekToPercent":
+					if (s.duration > 0) {
+						const target = (s.duration * action.percent) / 100;
+						mpv.seek(target);
+						flashOsd(formatTime(target));
+					}
 					break;
-				case "c":
+				case "volumeBy": {
+					const v = Math.min(
+						MAX_VOLUME,
+						Math.max(0, Math.round(s.volume + action.delta))
+					);
+					mpv.setVolume(v);
+					flashOsd(`Volume ${v}%`);
+					break;
+				}
+				case "nextEpisode":
+					if (nextEpisode) playEpisode(nextEpisode);
+					break;
+				case "prevEpisode":
+					if (prevEpisode) playEpisode(prevEpisode);
+					break;
+				case "toggleSubtitles":
+					if (canShowSubtitles) setShowSubtitlePicker((v) => !v);
+					break;
+				case "toggleInfo":
+					if (activeChannel) setShowInfoDrawer((v) => !v);
+					break;
+				case "toggleChannelList":
 					setShowChannelOsd((v) => !v);
 					break;
-				case "Escape":
-					if (isFullscreen) {
+				case "toggleShortcuts":
+					setShowShortcuts((v) => !v);
+					break;
+				case "escape":
+					if (showShortcuts) {
+						setShowShortcuts(false);
+					} else if (isFullscreen) {
 						setFullscreen(false);
 						getCurrentWindow()
 							.setFullscreen(false)
@@ -508,6 +574,9 @@ export const PlayerView = () => {
 						setShowInfoDrawer(false);
 					} else if (showChannelOsd) {
 						setShowChannelOsd(false);
+					} else if (showSubtitlePicker) {
+						setShowSubtitlePicker(false);
+						setSubtitleEditMode(false);
 					} else {
 						// Note: playStartTimeRef is NOT nulled here intentionally.
 						// The unmount cleanup records the elapsed time when the route changes.
@@ -520,12 +589,21 @@ export const PlayerView = () => {
 		},
 		[
 			mpv,
+			showShortcuts,
 			isFullscreen,
 			showInfoDrawer,
 			showChannelOsd,
+			showSubtitlePicker,
 			navigate,
 			setFullscreen,
 			subtitleEditMode,
+			toggleFullscreen,
+			flashOsd,
+			nextEpisode,
+			prevEpisode,
+			playEpisode,
+			canShowSubtitles,
+			activeChannel,
 		]
 	);
 
@@ -587,7 +665,10 @@ export const PlayerView = () => {
 				}}
 			/>
 
-			<div className="absolute inset-0 flex flex-col items-center justify-center bg-transparent">
+			<div
+				className="absolute inset-0 flex flex-col items-center justify-center bg-transparent"
+				onDoubleClick={toggleFullscreen}
+			>
 				{mpv.error && (
 					<div className="text-center p-6 max-w-md">
 						<p className="text-destructive text-sm mb-2">{mpv.error}</p>
@@ -612,6 +693,15 @@ export const PlayerView = () => {
 				</div>
 			)}
 
+			{osdText && (
+				<div
+					key={osdText.id}
+					className="pointer-events-none absolute top-1/4 left-1/2 -translate-x-1/2 z-30 rounded-lg bg-black/70 px-4 py-2 text-sm font-medium text-white tabular-nums shadow-lg"
+				>
+					{osdText.text}
+				</div>
+			)}
+
 			{/* Autoplay banner — shown for 3s before next episode starts */}
 			{/* (simple version: no countdown, instant autoplay) */}
 
@@ -632,6 +722,7 @@ export const PlayerView = () => {
 					onStop={handleStop}
 					onSeek={mpv.seek}
 					onVolumeChange={mpv.setVolume}
+					onToggleMute={mpv.toggleMute}
 					onFullscreen={toggleFullscreen}
 					onInfo={activeChannel ? () => setShowInfoDrawer(true) : undefined}
 					onPrevEpisode={prevEpisode ? () => playEpisode(prevEpisode) : undefined}
@@ -642,6 +733,7 @@ export const PlayerView = () => {
 					onSubtitles={
 						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
 					}
+					onShortcuts={() => setShowShortcuts((v) => !v)}
 				/>
 			)}
 
@@ -749,6 +841,8 @@ export const PlayerView = () => {
 			{showInfoDrawer && activeChannel && activeChannel.contentType === "live" && (
 				<LiveInfoDrawer channel={activeChannel} onClose={() => setShowInfoDrawer(false)} />
 			)}
+
+			{showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 		</div>
 	);
 };

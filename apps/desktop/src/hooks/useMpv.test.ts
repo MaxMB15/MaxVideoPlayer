@@ -271,6 +271,51 @@ describe("useMpv", () => {
 		expect(result.current.state.volume).toBe(75);
 	});
 
+	it("toggleMute mutes and restores the previous volume", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(60);
+		});
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(0);
+		expect(result.current.state.volume).toBe(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(60);
+		expect(result.current.state.volume).toBe(60);
+	});
+
+	it("re-applies the user's volume after a load", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(40);
+		});
+		mockMpvSetVolume.mockClear();
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(40);
+		expect(result.current.state.volume).toBe(40);
+	});
+
+	it("does not touch volume on load when the user never changed it", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).not.toHaveBeenCalled();
+	});
+
 	// ── Tauri events ──────────────────────────────────────────────────
 
 	it("sets fallbackActive when render-fallback event fires", async () => {
