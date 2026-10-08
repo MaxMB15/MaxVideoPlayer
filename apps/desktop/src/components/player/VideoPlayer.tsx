@@ -36,6 +36,7 @@ import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "
 import { channelSources, withSource } from "@/lib/sources";
 import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
 import { formatTime } from "@/lib/format";
+import { markWatchEnded, markWatchStarted } from "@/lib/browse-state";
 
 /** How often (ms) watch progress is persisted while playing. */
 const PROGRESS_SAVE_INTERVAL = 5000;
@@ -280,6 +281,10 @@ export const PlayerView = () => {
 
 	useEffect(() => () => flushProgress(), [flushProgress]);
 
+	// Watch-session timing: the channel list keeps its search unless the user
+	// watched for a while (see lib/browse-state).
+	useEffect(() => () => markWatchEnded(), []);
+
 	/** Actually start playing `ch` (optionally from `startPos`), replacing whatever is playing. */
 	const commitPlayback = useCallback(
 		(ch: Channel, startPos?: number, apply?: () => void) => {
@@ -291,6 +296,7 @@ export const PlayerView = () => {
 			recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
 
 			progressRef.current = progressFor(ch, startPos);
+			markWatchStarted();
 			mpv.load(ch.url, startPos).catch(() => {});
 			setActiveChannelName(ch.name);
 			setActiveChannel(ch);
@@ -382,6 +388,7 @@ export const PlayerView = () => {
 				const ch = navChannel.url === navUrl ? navChannel : withSource(navChannel, navUrl);
 				adoptBackgroundProgress().finally(() => startPlayback(ch, "nav"));
 			} else {
+				markWatchStarted();
 				mpv.load(navUrl).catch(() => {});
 				setActiveChannelName(navState.channelName ?? null);
 				setActiveChannel(null);
@@ -395,6 +402,12 @@ export const PlayerView = () => {
 					setActiveChannel(ch);
 					setActiveChannelName(ch.name);
 					progressRef.current = progressFor(ch);
+					// Only counts as watching if it's still playing in the background.
+					mpvGetState()
+						.then((st) => {
+							if (st.isPlaying || st.isPaused) markWatchStarted();
+						})
+						.catch(() => {});
 				} catch {}
 			}
 			const savedEpisodes = sessionStorage.getItem("mvp_lastSeriesEpisodes");

@@ -19,6 +19,7 @@ import { HistoryTab } from "./HistoryTab";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
+import { consumeBrowseState, saveBrowseSearch, saveBrowseTab } from "@/lib/browse-state";
 import type {
 	Channel,
 	Category,
@@ -28,6 +29,9 @@ import type {
 } from "@/lib/types";
 
 type Tab = "live" | "movie" | "series" | "favorites" | "history";
+
+const isTab = (v: unknown): v is Tab =>
+	v === "live" || v === "movie" || v === "series" || v === "favorites" || v === "history";
 
 /** Grouping key for series titles — tolerant of case and spacing differences. */
 const seriesKey = (title: string): string => title.trim().toLowerCase().replace(/\s+/g, " ");
@@ -92,10 +96,21 @@ export const ChannelList = () => {
 	const { channels, loading, toggleFavorite, providers } = useChannels();
 	const navigate = useNavigate();
 
-	const [activeTab, setActiveTab] = useState<Tab>("live");
-	const [search, setSearch] = useState("");
+	// Tab and search are restored when coming back from the player (see lib/browse-state).
+	const [initialBrowse] = useState(consumeBrowseState);
+	const [activeTab, setActiveTab] = useState<Tab>(
+		isTab(initialBrowse.tab) ? initialBrowse.tab : "live"
+	);
+	const [search, setSearch] = useState(initialBrowse.search);
 	// Debounced search — updated 250ms after user stops typing to avoid per-keystroke re-renders
-	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const [debouncedSearch, setDebouncedSearch] = useState(initialBrowse.search);
+
+	useEffect(() => {
+		saveBrowseTab(activeTab);
+	}, [activeTab]);
+	useEffect(() => {
+		saveBrowseSearch(search);
+	}, [search]);
 	const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
 	// Hierarchy navigation state
@@ -280,8 +295,6 @@ export const ChannelList = () => {
 	const handleTabChange = (tab: Tab) => {
 		setActiveTab(tab);
 		setSelectedCategory(null);
-		setSearch("");
-		setDebouncedSearch("");
 		setShowFavoritesOnly(false);
 		setEpgSearchResults([]);
 		setNavState({ level: "home" });
