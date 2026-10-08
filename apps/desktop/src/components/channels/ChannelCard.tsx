@@ -178,7 +178,9 @@ const PosterCard = ({
 			? "complete"
 			: dl?.status === "downloading" || dl?.status === "queued"
 				? "downloading"
-				: "idle";
+				: dl?.status === "failed"
+					? "failed"
+					: "idle";
 
 	return (
 		<div className="group flex flex-col text-left relative">

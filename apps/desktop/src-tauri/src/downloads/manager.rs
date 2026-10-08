@@ -88,8 +88,16 @@ pub fn enqueue_record<R: Runtime>(
     };
     {
         let cache = app_state.cache.lock().map_err(|e| e.to_string())?;
+        // Clear any prior failed/cancelled attempt for this channel so a retry
+        // doesn't leave a duplicate/stale record behind.
+        cache
+            .delete_terminal_downloads_for_channel(channel_id)
+            .map_err(|e| e.to_string())?;
         cache.upsert_download(&rec).map_err(|e| e.to_string())?;
     }
+    // Emit immediately so the UI reflects the queued state without waiting for
+    // the first ffmpeg progress line.
+    emit_progress(app, &id);
     Ok(id)
 }
 

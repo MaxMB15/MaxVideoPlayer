@@ -17,6 +17,49 @@ export const aggregateForSeries = (
 	return "partial";
 };
 
+/**
+ * Pure: should `candidate` replace `current` as the representative record for a
+ * channel? A completed record always wins; otherwise the most recent attempt
+ * does, so a retry supersedes an earlier failed/cancelled record.
+ */
+export const supersedes = (candidate: DownloadRecord, current: DownloadRecord): boolean =>
+	candidate.status === "completed" ||
+	(current.status !== "completed" && candidate.createdAt >= current.createdAt);
+
+/**
+ * Pure: collapse the flat download list into per-channel and per-series views,
+ * keeping a single representative record per channel (see {@link supersedes}).
+ * `byChannel` therefore counts movies + individual episodes (never the series
+ * container), and each `bySeries` array holds one record per episode.
+ */
+export const groupDownloads = (
+	downloads: DownloadRecord[]
+): {
+	byChannel: Map<string, DownloadRecord>;
+	bySeries: Map<string, DownloadRecord[]>;
+} => {
+	const byChannel = new Map<string, DownloadRecord>();
+	const bySeriesByChannel = new Map<string, Map<string, DownloadRecord>>();
+	for (const d of downloads) {
+		const existing = byChannel.get(d.channelId);
+		if (!existing || supersedes(d, existing)) byChannel.set(d.channelId, d);
+		if (d.seriesChannelId) {
+			let inner = bySeriesByChannel.get(d.seriesChannelId);
+			if (!inner) {
+				inner = new Map<string, DownloadRecord>();
+				bySeriesByChannel.set(d.seriesChannelId, inner);
+			}
+			const prev = inner.get(d.channelId);
+			if (!prev || supersedes(d, prev)) inner.set(d.channelId, d);
+		}
+	}
+	const bySeries = new Map<string, DownloadRecord[]>();
+	for (const [seriesId, inner] of bySeriesByChannel) {
+		bySeries.set(seriesId, Array.from(inner.values()));
+	}
+	return { byChannel, bySeries };
+};
+
 interface DownloadsContextValue {
 	downloads: DownloadRecord[];
 	byChannel: Map<string, DownloadRecord>;
@@ -47,17 +90,7 @@ export const DownloadsProvider = ({ children }: { children: ReactNode }) => {
 		};
 	}, [refresh]);
 
-	const byChannel = new Map<string, DownloadRecord>();
-	const bySeries = new Map<string, DownloadRecord[]>();
-	for (const d of downloads) {
-		const existing = byChannel.get(d.channelId);
-		if (!existing || d.status === "completed") byChannel.set(d.channelId, d);
-		if (d.seriesChannelId) {
-			const arr = bySeries.get(d.seriesChannelId) ?? [];
-			arr.push(d);
-			bySeries.set(d.seriesChannelId, arr);
-		}
-	}
+	const { byChannel, bySeries } = groupDownloads(downloads);
 
 	return (
 		<DownloadsContext.Provider value={{ downloads, byChannel, bySeries, refresh }}>

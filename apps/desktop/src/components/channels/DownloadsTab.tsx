@@ -13,7 +13,11 @@ export const DownloadsTab = ({ onPlay, onToggleFavorite }: DownloadsTabProps) =>
 	const { byChannel, bySeries } = useDownloads();
 
 	const ids = new Set<string>();
-	for (const [channelId] of byChannel) ids.add(channelId);
+	// Standalone cards only for movie downloads — individual episodes are
+	// represented by their parent series card (added from bySeries below).
+	for (const [channelId, rec] of byChannel) {
+		if (rec.kind === "movie") ids.add(channelId);
+	}
 	for (const [seriesId] of bySeries) ids.add(seriesId);
 
 	const items = channels.filter((c) => ids.has(c.id));

@@ -132,6 +132,17 @@ pub fn run() {
             let cache = CacheStore::open(&db_path)
                 .expect("failed to open database");
 
+            // Collapse any leftover duplicate download rows (e.g. a failed
+            // attempt sitting next to a later successful one) to one record
+            // per channel so the UI doesn't show a stale error after reboot.
+            match cache.prune_redundant_downloads() {
+                Ok(ids) if !ids.is_empty() => {
+                    tracing::info!("Pruned {} redundant download record(s)", ids.len());
+                }
+                Err(e) => tracing::warn!("Failed to prune download records: {e}"),
+                _ => {}
+            }
+
             app.manage(AppState {
                 cache: Mutex::new(cache),
             });

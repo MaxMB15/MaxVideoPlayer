@@ -493,7 +493,9 @@ export const SeriesDetailModal = ({
 									? "complete"
 									: epDl?.status === "downloading" || epDl?.status === "queued"
 										? "downloading"
-										: "idle";
+										: epDl?.status === "failed"
+											? "failed"
+											: "idle";
 							return (
 								<div
 									key={ep.id}

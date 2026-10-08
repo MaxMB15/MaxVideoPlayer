@@ -588,7 +588,9 @@ export const PlayerView = () => {
 			? "complete"
 			: playerDl?.status === "downloading" || playerDl?.status === "queued"
 				? "downloading"
-				: "idle";
+				: playerDl?.status === "failed"
+					? "failed"
+					: "idle";
 	const showPlayerDownload =
 		!!activeChannel &&
 		(activeChannel.contentType === "movie" || activeChannel.contentType === "series");

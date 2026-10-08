@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Download, DownloadCloud, CheckCircle2, Loader2 } from "lucide-react";
+import { Download, DownloadCloud, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 
-export type DownloadIconState = "idle" | "downloading" | "partial" | "complete";
+export type DownloadIconState = "idle" | "downloading" | "partial" | "complete" | "failed";
 
 interface DownloadButtonProps {
 	state: DownloadIconState;
@@ -34,7 +34,8 @@ export const DownloadButton = ({
 
 	const handleClick = (e: React.MouseEvent) => {
 		e.stopPropagation();
-		if (state === "idle" || state === "partial") onStart();
+		// "failed" behaves like idle: clicking retries the download.
+		if (state === "idle" || state === "partial" || state === "failed") onStart();
 		else if (state === "downloading") setConfirm("stop");
 		else setConfirm("remove"); // complete → remove
 	};
@@ -51,7 +52,7 @@ export const DownloadButton = ({
 				<Icon
 					className={`h-3.5 w-3.5 ${color} ${state === "downloading" ? "animate-pulse" : ""}`}
 				/>
-				{showLabel && <span className="text-xs">{label}</span>}
+				{showLabel && <span className={`text-xs ${color}`}>{label}</span>}
 			</button>
 
 			<ConfirmDialog
@@ -104,6 +105,8 @@ const iconFor = (state: DownloadIconState) => {
 			};
 		case "downloading":
 			return { Icon: Loader2, color: "text-blue-400", label: "Downloading" };
+		case "failed":
+			return { Icon: AlertCircle, color: "text-red-500", label: "Download failed — retry" };
 		default:
 			return { Icon: Download, color: "text-muted-foreground", label: "Download" };
 	}

@@ -479,13 +479,10 @@ export const ChannelList = () => {
 	}, [filtered]);
 
 	// Count of cards shown on the Downloads tab: channels/series with any record.
-	const downloadCount = useMemo(() => {
-		let n = 0;
-		for (const c of channels) {
-			if (byChannel.has(c.id) || bySeries.has(c.id)) n++;
-		}
-		return n;
-	}, [channels, byChannel, bySeries]);
+	// Number of downloaded items (movies + episodes). `byChannel` is keyed per
+	// download channel, so a series' episodes count individually; the series
+	// container itself has no download record and must not be added.
+	const downloadCount = useMemo(() => byChannel.size, [byChannel]);
 
 	const isGrid = activeTab !== "live";
 	// Dynamic grid columns: fit as many ~180 px-wide cards as possible, stretch via 1fr.

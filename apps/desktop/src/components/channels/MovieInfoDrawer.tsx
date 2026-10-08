@@ -77,7 +77,9 @@ export const MovieInfoDrawer = ({
 			? "complete"
 			: dl?.status === "downloading" || dl?.status === "queued"
 				? "downloading"
-				: "idle";
+				: dl?.status === "failed"
+					? "failed"
+					: "idle";
 
 	const handleClose = () => {
 		setVisible(false);

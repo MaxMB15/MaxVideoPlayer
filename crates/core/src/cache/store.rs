@@ -1281,6 +1281,47 @@ impl CacheStore {
         Ok(())
     }
 
+    /// Drop any prior failed/cancelled records for a channel before a fresh
+    /// enqueue, so a successful retry doesn't leave a stale error behind.
+    /// (Active records are left untouched.)
+    pub fn delete_terminal_downloads_for_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM downloads WHERE channel_id = ?1 AND status IN ('failed','cancelled')",
+            params![channel_id],
+        )?;
+        Ok(())
+    }
+
+    /// Collapse the history to a single record per channel: a completed record
+    /// always wins, otherwise the most recent attempt is kept. Removes stale
+    /// duplicates left over from older builds (e.g. a failed attempt sitting
+    /// next to a later successful one). Returns the deleted ids.
+    pub fn prune_redundant_downloads(&self) -> Result<Vec<String>, CacheError> {
+        let ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM downloads WHERE id NOT IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY channel_id
+                            ORDER BY (status = 'completed') DESC, created_at DESC
+                        ) AS rn
+                        FROM downloads
+                    ) WHERE rn = 1
+                )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqlResult<Vec<_>>>()?
+        };
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
+        }
+        Ok(ids)
+    }
+
     pub fn list_downloads_for_series(
         &self,
         series_channel_id: &str,
@@ -2160,6 +2201,53 @@ mod tests {
 
         let s1 = store.list_downloads_for_series("S1").unwrap();
         assert_eq!(s1.len(), 2);
+    }
+
+    #[test]
+    fn prune_keeps_completed_over_failed_for_same_channel() {
+        let store = CacheStore::open_in_memory().unwrap();
+        // Two records for the same channel "c1": an old failed attempt and a
+        // later completed one (different download ids).
+        let mut failed = movie_record("d-failed", "c1");
+        failed.status = DownloadStatus::Failed;
+        failed.error = Some("boom".into());
+        failed.created_at = 100;
+        store.upsert_download(&failed).unwrap();
+
+        let mut done = movie_record("d-done", "c1");
+        done.status = DownloadStatus::Completed;
+        done.created_at = 200;
+        store.upsert_download(&done).unwrap();
+
+        // An unrelated channel should be left alone.
+        store.upsert_download(&movie_record("d-other", "c2")).unwrap();
+
+        let pruned = store.prune_redundant_downloads().unwrap();
+        assert_eq!(pruned, vec!["d-failed".to_string()]);
+
+        let all = store.list_downloads().unwrap();
+        let ids: Vec<_> = all.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"d-done"));
+        assert!(ids.contains(&"d-other"));
+        assert!(!ids.contains(&"d-failed"));
+    }
+
+    #[test]
+    fn delete_terminal_clears_failed_but_keeps_active() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let mut failed = movie_record("d-failed", "c1");
+        failed.status = DownloadStatus::Failed;
+        store.upsert_download(&failed).unwrap();
+        let mut active = movie_record("d-active", "c1");
+        active.status = DownloadStatus::Downloading;
+        store.upsert_download(&active).unwrap();
+
+        store.delete_terminal_downloads_for_channel("c1").unwrap();
+
+        let all = store.list_downloads().unwrap();
+        let ids: Vec<_> = all.iter().map(|r| r.id.as_str()).collect();
+        assert!(!ids.contains(&"d-failed"));
+        assert!(ids.contains(&"d-active"));
     }
 
     #[test]
