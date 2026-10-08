@@ -76,6 +76,9 @@ jobs:
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
 
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh macos
+
       - name: Prepare signing key
         run: |
           # Tauri CLI requires the raw minisign format (starting with "untrusted comment:").
@@ -244,6 +247,9 @@ jobs:
         run: |
           ./scripts/build-libmpv.sh linux
           echo "LD_LIBRARY_PATH=$(pwd)/libs/linux:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh linux
 
       - name: Prepare signing key
         run: |
