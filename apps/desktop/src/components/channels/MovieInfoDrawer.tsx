@@ -3,6 +3,7 @@ import { X, Play, Clapperboard, Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import type { Channel, OmdbData, WhatsonData } from "@/lib/types";
 import { fetchOmdbData, fetchWhatsonData } from "@/lib/tauri";
+import { channelSources, withSource, describeSource } from "@/lib/sources";
 import { RatingsRow } from "@/components/ui/ratings-row";
 
 interface MovieInfoDrawerProps {
@@ -22,7 +23,10 @@ export const MovieInfoDrawer = ({
 	prefetchedWhatsonData,
 }: MovieInfoDrawerProps) => {
 	const [visible, setVisible] = useState(false);
-	const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
+	// Pre-select the source currently in use (the player opens this drawer for the playing movie).
+	const [selectedSourceIdx, setSelectedSourceIdx] = useState(() =>
+		Math.max(0, channelSources(movie).indexOf(movie.url))
+	);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
 	const [omdbLoading, setOmdbLoading] = useState(prefetchedOmdbData === undefined);
 	const [whatsonData, setWhatsonData] = useState<WhatsonData | null>(
@@ -67,17 +71,18 @@ export const MovieInfoDrawer = ({
 		setTimeout(onClose, 300);
 	};
 
-	const allSources = [...new Set([movie.url, ...movie.sources])];
+	const allSources = channelSources(movie);
 	const hasSources = allSources.length > 1;
 
-	const sourceOptions = allSources.map((_, idx) => ({
-		value: idx,
-		label: idx === 0 ? "Source 1 (default)" : `Source ${idx + 1}`,
-	}));
+	const sourceOptions = allSources.map((url, idx) => {
+		const detail = describeSource(url);
+		const label = idx === 0 ? "Source 1 (default)" : `Source ${idx + 1}`;
+		return { value: idx, label: detail ? `${label} · ${detail}` : label };
+	});
 
 	const handlePlay = () => {
-		const url = allSources[selectedSourceIdx];
-		onPlay(selectedSourceIdx === 0 ? movie : { ...movie, url });
+		const url = allSources[selectedSourceIdx] ?? movie.url;
+		onPlay(url === movie.url ? movie : withSource(movie, url));
 		handleClose();
 	};
 

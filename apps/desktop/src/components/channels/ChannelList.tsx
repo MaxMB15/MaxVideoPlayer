@@ -29,6 +29,9 @@ import type {
 
 type Tab = "live" | "movie" | "series" | "favorites" | "history";
 
+/** Grouping key for series titles — tolerant of case and spacing differences. */
+const seriesKey = (title: string): string => title.trim().toLowerCase().replace(/\s+/g, " ");
+
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 	{ id: "live", label: "Live", icon: Tv2 },
 	{ id: "movie", label: "Movies", icon: Clapperboard },
@@ -201,10 +204,42 @@ export const ChannelList = () => {
 		const seen = new Map<string, Channel>();
 		for (const ch of byType.series) {
 			const title = ch.seriesTitle ?? showTitle(ch.name);
-			if (!seen.has(title)) seen.set(title, { ...ch, name: title, sources: [] });
+			const key = seriesKey(title);
+			if (!seen.has(key)) seen.set(key, { ...ch, name: title, sources: [] });
 		}
 		return Array.from(seen.values());
 	}, [byType.series]);
+
+	// Xtream lists the same show as separate series entries (other categories,
+	// languages, servers). They're shown as one card, so keep every entry per
+	// title to load all their episodes — the duplicates become extra sources.
+	const xtreamSeriesByTitle = useMemo(() => {
+		const map = new Map<string, Channel[]>();
+		for (const ch of byType.series) {
+			if (!ch.url.startsWith("xtream://series/")) continue;
+			const key = seriesKey(ch.seriesTitle ?? showTitle(ch.name));
+			const list = map.get(key);
+			if (list) list.push(ch);
+			else map.set(key, [ch]);
+		}
+		return map;
+	}, [byType.series]);
+
+	/** Episodes of every Xtream series entry sharing this show's title. */
+	const fetchXtreamShowEpisodes = useCallback(
+		async (showName: string, container: Channel): Promise<Channel[]> => {
+			const containers = xtreamSeriesByTitle.get(seriesKey(showName)) ?? [container];
+			// The clicked entry first so its episodes stay the default source.
+			const ordered = [container, ...containers.filter((c) => c.id !== container.id)];
+			const results = await Promise.allSettled(
+				ordered.map((c) => getXtreamSeriesEpisodes(c.id))
+			);
+			const first = results[0];
+			if (first.status === "rejected") throw first.reason;
+			return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+		},
+		[xtreamSeriesByTitle]
+	);
 
 	const movieTitles = useMemo(() => {
 		const seen = new Map<string, Channel>();
@@ -316,7 +351,7 @@ export const ChannelList = () => {
 				if (channel.url.startsWith("xtream://series/")) {
 					setSeriesLoading(true);
 					try {
-						const eps = await getXtreamSeriesEpisodes(channel.id);
+						const eps = await fetchXtreamShowEpisodes(showName, channel);
 						setSeriesModalData({ showTitle: showName, episodes: eps });
 					} catch (e) {
 						console.error("[Xtream] failed to fetch series episodes:", e);
@@ -337,7 +372,7 @@ export const ChannelList = () => {
 					if (channel.url.startsWith("xtream://series/")) {
 						setSeriesLoading(true);
 						try {
-							const eps = await getXtreamSeriesEpisodes(channel.id);
+							const eps = await fetchXtreamShowEpisodes(showName, channel);
 							setSeriesModalData({ showTitle: showName, episodes: eps });
 						} catch (e) {
 							console.error("[Xtream] failed to fetch series episodes:", e);
@@ -363,7 +398,7 @@ export const ChannelList = () => {
 				});
 			}
 		},
-		[activeTab, byType.series, navigate]
+		[activeTab, byType.series, navigate, fetchXtreamShowEpisodes]
 	);
 
 	const handleEpgResultPlay = useCallback(
@@ -393,7 +428,7 @@ export const ChannelList = () => {
 				);
 				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
 					setSeriesLoading(true);
-					getXtreamSeriesEpisodes(seriesContainer.id)
+					fetchXtreamShowEpisodes(seriesName, seriesContainer)
 						.then((eps) => setSeriesModalData({ showTitle: seriesName, episodes: eps }))
 						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
 						.finally(() => setSeriesLoading(false));
@@ -416,7 +451,7 @@ export const ChannelList = () => {
 				});
 			}
 		},
-		[byType, navigate]
+		[byType, navigate, fetchXtreamShowEpisodes]
 	);
 
 	const favoritesByType = useMemo(() => {

@@ -33,6 +33,7 @@ import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
 import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "@/lib/playback";
+import { channelSources, withSource } from "@/lib/sources";
 import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
 import { formatTime } from "@/lib/format";
 
@@ -77,6 +78,10 @@ const progressFor = (ch: Channel, startPos?: number): PlaybackProgress => ({
 	lastSaved: Date.now(),
 	pendingStart: startPos ?? null,
 });
+
+/** Same season + episode (duplicate entries of one episode from different sources). */
+const isSameEpisode = (a: Channel, b: Channel): boolean =>
+	a.season != null && a.episode != null && a.season === b.season && a.episode === b.episode;
 
 interface PendingResume {
 	channel: Channel;
@@ -374,7 +379,8 @@ export const PlayerView = () => {
 			const navChannel = navState.channel;
 			const navUrl = navState.url;
 			if (navChannel) {
-				adoptBackgroundProgress().finally(() => startPlayback(navChannel, "nav"));
+				const ch = navChannel.url === navUrl ? navChannel : withSource(navChannel, navUrl);
+				adoptBackgroundProgress().finally(() => startPlayback(ch, "nav"));
 			} else {
 				mpv.load(navUrl).catch(() => {});
 				setActiveChannelName(navState.channelName ?? null);
@@ -543,16 +549,57 @@ export const PlayerView = () => {
 		return sortEpisodes(source);
 	}, [seriesEpisodes, localSeriesEpisodes]);
 
-	const currentEpIdx = useMemo(
-		() => (activeChannel ? sortedEpisodes.findIndex((ep) => ep.url === activeChannel.url) : -1),
-		[activeChannel, sortedEpisodes]
-	);
+	// Match by id first: the URL changes when the user switches source.
+	const currentEpIdx = useMemo(() => {
+		if (!activeChannel) return -1;
+		const byId = sortedEpisodes.findIndex((ep) => ep.id === activeChannel.id);
+		if (byId >= 0) return byId;
+		const urls = channelSources(activeChannel);
+		return sortedEpisodes.findIndex((ep) => urls.includes(ep.url));
+	}, [activeChannel, sortedEpisodes]);
 
-	const prevEpisode = currentEpIdx > 0 ? sortedEpisodes[currentEpIdx - 1] : null;
-	const nextEpisode =
-		currentEpIdx >= 0 && currentEpIdx < sortedEpisodes.length - 1
-			? sortedEpisodes[currentEpIdx + 1]
-			: null;
+	// Skip over duplicate entries of the current episode (same S/E from another source).
+	const { prevEpisode, nextEpisode } = useMemo(() => {
+		if (currentEpIdx < 0 || !activeChannel) return { prevEpisode: null, nextEpisode: null };
+		const current = sortedEpisodes[currentEpIdx];
+		const differs = (ep: Channel) => !isSameEpisode(ep, current) && ep.id !== current.id;
+		const prev = sortedEpisodes.slice(0, currentEpIdx).reverse().find(differs) ?? null;
+		const next = sortedEpisodes.slice(currentEpIdx + 1).find(differs) ?? null;
+		return { prevEpisode: prev, nextEpisode: next };
+	}, [activeChannel, sortedEpisodes, currentEpIdx]);
+
+	// Every stream URL for the current item: its own sources plus, for series,
+	// duplicate entries of the same episode elsewhere in the episode list.
+	const availableSources = useMemo(() => {
+		if (!activeChannel) return [];
+		const urls = [...channelSources(activeChannel)];
+		if (activeChannel.contentType === "series") {
+			for (const ep of sortedEpisodes) {
+				if (isSameEpisode(ep, activeChannel)) urls.push(...channelSources(ep));
+			}
+		}
+		return [...new Set(urls)];
+	}, [activeChannel, sortedEpisodes]);
+
+	/** Switch the current item to another source, keeping the playback position. */
+	const switchSource = useCallback(
+		(url: string) => {
+			const ch = activeChannelRef.current;
+			if (!ch || url === ch.url) return;
+			const resumeAt = ch.contentType === "live" ? 0 : mpv.getLastKnownPosition();
+			flushProgress();
+			const startPos = resumeAt > 1 ? resumeAt : undefined;
+			progressRef.current = {
+				...progressRef.current,
+				url,
+				lastSaved: Date.now(),
+				pendingStart: startPos ?? null,
+			};
+			mpv.load(url, startPos).catch(() => {});
+			setActiveChannel({ ...ch, url, sourceList: availableSources });
+		},
+		[mpv, flushProgress, availableSources]
+	);
 
 	const playEpisode = useCallback(
 		(ep: Channel) => {
@@ -911,6 +958,9 @@ export const PlayerView = () => {
 					onSubtitles={
 						canShowSubtitles ? () => setShowSubtitlePicker((v) => !v) : undefined
 					}
+					sources={availableSources}
+					currentSource={activeChannel?.url ?? null}
+					onSelectSource={switchSource}
 					onShortcuts={() => setShowShortcuts((v) => !v)}
 				/>
 			)}
@@ -982,7 +1032,16 @@ export const PlayerView = () => {
 					showTitle={showTitleForDrawer}
 					episodes={episodesForDrawer}
 					onClose={() => setShowInfoDrawer(false)}
-					onPlay={(ch) => playEpisode(ch)}
+					currentUrl={activeChannel.url}
+					onPlay={(ch) => {
+						// Same episode, different source → switch in place and keep the position.
+						if (isSameEpisode(ch, activeChannel)) {
+							setShowInfoDrawer(false);
+							switchSource(ch.url);
+						} else {
+							playEpisode(ch);
+						}
+					}}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
 					prefetchedWhatsonData={enrichedMeta?.whatsonData}
 				/>
@@ -994,7 +1053,12 @@ export const PlayerView = () => {
 					onClose={() => setShowInfoDrawer(false)}
 					onPlay={(ch) => {
 						setShowInfoDrawer(false);
-						startPlayback(ch, "player");
+						// Same movie, different source → switch in place and keep the position.
+						if (ch.id === activeChannel.id) {
+							switchSource(ch.url);
+						} else {
+							startPlayback(ch, "player");
+						}
 					}}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
 					prefetchedWhatsonData={enrichedMeta?.whatsonData}
