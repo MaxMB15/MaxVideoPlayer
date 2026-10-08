@@ -16,6 +16,7 @@ import { CategoryManager } from "./CategoryManager";
 import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { HistoryTab } from "./HistoryTab";
+import { NoSearchResults } from "./NoSearchResults";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
 import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
@@ -500,7 +501,8 @@ export const ChannelList = () => {
 	});
 
 	// Use debouncedSearch for isLiveSearch to avoid expensive view-switch on every keystroke
-	const isLiveSearch = activeTab === "live" && debouncedSearch.trim().length > 0;
+	const hasSearch = debouncedSearch.trim().length > 0;
+	const isLiveSearch = activeTab === "live" && hasSearch;
 	// Show channel list only when: no hierarchy (flat mode), or drilled into a group, or on favorites/history
 	const showChannelList =
 		!hierarchy.hasHierarchy ||
@@ -848,7 +850,13 @@ export const ChannelList = () => {
 				<HistoryTab onPlay={handleHistoryPlay} />
 			) : activeTab === "favorites" ? (
 				<div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
-					{filtered.length === 0 ? (
+					{filtered.length === 0 && hasSearch ? (
+						<NoSearchResults
+							query={debouncedSearch}
+							scope="favorites"
+							onClear={() => setSearch("")}
+						/>
+					) : filtered.length === 0 ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
 							<Heart className="h-10 w-10 text-muted-foreground/30" />
 							<p className="text-sm text-muted-foreground">
@@ -1015,9 +1023,12 @@ export const ChannelList = () => {
 					)}
 
 					{filtered.length === 0 && epgSearchResults.length === 0 && (
-						<p className="text-sm text-muted-foreground text-center py-12">
-							No results for "{debouncedSearch}"
-						</p>
+						<NoSearchResults
+							query={debouncedSearch}
+							scope="channels or programmes"
+							filtered={showFavoritesOnly}
+							onClear={() => setSearch("")}
+						/>
 					)}
 				</div>
 			) : !showChannelList ? null : (
@@ -1027,7 +1038,14 @@ export const ChannelList = () => {
 					ref={parentRef}
 					className="flex-1 overflow-auto scrollbar-hide px-3 pb-3"
 				>
-					{filtered.length === 0 && showFavoritesOnly ? (
+					{filtered.length === 0 && hasSearch ? (
+						<NoSearchResults
+							query={debouncedSearch}
+							scope={countLabel}
+							filtered={showFavoritesOnly || effectiveCategory != null}
+							onClear={() => setSearch("")}
+						/>
+					) : filtered.length === 0 && showFavoritesOnly ? (
 						<div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12">
 							<Heart className="h-10 w-10 text-muted-foreground/30" />
 							<p className="text-sm text-muted-foreground">
