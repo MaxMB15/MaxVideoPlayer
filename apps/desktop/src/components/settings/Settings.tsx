@@ -39,7 +39,7 @@ import {
 	setDownloadConcurrency,
 } from "@/lib/tauri";
 import { ask, open } from "@tauri-apps/plugin-dialog";
-import { DownloadHistory } from "./DownloadHistory";
+import { DownloadHistoryDialog } from "./DownloadHistory";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved" | "error";
@@ -123,6 +123,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const [folderInput, setFolderInput] = useState("");
 	const [folderStatus, setFolderStatus] = useState<SaveStatus>("idle");
 	const [concurrency, setConcurrency] = useState(3);
+	const [showDownloadHistory, setShowDownloadHistory] = useState(false);
 	const folderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
@@ -744,10 +745,17 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							/>
 						</div>
 
-						{/* History table */}
+						{/* History — opened in a wide popup (Settings is too narrow). */}
 						<div>
 							<p className="text-sm font-medium mb-2">Download history</p>
-							<DownloadHistory />
+							<Button
+								size="sm"
+								variant="secondary"
+								onClick={() => setShowDownloadHistory(true)}
+							>
+								<Download className="h-4 w-4 mr-1.5" />
+								View download history
+							</Button>
 						</div>
 					</CardContent>
 				</Card>
@@ -925,6 +933,11 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardContent>
 				</Card>
 			</div>
+
+			<DownloadHistoryDialog
+				open={showDownloadHistory}
+				onClose={() => setShowDownloadHistory(false)}
+			/>
 		</div>
 	);
 };

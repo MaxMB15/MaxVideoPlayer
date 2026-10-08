@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useDownloads } from "@/hooks/useDownloads";
 import type { DownloadRecord } from "@/lib/types";
 
@@ -55,6 +56,43 @@ export const DownloadHistory = () => {
 					))}
 				</tbody>
 			</table>
+		</div>
+	);
+};
+
+/** Full-screen overlay wrapping the history table — the Settings pane is too
+ *  narrow to show every column, so the table lives in a wide popup. */
+export const DownloadHistoryDialog = ({
+	open,
+	onClose,
+}: {
+	open: boolean;
+	onClose: () => void;
+}) => {
+	if (!open) return null;
+	return (
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+			onClick={onClose}
+		>
+			<div
+				className="bg-card border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="flex items-center justify-between px-5 py-3 border-b border-border">
+					<h3 className="text-sm font-semibold">Download history</h3>
+					<button
+						aria-label="Close"
+						className="p-1 rounded-md hover:bg-accent"
+						onClick={onClose}
+					>
+						<X className="h-4 w-4" />
+					</button>
+				</div>
+				<div className="overflow-auto p-5">
+					<DownloadHistory />
+				</div>
+			</div>
 		</div>
 	);
 };
