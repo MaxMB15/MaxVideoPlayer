@@ -10,7 +10,6 @@ export type PlayerAction =
 	| { type: "prevEpisode" }
 	| { type: "toggleSubtitles" }
 	| { type: "toggleInfo" }
-	| { type: "toggleChannelList" }
 	| { type: "toggleShortcuts" }
 	| { type: "escape" };
 
@@ -76,9 +75,6 @@ export const resolvePlayerHotkey = (e: KeyLike): PlayerAction | null => {
 		case "i":
 		case "I":
 			return { type: "toggleInfo" };
-		case "c":
-		case "C":
-			return { type: "toggleChannelList" };
 		case "?":
 			return { type: "toggleShortcuts" };
 		case "Escape":
@@ -102,7 +98,6 @@ export const PLAYER_SHORTCUTS: { keys: string[]; label: string }[] = [
 	{ keys: ["N", "P"], label: "Next / previous episode" },
 	{ keys: ["S"], label: "Subtitles" },
 	{ keys: ["I"], label: "Info" },
-	{ keys: ["C"], label: "Channel list" },
 	{ keys: ["?"], label: "Show / hide this list" },
 	{ keys: ["Esc"], label: "Exit fullscreen / close panel / leave player" },
 ];

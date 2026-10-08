@@ -1,5 +1,4 @@
 import { Controls } from "./Controls";
-import { ChannelOverlay } from "./ChannelOverlay";
 import { ConnectionStatusOverlay } from "./ConnectionStatusOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
 import { SubtitleOverlay } from "./SubtitleOverlay";
@@ -134,7 +133,6 @@ export const PlayerView = () => {
 	const navigate = useNavigate();
 	const [showControls, setShowControls] = useState(true);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const [showChannelOsd, setShowChannelOsd] = useState(false);
 	const [showInfoDrawer, setShowInfoDrawer] = useState(false);
 	const [activeChannelName, setActiveChannelName] = useState<string | null>(null);
 	const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
@@ -566,17 +564,6 @@ export const PlayerView = () => {
 		};
 	}, [autoLoadTrigger, activeImdbId]);
 
-	const handleSelectChannel = useCallback(
-		(channel: Channel) => {
-			startPlayback(channel, "player", () => {
-				setSeriesEpisodes([]);
-				setSelectedSubtitleId(null);
-				setSubtitleCues([]);
-			});
-		},
-		[startPlayback]
-	);
-
 	// --- Series episode navigation ---
 
 	// Derive episodes from passed list (Xtream) or local cache (M3U)
@@ -832,9 +819,6 @@ export const PlayerView = () => {
 				case "toggleInfo":
 					if (activeChannel) setShowInfoDrawer((v) => !v);
 					break;
-				case "toggleChannelList":
-					setShowChannelOsd((v) => !v);
-					break;
 				case "toggleShortcuts":
 					setShowShortcuts((v) => !v);
 					break;
@@ -850,8 +834,6 @@ export const PlayerView = () => {
 							});
 					} else if (showInfoDrawer) {
 						setShowInfoDrawer(false);
-					} else if (showChannelOsd) {
-						setShowChannelOsd(false);
 					} else if (showSubtitlePicker) {
 						setShowSubtitlePicker(false);
 						setSubtitleEditMode(false);
@@ -873,7 +855,6 @@ export const PlayerView = () => {
 			showShortcuts,
 			isFullscreen,
 			showInfoDrawer,
-			showChannelOsd,
 			showSubtitlePicker,
 			navigate,
 			setFullscreen,
@@ -1054,18 +1035,6 @@ export const PlayerView = () => {
 					onSelectSource={switchSource}
 					onShortcuts={() => setShowShortcuts((v) => !v)}
 					downloadSlot={downloadSlot}
-				/>
-			)}
-
-			{showChannelOsd && (
-				<ChannelOverlay
-					onClose={() => {
-						setShowChannelOsd(false);
-						// Focus may have been in the overlay's filter box; hand it back
-						// to the player so hotkeys keep working.
-						containerRef.current?.focus();
-					}}
-					onSelectChannel={handleSelectChannel}
 				/>
 			)}
 
