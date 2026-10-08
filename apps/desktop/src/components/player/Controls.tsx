@@ -45,6 +45,8 @@ interface ControlsProps {
 	currentSource?: string | null;
 	onSelectSource?: (url: string) => void;
 	onShortcuts?: () => void;
+	/** Optional download control rendered in the right cluster. */
+	downloadSlot?: React.ReactNode;
 }
 
 export const Controls = ({
@@ -69,6 +71,7 @@ export const Controls = ({
 	currentSource,
 	onSelectSource,
 	onShortcuts,
+	downloadSlot,
 }: ControlsProps) => {
 	const [localPos, setLocalPos] = useState(state.position);
 	const isSeeking = useRef(false);
@@ -348,6 +351,11 @@ export const Controls = ({
 					</Button>
 				)}
 
+				{downloadSlot && (
+					<div className="flex items-center justify-center h-9 w-9 text-white">
+						{downloadSlot}
+					</div>
+				)}
 				{onShortcuts && (
 					<Button
 						variant="ghost"

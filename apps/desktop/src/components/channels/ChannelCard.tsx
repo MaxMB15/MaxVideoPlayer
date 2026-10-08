@@ -2,12 +2,20 @@ import { memo, useState } from "react";
 import { Play, Tv2, Heart, Film } from "lucide-react";
 import type { Channel, EpgProgram } from "@/lib/types";
 import { EpgTimelineBar } from "./EpgTimelineBar";
+import { useDownloads, aggregateForSeries } from "@/hooks/useDownloads";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
+import { enqueueMovieDownload, stopDownload, removeDownload } from "@/lib/tauri";
 
 /** Module-level cache of URLs that failed to load — persists across remounts from virtual list scrolling. */
 const brokenImageUrls = new Set<string>();
 
 /** Width (px) of the left channel-info column in RowCard — must match spacer in ChannelList header. */
 export const ROW_CARD_LEFT_WIDTH = 180;
+
+/** Map a series aggregate state to the DownloadButton icon state. */
+const aggregateToIcon = (
+	agg: "none" | "downloading" | "partial" | "complete"
+): DownloadIconState => (agg === "none" ? "idle" : agg);
 
 interface ChannelCardProps {
 	channel: Channel;
@@ -157,6 +165,23 @@ const PosterCard = ({
 	);
 	const showFallback = !channel.logoUrl || imgError;
 
+	const { byChannel, bySeries } = useDownloads();
+	const isSeries = channel.contentType === "series";
+	const dl = byChannel.get(channel.id);
+	const seriesEps = isSeries ? (bySeries.get(channel.id) ?? []) : [];
+
+	const iconState: DownloadIconState = isSeries
+		? // totalEpisodes is unknown at the card level (resolved in the drawer),
+			// so pass 0 → aggregateForSeries never returns "complete" here.
+			aggregateToIcon(aggregateForSeries(seriesEps, 0))
+		: dl?.status === "completed"
+			? "complete"
+			: dl?.status === "downloading" || dl?.status === "queued"
+				? "downloading"
+				: dl?.status === "failed"
+					? "failed"
+					: "idle";
+
 	return (
 		<div className="group flex flex-col text-left relative">
 			<button
@@ -220,11 +245,38 @@ const PosterCard = ({
 							/>
 						</div>
 					)}
+					{!isSeries && dl && (dl.status === "downloading" || dl.status === "queued") && (
+						<div className="absolute left-0 right-0 bottom-0 px-1.5 pb-1 pt-3 bg-gradient-to-t from-black/90 to-transparent">
+							<div className="h-1 rounded-full bg-white/20 overflow-hidden">
+								<div
+									className="h-full bg-blue-400"
+									style={{
+										width: `${dl.totalBytes ? Math.min(100, Math.round((dl.downloadedBytes / dl.totalBytes) * 100)) : 0}%`,
+									}}
+								/>
+							</div>
+						</div>
+					)}
 				</div>
 				<p className="text-xs leading-snug line-clamp-2 text-foreground/85 group-hover:text-foreground transition-colors px-0.5">
 					{channel.name}
 				</p>
 			</button>
+			<DownloadButton
+				state={iconState}
+				onStart={() => {
+					if (!isSeries) enqueueMovieDownload(channel.id);
+					// Whole-series enqueue is driven from the series detail drawer
+					// (it needs the resolved episode list); no-op from the card.
+				}}
+				onStop={() => {
+					if (!isSeries && dl) stopDownload(dl.id);
+				}}
+				onRemove={() => {
+					if (!isSeries && dl) removeDownload(dl.id);
+				}}
+				className="absolute top-1 left-9 z-10 h-7 w-7 justify-center rounded-full bg-black/50 hover:bg-black/70"
+			/>
 		</div>
 	);
 };

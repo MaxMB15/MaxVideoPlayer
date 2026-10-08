@@ -1,6 +1,8 @@
+use crate::downloads::manager::{self, DownloadManager};
 use mvp_core::cache::store::{
     CacheStore, GroupHierarchyEntry, PinnedGroup, PlaybackPosition, WatchHistoryEntry,
 };
+use mvp_core::downloads::model::{DownloadKind, DownloadRecord};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
@@ -1351,4 +1353,208 @@ pub async fn package_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Enqueue a single movie download.
+#[command]
+pub async fn enqueue_movie_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<String, String> {
+    let (title, url) = {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        let ch = cache
+            .get_channel_by_id(&channel_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("channel not found")?;
+        (ch.name, ch.url)
+    };
+    let id = manager::enqueue_record(
+        &app, &channel_id, &title, &url, DownloadKind::Movie, None, None,
+    )?;
+    manager::pump(&app)?;
+    Ok(id)
+}
+
+/// Enqueue a single already-resolved episode (the frontend passes the episode
+/// Channel from get_xtream_series_episodes, plus the parent series channel id).
+#[command]
+pub async fn enqueue_episode_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    episode: Channel,
+    series_channel_id: String,
+    series_title: String,
+) -> Result<String, String> {
+    {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        cache.upsert_channel("__downloads__", &episode).map_err(|e| e.to_string())?;
+    }
+    let id = manager::enqueue_record(
+        &app,
+        &episode.id,
+        &episode.name,
+        &episode.url,
+        DownloadKind::Episode,
+        Some(series_channel_id),
+        Some(&series_title),
+    )?;
+    manager::pump(&app)?;
+    Ok(id)
+}
+
+/// Enqueue every episode in `episodes`. Used for whole-season, whole-series,
+/// and "download all missing". The frontend resolves/filters the list.
+#[command]
+pub async fn enqueue_episodes_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    episodes: Vec<Channel>,
+    series_channel_id: String,
+    series_title: String,
+) -> Result<Vec<String>, String> {
+    let mut ids = Vec::new();
+    for ep in episodes {
+        {
+            let cache = state.cache.lock().map_err(|e| e.to_string())?;
+            cache.upsert_channel("__downloads__", &ep).map_err(|e| e.to_string())?;
+        }
+        let id = manager::enqueue_record(
+            &app,
+            &ep.id,
+            &ep.name,
+            &ep.url,
+            DownloadKind::Episode,
+            Some(series_channel_id.clone()),
+            Some(&series_title),
+        )?;
+        ids.push(id);
+    }
+    manager::pump(&app)?;
+    Ok(ids)
+}
+
+#[command]
+pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadRecord>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.list_downloads().map_err(|e| e.to_string())
+}
+
+/// Persist a series' full episode list so the season/episode selector works
+/// offline. Called when the user downloads any episode of the series.
+#[command]
+pub async fn cache_series_episodes(
+    state: State<'_, AppState>,
+    series_channel_id: String,
+    episodes: Vec<Channel>,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .save_series_episodes(&series_channel_id, &episodes)
+        .map_err(|e| e.to_string())
+}
+
+/// Read the cached episode list for a series (empty if nothing cached).
+#[command]
+pub async fn get_cached_series_episodes(
+    state: State<'_, AppState>,
+    series_channel_id: String,
+) -> Result<Vec<Channel>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .get_series_episodes(&series_channel_id)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn stop_download(app: AppHandle, id: String) -> Result<(), String> {
+    manager::stop_one(&app, &id)
+}
+
+/// Stop a set of active (queued + downloading) items (series or season scope).
+#[command]
+pub async fn stop_downloads(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    for id in ids {
+        manager::stop_one(&app, &id)?;
+    }
+    manager::pump(&app)?;
+    Ok(())
+}
+
+/// Remove a completed download: delete the file and the DB row.
+#[command]
+pub async fn remove_download(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let path = {
+        let cache = state.cache.lock().map_err(|e| e.to_string())?;
+        cache.get_download(&id).map_err(|e| e.to_string())?.map(|r| r.dest_path)
+    };
+    if let Some(p) = path {
+        let _ = std::fs::remove_file(&p);
+    }
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache.delete_download(&id).map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn remove_downloads(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    for id in ids {
+        if let Ok(Some(rec)) = cache.get_download(&id) {
+            let _ = std::fs::remove_file(&rec.dest_path);
+        }
+        cache.delete_download(&id).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[command]
+pub async fn set_download_concurrency(
+    manager: State<'_, DownloadManager>,
+    app: AppHandle,
+    n: usize,
+) -> Result<(), String> {
+    manager.set_concurrency(n);
+    manager::pump(&app)?;
+    Ok(())
+}
+
+#[command]
+pub async fn get_download_concurrency(manager: State<'_, DownloadManager>) -> Result<usize, String> {
+    Ok(manager.concurrency())
+}
+
+#[command]
+pub async fn set_download_folder(
+    manager: State<'_, DownloadManager>,
+    path: String,
+) -> Result<(), String> {
+    manager.set_root(std::path::PathBuf::from(path));
+    Ok(())
+}
+
+#[command]
+pub async fn get_download_folder(manager: State<'_, DownloadManager>) -> Result<String, String> {
+    Ok(manager.root().to_string_lossy().to_string())
+}
+
+/// Given a channel id, return the local file path if a completed download
+/// exists (and the file is present on disk), else None. The frontend calls this
+/// before playback and passes the local path to mpvLoad when present.
+#[command]
+pub async fn resolve_local_download(
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<Option<String>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let rec = cache
+        .completed_download_for_channel(&channel_id)
+        .map_err(|e| e.to_string())?;
+    Ok(rec.and_then(|r| {
+        if std::path::Path::new(&r.dest_path).exists() {
+            Some(r.dest_path)
+        } else {
+            None
+        }
+    }))
 }

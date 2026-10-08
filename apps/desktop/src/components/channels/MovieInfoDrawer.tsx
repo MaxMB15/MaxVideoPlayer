@@ -2,9 +2,17 @@ import { useState, useEffect } from "react";
 import { X, Play, Clapperboard, Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import type { Channel, OmdbData, WhatsonData } from "@/lib/types";
-import { fetchOmdbData, fetchWhatsonData } from "@/lib/tauri";
+import {
+	fetchOmdbData,
+	fetchWhatsonData,
+	enqueueMovieDownload,
+	stopDownload,
+	removeDownload,
+} from "@/lib/tauri";
 import { channelSources, withSource, describeSource } from "@/lib/sources";
 import { RatingsRow } from "@/components/ui/ratings-row";
+import { useDownloads } from "@/hooks/useDownloads";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
 
 interface MovieInfoDrawerProps {
 	movie: Channel;
@@ -65,6 +73,17 @@ export const MovieInfoDrawer = ({
 			.catch(() => {})
 			.finally(() => setOmdbLoading(false));
 	}, [movie, prefetchedOmdbData]);
+
+	const { byChannel } = useDownloads();
+	const dl = byChannel.get(movie.id);
+	const downloadState: DownloadIconState =
+		dl?.status === "completed"
+			? "complete"
+			: dl?.status === "downloading" || dl?.status === "queued"
+				? "downloading"
+				: dl?.status === "failed"
+					? "failed"
+					: "idle";
 
 	const handleClose = () => {
 		setVisible(false);
@@ -228,6 +247,16 @@ export const MovieInfoDrawer = ({
 							<Play className="h-4 w-4 ml-0.5" />
 							Play
 						</button>
+						{movie.contentType !== "series" && (
+							<DownloadButton
+								showLabel
+								state={downloadState}
+								onStart={() => void enqueueMovieDownload(movie.id)}
+								onStop={() => dl && void stopDownload(dl.id)}
+								onRemove={() => dl && void removeDownload(dl.id)}
+								className="w-full justify-center rounded-xl border border-border py-2.5 text-sm font-semibold hover:bg-accent"
+							/>
+						)}
 					</div>
 				</div>
 

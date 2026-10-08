@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History } from "lucide-react";
+import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
@@ -17,9 +17,16 @@ import { SeriesDetailModal } from "./SeriesDetailModal";
 import { MovieInfoDrawer } from "./MovieInfoDrawer";
 import { HistoryTab } from "./HistoryTab";
 import { NoSearchResults } from "./NoSearchResults";
+import { DownloadsTab } from "./DownloadsTab";
 import { getGridMarks, toPct, formatHHMM } from "./EpgTimelineBar";
 import { useChannels } from "@/hooks/useChannels";
-import { getXtreamSeriesEpisodes, getEpgForLiveChannels, searchEpgProgrammes } from "@/lib/tauri";
+import { useDownloads } from "@/hooks/useDownloads";
+import {
+	getXtreamSeriesEpisodes,
+	getCachedSeriesEpisodes,
+	getEpgForLiveChannels,
+	searchEpgProgrammes,
+} from "@/lib/tauri";
 import { consumeBrowseState, saveBrowseSearch, saveBrowseTab } from "@/lib/browse-state";
 import type {
 	Channel,
@@ -29,7 +36,7 @@ import type {
 	WatchHistoryEntry,
 } from "@/lib/types";
 
-type Tab = "live" | "movie" | "series" | "favorites" | "history";
+type Tab = "live" | "movie" | "series" | "favorites" | "downloads" | "history";
 
 const isTab = (v: unknown): v is Tab =>
 	v === "live" || v === "movie" || v === "series" || v === "favorites" || v === "history";
@@ -42,6 +49,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 	{ id: "movie", label: "Movies", icon: Clapperboard },
 	{ id: "series", label: "Series", icon: MonitorPlay },
 	{ id: "favorites", label: "Favorites", icon: Heart },
+	{ id: "downloads", label: "Downloads", icon: Download },
 	{ id: "history", label: "History", icon: History },
 ];
 
@@ -95,6 +103,7 @@ const EpgResultLogo = ({ url }: { url?: string }) => {
 
 export const ChannelList = () => {
 	const { channels, loading, toggleFavorite, providers } = useChannels();
+	const { byChannel, bySeries } = useDownloads();
 	const navigate = useNavigate();
 
 	// Tab and search are restored when coming back from the player (see lib/browse-state).
@@ -127,9 +136,11 @@ export const ChannelList = () => {
 		activeTab === "movie" ? "movie" : activeTab === "series" ? "series" : "live";
 	const hierarchy = useGroupHierarchy(activeProviderId, contentType);
 	const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+	const [showDownloadsOnly, setShowDownloadsOnly] = useState(false);
 	const [seriesModalData, setSeriesModalData] = useState<{
 		showTitle: string;
 		episodes: Channel[];
+		seriesChannelId: string;
 	} | null>(null);
 	const [seriesLoading, setSeriesLoading] = useState(false);
 	const [selectedMovie, setSelectedMovie] = useState<Channel | null>(null);
@@ -276,12 +287,17 @@ export const ChannelList = () => {
 		if (activeTab === "favorites") return channels.filter((ch) => ch.isFavorite);
 		if (activeTab === "series") return seriesShows;
 		if (activeTab === "movie") return movieTitles;
-		if (activeTab === "history") return [];
+		if (activeTab === "history" || activeTab === "downloads") return [];
 		return byType[activeTab];
 	}, [activeTab, seriesShows, movieTitles, byType, channels]);
 
 	const categories = useMemo<Category[]>(() => {
-		if (activeTab === "series" || activeTab === "favorites" || activeTab === "history")
+		if (
+			activeTab === "series" ||
+			activeTab === "favorites" ||
+			activeTab === "history" ||
+			activeTab === "downloads"
+		)
 			return [];
 		const counts: Record<string, number> = {};
 		for (const ch of byType[activeTab as "live" | "movie"]) {
@@ -297,6 +313,7 @@ export const ChannelList = () => {
 		setActiveTab(tab);
 		setSelectedCategory(null);
 		setShowFavoritesOnly(false);
+		setShowDownloadsOnly(false);
 		setEpgSearchResults([]);
 		setNavState({ level: "home" });
 	};
@@ -316,8 +333,20 @@ export const ChannelList = () => {
 		if (showFavoritesOnly && activeTab !== "favorites") {
 			result = result.filter((ch) => ch.isFavorite === true);
 		}
+		if (showDownloadsOnly && activeTab !== "downloads") {
+			result = result.filter((ch) => byChannel.has(ch.id) || bySeries.has(ch.id));
+		}
 		return result;
-	}, [activeChannels, effectiveCategory, debouncedSearch, activeTab, showFavoritesOnly]);
+	}, [
+		activeChannels,
+		effectiveCategory,
+		debouncedSearch,
+		activeTab,
+		showFavoritesOnly,
+		showDownloadsOnly,
+		byChannel,
+		bySeries,
+	]);
 
 	// Fetch EPG for all live channels: 2h past + 4h future = 6h window (generous for wider displays)
 	useEffect(() => {
@@ -366,7 +395,11 @@ export const ChannelList = () => {
 					setSeriesLoading(true);
 					try {
 						const eps = await fetchXtreamShowEpisodes(showName, channel);
-						setSeriesModalData({ showTitle: showName, episodes: eps });
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
 					} catch (e) {
 						console.error("[Xtream] failed to fetch series episodes:", e);
 					} finally {
@@ -376,10 +409,54 @@ export const ChannelList = () => {
 					const eps = byType.series.filter(
 						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
 					);
-					setSeriesModalData({ showTitle: showName, episodes: eps });
+					setSeriesModalData({
+						showTitle: showName,
+						episodes: eps,
+						seriesChannelId: channel.id,
+					});
 				}
 			} else if (currentTab === "movie" && channel.sources.length > 0) {
 				setSelectedMovie(channel);
+			} else if (currentTab === "downloads") {
+				if (channel.contentType === "series") {
+					const showName = channel.seriesTitle ?? showTitle(channel.name);
+					setSeriesLoading(true);
+					try {
+						let eps: Channel[] = [];
+						if (channel.url.startsWith("xtream://series/")) {
+							// Prefer a live fetch; fall back to the offline cache.
+							try {
+								eps = await fetchXtreamShowEpisodes(showName, channel);
+							} catch (e) {
+								console.warn(
+									"[Downloads] live episode fetch failed, using cache:",
+									e
+								);
+							}
+							if (eps.length === 0) eps = await getCachedSeriesEpisodes(channel.id);
+						} else {
+							eps = byType.series.filter(
+								(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
+							);
+							if (eps.length === 0) eps = await getCachedSeriesEpisodes(channel.id);
+						}
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
+					} catch (e) {
+						console.error("[Downloads] failed to load series episodes:", e);
+					} finally {
+						setSeriesLoading(false);
+					}
+				} else if (channel.contentType === "movie" && channel.sources.length > 0) {
+					setSelectedMovie(channel);
+				} else {
+					navigate("/player", {
+						state: { url: channel.url, channelName: channel.name, channel },
+					});
+				}
 			} else if (currentTab === "favorites") {
 				if (channel.contentType === "series") {
 					const showName = channel.seriesTitle ?? showTitle(channel.name);
@@ -387,7 +464,11 @@ export const ChannelList = () => {
 						setSeriesLoading(true);
 						try {
 							const eps = await fetchXtreamShowEpisodes(showName, channel);
-							setSeriesModalData({ showTitle: showName, episodes: eps });
+							setSeriesModalData({
+								showTitle: showName,
+								episodes: eps,
+								seriesChannelId: channel.id,
+							});
 						} catch (e) {
 							console.error("[Xtream] failed to fetch series episodes:", e);
 						} finally {
@@ -397,7 +478,11 @@ export const ChannelList = () => {
 						const eps = byType.series.filter(
 							(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === showName
 						);
-						setSeriesModalData({ showTitle: showName, episodes: eps });
+						setSeriesModalData({
+							showTitle: showName,
+							episodes: eps,
+							seriesChannelId: channel.id,
+						});
 					}
 				} else if (channel.contentType === "movie" && channel.sources.length > 0) {
 					setSelectedMovie(channel);
@@ -443,7 +528,13 @@ export const ChannelList = () => {
 				if (seriesContainer && seriesContainer.url.startsWith("xtream://series/")) {
 					setSeriesLoading(true);
 					fetchXtreamShowEpisodes(seriesName, seriesContainer)
-						.then((eps) => setSeriesModalData({ showTitle: seriesName, episodes: eps }))
+						.then((eps) =>
+							setSeriesModalData({
+								showTitle: seriesName,
+								episodes: eps,
+								seriesChannelId: seriesContainer.id,
+							})
+						)
 						.catch((e) => console.error("[Xtream] failed to fetch series episodes:", e))
 						.finally(() => setSeriesLoading(false));
 				} else {
@@ -451,7 +542,11 @@ export const ChannelList = () => {
 						(ep) => (ep.seriesTitle ?? showTitle(ep.name)) === seriesName
 					);
 					if (eps.length > 0) {
-						setSeriesModalData({ showTitle: seriesName, episodes: eps });
+						setSeriesModalData({
+							showTitle: seriesName,
+							episodes: eps,
+							seriesChannelId: seriesContainer?.id ?? entry.channelId,
+						});
 					}
 				}
 			} else if (entry.contentType === "movie") {
@@ -476,6 +571,12 @@ export const ChannelList = () => {
 			series: favs.filter((ch) => ch.contentType === "series"),
 		};
 	}, [filtered]);
+
+	// Count of cards shown on the Downloads tab: channels/series with any record.
+	// Number of downloaded items (movies + episodes). `byChannel` is keyed per
+	// download channel, so a series' episodes count individually; the series
+	// container itself has no download record and must not be added.
+	const downloadCount = useMemo(() => byChannel.size, [byChannel]);
 
 	const isGrid = activeTab !== "live";
 	// Dynamic grid columns: fit as many ~180 px-wide cards as possible, stretch via 1fr.
@@ -546,7 +647,9 @@ export const ChannelList = () => {
 				? "movies"
 				: activeTab === "series"
 					? "shows"
-					: "favorites";
+					: activeTab === "downloads"
+						? "downloads"
+						: "favorites";
 
 	// Pixel offset of the timeline column left edge within the virtualizer div.
 	// The virtualizer div already lives inside the px-3 padding of parentRef, so no extra 12px.
@@ -562,11 +665,13 @@ export const ChannelList = () => {
 							? null
 							: id === "favorites"
 								? totalFavorites
-								: id === "series"
-									? seriesShows.length
-									: id === "movie"
-										? movieTitles.length
-										: byType[id as "live"].length;
+								: id === "downloads"
+									? downloadCount
+									: id === "series"
+										? seriesShows.length
+										: id === "movie"
+											? movieTitles.length
+											: byType[id as "live"].length;
 					return (
 						<button
 							key={id}
@@ -594,169 +699,201 @@ export const ChannelList = () => {
 					);
 				})}
 				<div className="flex-1" />
-				{activeTab !== "history" && <SearchBar value={search} onChange={setSearch} />}
-				{activeTab !== "favorites" && activeTab !== "history" && (
-					<button
-						onClick={() => setShowFavoritesOnly((v) => !v)}
-						className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-							showFavoritesOnly
-								? "text-red-500 bg-red-500/10"
-								: "text-muted-foreground hover:text-foreground hover:bg-accent"
-						}`}
-						aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
-						aria-pressed={showFavoritesOnly}
-					>
-						<Heart className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`} />
-					</button>
+				{activeTab !== "history" && activeTab !== "downloads" && (
+					<SearchBar value={search} onChange={setSearch} />
 				)}
+				{activeTab !== "favorites" &&
+					activeTab !== "history" &&
+					activeTab !== "downloads" && (
+						<button
+							onClick={() => setShowFavoritesOnly((v) => !v)}
+							className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+								showFavoritesOnly
+									? "text-red-500 bg-red-500/10"
+									: "text-muted-foreground hover:text-foreground hover:bg-accent"
+							}`}
+							aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
+							aria-pressed={showFavoritesOnly}
+						>
+							<Heart
+								className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`}
+							/>
+						</button>
+					)}
+				{activeTab !== "favorites" &&
+					activeTab !== "history" &&
+					activeTab !== "downloads" && (
+						<button
+							onClick={() => setShowDownloadsOnly((v) => !v)}
+							className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+								showDownloadsOnly
+									? "text-blue-400 bg-blue-400/10"
+									: "text-muted-foreground hover:text-foreground hover:bg-accent"
+							}`}
+							aria-label={showDownloadsOnly ? "Show all" : "Show downloaded only"}
+							aria-pressed={showDownloadsOnly}
+						>
+							<Download className="h-4 w-4" />
+						</button>
+					)}
 			</div>
 
 			{/* Hierarchy navigation — replaces flat CategoryFilter */}
-			{activeTab !== "favorites" && activeTab !== "history" && hierarchy.loaded && (
-				<div className={showChannelList ? "shrink-0" : "flex-1 overflow-y-auto"}>
-					{navState.level === "home" && (
-						<>
-							<RecentlyPlayedRow
-								contentType={contentType as "live" | "movie" | "series"}
-								onPlay={handleHistoryPlay}
-								channels={channels}
-							/>
-							<PinnedGroupsRow
-								pinnedGroups={hierarchy.pinnedGroups}
-								categories={categories}
-								selectedGroup={null}
-								onSelectGroup={(name) => setNavState({ level: "group", name })}
-								onUnpin={hierarchy.unpinGroup}
-							/>
-							{hierarchy.hasHierarchy ? (
-								<CategoryBrowser
-									superCategories={hierarchy.superCategories.map((name) => {
-										const groups = hierarchy.getGroupsForCategory(name);
-										return {
-											name,
-											groupCount: groups.length,
-											channelCount: groups.reduce(
-												(sum, g) =>
-													sum +
-													(categories.find((c) => c.name === g)
-														?.channelCount ?? 0),
-												0
-											),
-										};
-									})}
-									topLevelGroups={hierarchy.topLevelGroups.map((name) => ({
-										name,
-										channelCount:
-											categories.find((c) => c.name === name)?.channelCount ??
-											0,
-									}))}
-									onSelectCategory={(name) =>
-										setNavState({ level: "category", name })
-									}
-									onSelectGroup={(name) => setNavState({ level: "group", name })}
-									onManage={() => setShowCategoryManager(true)}
+			{activeTab !== "favorites" &&
+				activeTab !== "history" &&
+				activeTab !== "downloads" &&
+				hierarchy.loaded && (
+					<div className={showChannelList ? "shrink-0" : "flex-1 overflow-y-auto"}>
+						{navState.level === "home" && (
+							<>
+								<RecentlyPlayedRow
+									contentType={contentType as "live" | "movie" | "series"}
+									onPlay={handleHistoryPlay}
+									channels={channels}
 								/>
-							) : categories.length > 1 ? (
-								<div className="px-3 pt-2.5">
-									<CategoryFilter
-										categories={categories}
-										selected={selectedCategory}
-										onSelect={setSelectedCategory}
+								<PinnedGroupsRow
+									pinnedGroups={hierarchy.pinnedGroups}
+									categories={categories}
+									selectedGroup={null}
+									onSelectGroup={(name) => setNavState({ level: "group", name })}
+									onUnpin={hierarchy.unpinGroup}
+								/>
+								{hierarchy.hasHierarchy ? (
+									<CategoryBrowser
+										superCategories={hierarchy.superCategories.map((name) => {
+											const groups = hierarchy.getGroupsForCategory(name);
+											return {
+												name,
+												groupCount: groups.length,
+												channelCount: groups.reduce(
+													(sum, g) =>
+														sum +
+														(categories.find((c) => c.name === g)
+															?.channelCount ?? 0),
+													0
+												),
+											};
+										})}
+										topLevelGroups={hierarchy.topLevelGroups.map((name) => ({
+											name,
+											channelCount:
+												categories.find((c) => c.name === name)
+													?.channelCount ?? 0,
+										}))}
+										onSelectCategory={(name) =>
+											setNavState({ level: "category", name })
+										}
+										onSelectGroup={(name) =>
+											setNavState({ level: "group", name })
+										}
+										onManage={() => setShowCategoryManager(true)}
 									/>
-								</div>
-							) : null}
-							{!hierarchy.hasHierarchy &&
-								hierarchy.entries.length === 0 &&
-								categories.length > 1 && (
-									<div className="mx-4 mt-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
-										<p className="text-muted-foreground">
-											Channels not categorized yet.
-										</p>
-										<button
-											onClick={() => setShowCategoryManager(true)}
-											className="text-primary hover:underline text-xs mt-1"
-										>
-											Use AI to organize channels?
-										</button>
+								) : categories.length > 1 ? (
+									<div className="px-3 pt-2.5">
+										<CategoryFilter
+											categories={categories}
+											selected={selectedCategory}
+											onSelect={setSelectedCategory}
+										/>
 									</div>
-								)}
-						</>
-					)}
-					{navState.level === "category" && (
-						<>
+								) : null}
+								{!hierarchy.hasHierarchy &&
+									hierarchy.entries.length === 0 &&
+									categories.length > 1 && (
+										<div className="mx-4 mt-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+											<p className="text-muted-foreground">
+												Channels not categorized yet.
+											</p>
+											<button
+												onClick={() => setShowCategoryManager(true)}
+												className="text-primary hover:underline text-xs mt-1"
+											>
+												Use AI to organize channels?
+											</button>
+										</div>
+									)}
+							</>
+						)}
+						{navState.level === "category" && (
+							<>
+								<Breadcrumb
+									path={[
+										{
+											label: "All Categories",
+											onClick: () => setNavState({ level: "home" }),
+										},
+										{ label: navState.name },
+									]}
+								/>
+								<GroupList
+									groups={hierarchy
+										.getGroupsForCategory(navState.name)
+										.filter(
+											(g) =>
+												!debouncedSearch ||
+												g
+													.toLowerCase()
+													.includes(debouncedSearch.toLowerCase())
+										)}
+									categories={categories}
+									onSelectGroup={(name) =>
+										setNavState({
+											level: "group",
+											name,
+											parentCategory: navState.name,
+										})
+									}
+									isPinned={hierarchy.isPinned}
+									onTogglePin={(name) =>
+										hierarchy.isPinned(name)
+											? hierarchy.unpinGroup(name)
+											: hierarchy.pinGroup(name)
+									}
+								/>
+							</>
+						)}
+						{navState.level === "group" && (
 							<Breadcrumb
 								path={[
-									{
-										label: "All Categories",
-										onClick: () => setNavState({ level: "home" }),
-									},
+									...(navState.parentCategory
+										? [
+												{
+													label: "All Categories",
+													onClick: () => setNavState({ level: "home" }),
+												},
+												{
+													label: navState.parentCategory,
+													onClick: () =>
+														setNavState({
+															level: "category",
+															name: navState.parentCategory!,
+														}),
+												},
+											]
+										: [
+												{
+													label: "All Categories",
+													onClick: () => setNavState({ level: "home" }),
+												},
+											]),
 									{ label: navState.name },
 								]}
 							/>
-							<GroupList
-								groups={hierarchy
-									.getGroupsForCategory(navState.name)
-									.filter(
-										(g) =>
-											!debouncedSearch ||
-											g.toLowerCase().includes(debouncedSearch.toLowerCase())
-									)}
-								categories={categories}
-								onSelectGroup={(name) =>
-									setNavState({
-										level: "group",
-										name,
-										parentCategory: navState.name,
-									})
-								}
-								isPinned={hierarchy.isPinned}
-								onTogglePin={(name) =>
-									hierarchy.isPinned(name)
-										? hierarchy.unpinGroup(name)
-										: hierarchy.pinGroup(name)
-								}
-							/>
-						</>
-					)}
-					{navState.level === "group" && (
-						<Breadcrumb
-							path={[
-								...(navState.parentCategory
-									? [
-											{
-												label: "All Categories",
-												onClick: () => setNavState({ level: "home" }),
-											},
-											{
-												label: navState.parentCategory,
-												onClick: () =>
-													setNavState({
-														level: "category",
-														name: navState.parentCategory!,
-													}),
-											},
-										]
-									: [
-											{
-												label: "All Categories",
-												onClick: () => setNavState({ level: "home" }),
-											},
-										]),
-								{ label: navState.name },
-							]}
-						/>
-					)}
-				</div>
-			)}
+						)}
+					</div>
+				)}
 
 			{/* Result count */}
-			{activeTab !== "history" && !isLiveSearch && showChannelList && (
-				<div className="shrink-0 px-3 pt-2 pb-1">
-					<span className="text-xs text-muted-foreground">
-						{filtered.length.toLocaleString()} {countLabel}
-					</span>
-				</div>
-			)}
+			{activeTab !== "history" &&
+				activeTab !== "downloads" &&
+				!isLiveSearch &&
+				showChannelList && (
+					<div className="shrink-0 px-3 pt-2 pb-1">
+						<span className="text-xs text-muted-foreground">
+							{filtered.length.toLocaleString()} {countLabel}
+						</span>
+					</div>
+				)}
 
 			{/* Sticky time-axis header — only when channel list is visible */}
 			{activeTab === "live" && showChannelList && (
@@ -813,6 +950,7 @@ export const ChannelList = () => {
 				<SeriesDetailModal
 					showTitle={seriesModalData.showTitle}
 					episodes={seriesModalData.episodes}
+					seriesChannelId={seriesModalData.seriesChannelId}
 					onClose={() => setSeriesModalData(null)}
 					onPlay={(ch) => {
 						const sorted = [...seriesModalData.episodes].sort((a, b) => {
@@ -848,6 +986,10 @@ export const ChannelList = () => {
 			{/* History tab */}
 			{activeTab === "history" ? (
 				<HistoryTab onPlay={handleHistoryPlay} />
+			) : activeTab === "downloads" ? (
+				<div className="flex-1 overflow-auto scrollbar-hide">
+					<DownloadsTab onPlay={handlePlay} onToggleFavorite={handleToggleFavorite} />
+				</div>
 			) : activeTab === "favorites" ? (
 				<div className="flex-1 overflow-auto scrollbar-hide px-3 pb-3">
 					{filtered.length === 0 && hasSearch ? (

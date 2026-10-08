@@ -27,11 +27,18 @@ import {
 	getPlaybackPosition,
 	savePlaybackPosition,
 	deletePlaybackPosition,
+	resolveLocalDownload,
+	enqueueMovieDownload,
+	enqueueEpisodeDownload,
+	stopDownload,
+	removeDownload,
 } from "@/lib/tauri";
 import { parseSrt } from "@/lib/subtitle-parser";
 import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
+import { useDownloads } from "@/hooks/useDownloads";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
 import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "@/lib/playback";
 import { channelSources, withSource } from "@/lib/sources";
 import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
@@ -41,6 +48,7 @@ import { markWatchEnded, markWatchStarted } from "@/lib/browse-state";
 /** How often (ms) watch progress is persisted while playing. */
 const PROGRESS_SAVE_INTERVAL = 5000;
 const MAX_VOLUME = 150;
+const LOADED_URL_KEY = "mvp_lastLoadedUrl";
 
 interface PlaybackProgress {
 	/** Resume key (see playbackKey); null for live or nothing playing. */
@@ -70,9 +78,9 @@ const EMPTY_PROGRESS: PlaybackProgress = {
 	pendingStart: null,
 };
 
-const progressFor = (ch: Channel, startPos?: number): PlaybackProgress => ({
+const progressFor = (ch: Channel, startPos?: number, url = ch.url): PlaybackProgress => ({
 	key: playbackKey(ch),
-	url: ch.url,
+	url,
 	position: startPos ?? 0,
 	duration: 0,
 	dirty: false,
@@ -120,6 +128,8 @@ const sortEpisodes = (eps: Channel[]): Channel[] =>
 export const PlayerView = () => {
 	const mpv = useMpv();
 	const { channels } = useChannels();
+	const { byChannel } = useDownloads();
+
 	const location = useLocation();
 	const navigate = useNavigate();
 	const [showControls, setShowControls] = useState(true);
@@ -156,6 +166,7 @@ export const PlayerView = () => {
 	const progressRef = useRef<PlaybackProgress>(EMPTY_PROGRESS);
 	// Guards against out-of-order resolution when items are opened in quick succession.
 	const startRequestRef = useRef(0);
+	const loadRequestRef = useRef(0);
 
 	// Remembers which language + rank-within-language the user last picked so the
 	// same subtitle can be auto-selected when navigating to the next episode.
@@ -295,9 +306,22 @@ export const PlayerView = () => {
 			playStartTimeRef.current = Date.now();
 			recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
 
-			progressRef.current = progressFor(ch, startPos);
+			const progress = progressFor(ch, startPos);
+			progressRef.current = progress;
 			markWatchStarted();
-			mpv.load(ch.url, startPos).catch(() => {});
+			// Prefer a completed download so playback works offline; fall back to
+			// the stream URL if there is none or the lookup fails.
+			const loadId = ++loadRequestRef.current;
+			resolveLocalDownload(ch.id)
+				.catch(() => null)
+				.then((local) => {
+					if (loadId !== loadRequestRef.current) return;
+					const target = local ?? ch.url;
+					progress.url = target;
+					sessionStorage.setItem(LOADED_URL_KEY, target);
+					return mpv.load(target, startPos);
+				})
+				.catch(() => {});
 			setActiveChannelName(ch.name);
 			setActiveChannel(ch);
 			apply?.();
@@ -365,10 +389,11 @@ export const PlayerView = () => {
 		if (!saved || progressRef.current.key) return;
 		try {
 			const prev: Channel = JSON.parse(saved);
+			const loaded = sessionStorage.getItem(LOADED_URL_KEY) ?? prev.url;
 			const s = await mpvGetState();
-			if (s.currentUrl === prev.url && s.duration > 0 && s.position > 1) {
+			if (s.currentUrl === loaded && s.duration > 0 && s.position > 1) {
 				progressRef.current = {
-					...progressFor(prev),
+					...progressFor(prev, undefined, loaded),
 					position: s.position,
 					duration: s.duration,
 					dirty: true,
@@ -389,6 +414,8 @@ export const PlayerView = () => {
 				adoptBackgroundProgress().finally(() => startPlayback(ch, "nav"));
 			} else {
 				markWatchStarted();
+				loadRequestRef.current++;
+				sessionStorage.setItem(LOADED_URL_KEY, navUrl);
 				mpv.load(navUrl).catch(() => {});
 				setActiveChannelName(navState.channelName ?? null);
 				setActiveChannel(null);
@@ -401,7 +428,11 @@ export const PlayerView = () => {
 					const ch: Channel = JSON.parse(saved);
 					setActiveChannel(ch);
 					setActiveChannelName(ch.name);
-					progressRef.current = progressFor(ch);
+					progressRef.current = progressFor(
+						ch,
+						undefined,
+						sessionStorage.getItem(LOADED_URL_KEY) ?? ch.url
+					);
 					// Only counts as watching if it's still playing in the background.
 					mpvGetState()
 						.then((st) => {
@@ -557,6 +588,18 @@ export const PlayerView = () => {
 		);
 	}, [activeChannel, channels]);
 
+	// Series container id used to group download records — matches the series
+	// card id in the channel list so download state stays consistent.
+	const seriesContainerId = useMemo(() => {
+		if (!activeChannel) return "";
+		if (activeChannel.contentType !== "series") return activeChannel.id;
+		const title = activeChannel.seriesTitle ?? showTitle(activeChannel.name);
+		const container = channels.find(
+			(ch) => ch.contentType === "series" && (ch.seriesTitle ?? showTitle(ch.name)) === title
+		);
+		return container?.id ?? activeChannel.id;
+	}, [activeChannel, channels]);
+
 	const sortedEpisodes = useMemo(() => {
 		const source = seriesEpisodes.length > 0 ? seriesEpisodes : localSeriesEpisodes;
 		return sortEpisodes(source);
@@ -608,6 +651,8 @@ export const PlayerView = () => {
 				lastSaved: Date.now(),
 				pendingStart: startPos ?? null,
 			};
+			loadRequestRef.current++;
+			sessionStorage.setItem(LOADED_URL_KEY, url);
 			mpv.load(url, startPos).catch(() => {});
 			setActiveChannel({ ...ch, url, sourceList: availableSources });
 		},
@@ -859,6 +904,39 @@ export const PlayerView = () => {
 	const episodesForDrawer = sortedEpisodes.length > 0 ? sortedEpisodes : localSeriesEpisodes;
 	const showTitleForDrawer = activeChannel?.seriesTitle ?? showTitle(activeChannel?.name ?? "");
 
+	// --- Player download control (movies + series episodes only) ---
+	const playerDl = activeChannel ? byChannel.get(activeChannel.id) : undefined;
+	const playerDownloadState: DownloadIconState =
+		playerDl?.status === "completed"
+			? "complete"
+			: playerDl?.status === "downloading" || playerDl?.status === "queued"
+				? "downloading"
+				: playerDl?.status === "failed"
+					? "failed"
+					: "idle";
+	const showPlayerDownload =
+		!!activeChannel &&
+		(activeChannel.contentType === "movie" || activeChannel.contentType === "series");
+	const downloadSlot = showPlayerDownload ? (
+		<DownloadButton
+			state={playerDownloadState}
+			onStart={() => {
+				if (!activeChannel) return;
+				if (activeChannel.contentType === "series") {
+					void enqueueEpisodeDownload(
+						activeChannel,
+						seriesContainerId,
+						showTitleForDrawer
+					);
+				} else {
+					void enqueueMovieDownload(activeChannel.id);
+				}
+			}}
+			onStop={() => playerDl && void stopDownload(playerDl.id)}
+			onRemove={() => playerDl && void removeDownload(playerDl.id)}
+		/>
+	) : undefined;
+
 	return (
 		<div
 			ref={containerRef}
@@ -975,6 +1053,7 @@ export const PlayerView = () => {
 					currentSource={activeChannel?.url ?? null}
 					onSelectSource={switchSource}
 					onShortcuts={() => setShowShortcuts((v) => !v)}
+					downloadSlot={downloadSlot}
 				/>
 			)}
 
@@ -1044,6 +1123,7 @@ export const PlayerView = () => {
 				<SeriesDetailModal
 					showTitle={showTitleForDrawer}
 					episodes={episodesForDrawer}
+					seriesChannelId={seriesContainerId}
 					onClose={() => setShowInfoDrawer(false)}
 					currentUrl={activeChannel.url}
 					onPlay={(ch) => {

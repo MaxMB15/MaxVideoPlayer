@@ -35,6 +35,9 @@ coverage/
 # Bundled resources
 apps/desktop/resources/
 
+# ffmpeg sidecar binaries (fetched via scripts/fetch-ffmpeg.sh)
+apps/desktop/src-tauri/binaries/
+
 # Pre-built libraries (workspace: desktop uses macos/linux/windows, ios uses ios/, android uses android/)
 libs/macos/*.dylib
 libs/macos-bundle/
