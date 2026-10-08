@@ -75,6 +75,18 @@ pub struct PinnedGroup {
     pub sort_order: i64,
 }
 
+/// Last known playback position for a piece of VOD content (movie or episode),
+/// keyed by a frontend-derived content key so it survives provider refreshes
+/// (channel IDs are index-based) and source switches.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackPosition {
+    pub content_key: String,
+    pub position_seconds: f64,
+    pub duration_seconds: f64,
+    pub updated_at: i64,
+}
+
 pub struct CacheStore {
     conn: Connection,
 }
@@ -220,6 +232,14 @@ impl CacheStore {
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 is_user_override INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (provider_id, content_type, group_name)
+            );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS playback_positions (
+                content_key      TEXT PRIMARY KEY,
+                position_seconds REAL NOT NULL,
+                duration_seconds REAL NOT NULL,
+                updated_at       INTEGER NOT NULL
             );"
         )?;
         self.conn.execute_batch(
@@ -950,9 +970,67 @@ impl CacheStore {
         Ok(())
     }
 
-    /// Delete all watch history entries.
+    /// Delete all watch history entries, including saved resume positions.
     pub fn clear_watch_history(&self) -> Result<(), CacheError> {
         self.conn.execute("DELETE FROM watch_history", [])?;
+        self.conn.execute("DELETE FROM playback_positions", [])?;
+        Ok(())
+    }
+
+    // --- Playback Positions ---
+
+    /// Insert or overwrite the saved position for `content_key`.
+    pub fn save_playback_position(
+        &self,
+        content_key: &str,
+        position_seconds: f64,
+        duration_seconds: f64,
+    ) -> Result<(), CacheError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO playback_positions (content_key, position_seconds, duration_seconds, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(content_key) DO UPDATE SET
+                position_seconds = excluded.position_seconds,
+                duration_seconds = excluded.duration_seconds,
+                updated_at       = excluded.updated_at",
+            params![content_key, position_seconds, duration_seconds, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_playback_position(
+        &self,
+        content_key: &str,
+    ) -> Result<Option<PlaybackPosition>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT content_key, position_seconds, duration_seconds, updated_at
+             FROM playback_positions WHERE content_key = ?1",
+            params![content_key],
+            |row| {
+                Ok(PlaybackPosition {
+                    content_key: row.get(0)?,
+                    position_seconds: row.get(1)?,
+                    duration_seconds: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        );
+        match result {
+            Ok(pos) => Ok(Some(pos)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    pub fn delete_playback_position(&self, content_key: &str) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM playback_positions WHERE content_key = ?1",
+            params![content_key],
+        )?;
         Ok(())
     }
 
@@ -1917,5 +1995,49 @@ mod tests {
         let pins = store.get_pinned_groups("p1", "live").unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].group_name, "UK: News");
+    }
+
+    // --- Playback Position Tests ---
+
+    #[test]
+    fn test_playback_position_roundtrip() {
+        let store = CacheStore::open_in_memory().unwrap();
+        assert!(store.get_playback_position("movie:dune").unwrap().is_none());
+
+        store.save_playback_position("movie:dune", 1234.5, 9000.0).unwrap();
+        let pos = store.get_playback_position("movie:dune").unwrap().unwrap();
+        assert_eq!(pos.content_key, "movie:dune");
+        assert_eq!(pos.position_seconds, 1234.5);
+        assert_eq!(pos.duration_seconds, 9000.0);
+        assert!(pos.updated_at > 0);
+    }
+
+    #[test]
+    fn test_playback_position_overwrites() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("k", 10.0, 100.0).unwrap();
+        store.save_playback_position("k", 55.0, 100.0).unwrap();
+        let pos = store.get_playback_position("k").unwrap().unwrap();
+        assert_eq!(pos.position_seconds, 55.0);
+    }
+
+    #[test]
+    fn test_delete_playback_position() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("a", 10.0, 100.0).unwrap();
+        store.save_playback_position("b", 20.0, 100.0).unwrap();
+        store.delete_playback_position("a").unwrap();
+        assert!(store.get_playback_position("a").unwrap().is_none());
+        assert!(store.get_playback_position("b").unwrap().is_some());
+        // Deleting a missing key is a no-op
+        store.delete_playback_position("missing").unwrap();
+    }
+
+    #[test]
+    fn test_clear_watch_history_clears_playback_positions() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("a", 10.0, 100.0).unwrap();
+        store.clear_watch_history().unwrap();
+        assert!(store.get_playback_position("a").unwrap().is_none());
     }
 }

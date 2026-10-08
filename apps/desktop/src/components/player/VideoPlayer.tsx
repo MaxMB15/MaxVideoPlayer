@@ -3,6 +3,7 @@ import { ChannelOverlay } from "./ChannelOverlay";
 import { ConnectionStatusOverlay } from "./ConnectionStatusOverlay";
 import { SubtitlePicker } from "./SubtitlePicker";
 import { SubtitleOverlay } from "./SubtitleOverlay";
+import { ResumePrompt } from "./ResumePrompt";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { MovieInfoDrawer } from "@/components/channels/MovieInfoDrawer";
 import { SeriesDetailModal } from "@/components/channels/SeriesDetailModal";
@@ -22,15 +23,71 @@ import {
 	readSubtitleFile,
 	mpvSubAdd,
 	mpvSubRemove,
+	mpvGetState,
+	getPlaybackPosition,
+	savePlaybackPosition,
+	deletePlaybackPosition,
 } from "@/lib/tauri";
 import { parseSrt } from "@/lib/subtitle-parser";
 import type { Channel, OmdbData, WhatsonData, SubtitleCue, SubtitleEntry } from "@/lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFullscreen } from "@/lib/fullscreen-context";
+import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "@/lib/playback";
 import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
 import { formatTime } from "@/lib/format";
 
+/** How often (ms) watch progress is persisted while playing. */
+const PROGRESS_SAVE_INTERVAL = 5000;
 const MAX_VOLUME = 150;
+
+interface PlaybackProgress {
+	/** Resume key (see playbackKey); null for live or nothing playing. */
+	key: string | null;
+	/** URL the progress belongs to — mpv state for any other URL is ignored. */
+	url: string | null;
+	position: number;
+	duration: number;
+	/** Position changed since the last save. */
+	dirty: boolean;
+	lastSaved: number;
+	/**
+	 * Resume point the load was started at. Until playback reaches it, earlier
+	 * positions (mpv reporting the start of the file before the seek lands) are
+	 * ignored so they can't overwrite or delete the saved resume point.
+	 */
+	pendingStart: number | null;
+}
+
+const EMPTY_PROGRESS: PlaybackProgress = {
+	key: null,
+	url: null,
+	position: 0,
+	duration: 0,
+	dirty: false,
+	lastSaved: 0,
+	pendingStart: null,
+};
+
+const progressFor = (ch: Channel, startPos?: number): PlaybackProgress => ({
+	key: playbackKey(ch),
+	url: ch.url,
+	position: startPos ?? 0,
+	duration: 0,
+	dirty: false,
+	lastSaved: Date.now(),
+	pendingStart: startPos ?? null,
+});
+
+interface PendingResume {
+	channel: Channel;
+	position: number;
+	duration: number;
+	/** "nav" = opened from outside the player; cancelling goes back. */
+	origin: "nav" | "player";
+	/** Something was playing (and got paused) when the prompt opened. */
+	wasPlaying: boolean;
+	apply?: () => void;
+}
 
 const showTitle = (name: string): string => name.replace(/\s+S\d{1,3}E\d{1,3}.*/i, "").trim();
 
@@ -79,10 +136,20 @@ export const PlayerView = () => {
 	const [subtitleDelay, setSubtitleDelay] = useState(0);
 	const [subtitleEditMode, setSubtitleEditMode] = useState(false);
 	const [autoplay, setAutoplay] = useState(true);
+	const [pendingResume, setPendingResume] = useState<PendingResume | null>(null);
 	const [showShortcuts, setShowShortcuts] = useState(false);
 	// Brief centre-screen feedback for keyboard actions ("+10s", "Volume 80%", …).
 	const [osdText, setOsdText] = useState<{ text: string; id: number } | null>(null);
 	const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const mpvStateRef = useRef(mpv.state);
+	mpvStateRef.current = mpv.state;
+	const activeChannelRef = useRef(activeChannel);
+	activeChannelRef.current = activeChannel;
+	const playStartTimeRef = useRef<number | null>(null);
+	const progressRef = useRef<PlaybackProgress>(EMPTY_PROGRESS);
+	// Guards against out-of-order resolution when items are opened in quick succession.
+	const startRequestRef = useRef(0);
 
 	// Remembers which language + rank-within-language the user last picked so the
 	// same subtitle can be auto-selected when navigating to the next episode.
@@ -123,9 +190,10 @@ export const PlayerView = () => {
 		containerRef.current?.focus();
 	}, []);
 
-	// Re-focus after channel load completes (currentUrl changes).
+	// Re-focus after channel load completes (currentUrl changes). Leave focus
+	// alone if it's already inside the player (e.g. on the resume prompt).
 	useEffect(() => {
-		if (mpv.state.currentUrl) {
+		if (mpv.state.currentUrl && !containerRef.current?.contains(document.activeElement)) {
 			containerRef.current?.focus();
 		}
 	}, [mpv.state.currentUrl]);
@@ -171,19 +239,146 @@ export const PlayerView = () => {
 		return () => window.removeEventListener("keydown", handleKey);
 	}, [subtitleEditMode]);
 
+	// --- Watch progress (resume support) ---
+
+	// Persist the tracked position for the current item. Finished items are
+	// forgotten, as are items rewound to the very start (e.g. "Start over"),
+	// so they don't keep offering a stale resume point.
+	const flushProgress = useCallback(() => {
+		const p = progressRef.current;
+		if (!p.key || !p.dirty || p.duration <= 0) return;
+		p.dirty = false;
+		p.lastSaved = Date.now();
+		if (isFinished(p.position, p.duration) || p.position < MIN_RESUME_SECONDS) {
+			deletePlaybackPosition(p.key).catch(() => {});
+		} else {
+			savePlaybackPosition(p.key, p.position, p.duration).catch(() => {});
+		}
+	}, []);
+
+	useEffect(() => {
+		const p = progressRef.current;
+		const { currentUrl, position, duration, isPaused } = mpv.state;
+		if (!p.key || !currentUrl || currentUrl !== p.url) return;
+		if (duration <= 0 || position <= 1) return;
+		if (p.pendingStart !== null) {
+			if (position < p.pendingStart - 5) return;
+			p.pendingStart = null;
+		}
+		if (position !== p.position || duration !== p.duration) {
+			p.position = position;
+			p.duration = duration;
+			p.dirty = true;
+		}
+		if (isPaused || Date.now() - p.lastSaved >= PROGRESS_SAVE_INTERVAL) flushProgress();
+	}, [mpv.state, flushProgress]);
+
+	useEffect(() => () => flushProgress(), [flushProgress]);
+
+	/** Actually start playing `ch` (optionally from `startPos`), replacing whatever is playing. */
+	const commitPlayback = useCallback(
+		(ch: Channel, startPos?: number, apply?: () => void) => {
+			if (activeChannelRef.current && playStartTimeRef.current !== null) {
+				const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
+				recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
+			}
+			playStartTimeRef.current = Date.now();
+			recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
+
+			progressRef.current = progressFor(ch, startPos);
+			mpv.load(ch.url, startPos).catch(() => {});
+			setActiveChannelName(ch.name);
+			setActiveChannel(ch);
+			apply?.();
+		},
+		[mpv]
+	);
+
+	/**
+	 * Entry point for every "play this item" action. Movies and episodes with
+	 * a saved mid-way position first show the resume prompt; everything else
+	 * starts immediately. `apply` runs once playback actually starts (e.g.
+	 * clearing subtitle state for a new episode).
+	 */
+	const startPlayback = useCallback(
+		async (ch: Channel, origin: "nav" | "player", apply?: () => void) => {
+			const requestId = ++startRequestRef.current;
+			flushProgress();
+			const key = playbackKey(ch);
+			const saved = key ? await getPlaybackPosition(key).catch(() => null) : null;
+			if (requestId !== startRequestRef.current) return;
+			if (saved && shouldOfferResume(saved.positionSeconds, saved.durationSeconds)) {
+				const s = mpvStateRef.current;
+				const wasPlaying = s.isPlaying && !s.isPaused;
+				if (wasPlaying) mpv.pause();
+				setPendingResume({
+					channel: ch,
+					position: saved.positionSeconds,
+					duration: saved.durationSeconds,
+					origin,
+					wasPlaying,
+					apply,
+				});
+				return;
+			}
+			commitPlayback(ch, undefined, apply);
+		},
+		[mpv, flushProgress, commitPlayback]
+	);
+
+	const resolveResume = useCallback(
+		(choice: "resume" | "restart" | "cancel") => {
+			const pending = pendingResume;
+			if (!pending) return;
+			setPendingResume(null);
+			containerRef.current?.focus();
+			if (choice === "cancel") {
+				if (pending.wasPlaying) mpv.play();
+				if (pending.origin === "nav") navigate(-1);
+				return;
+			}
+			commitPlayback(
+				pending.channel,
+				choice === "resume" ? pending.position : undefined,
+				pending.apply
+			);
+		},
+		[pendingResume, mpv, navigate, commitPlayback]
+	);
+
+	// When the player is re-entered with a new item while the previous one kept
+	// playing in the background, capture the previous item's latest position so
+	// the flush in startPlayback saves it.
+	const adoptBackgroundProgress = async (): Promise<void> => {
+		const saved = sessionStorage.getItem("mvp_lastChannel");
+		if (!saved || progressRef.current.key) return;
+		try {
+			const prev: Channel = JSON.parse(saved);
+			const s = await mpvGetState();
+			if (s.currentUrl === prev.url && s.duration > 0 && s.position > 1) {
+				progressRef.current = {
+					...progressFor(prev),
+					position: s.position,
+					duration: s.duration,
+					dirty: true,
+				};
+			}
+		} catch {}
+	};
+
 	useEffect(() => {
 		if (navState?.url) {
-			mpv.load(navState.url).catch(() => {});
-			setActiveChannelName(navState.channelName ?? null);
-			setActiveChannel(navState.channel ?? null);
 			if (navState.seriesEpisodes?.length) {
 				setSeriesEpisodes(navState.seriesEpisodes);
 			}
-			// Record play start
-			if (navState.channel) {
-				const ch = navState.channel;
-				playStartTimeRef.current = Date.now();
-				recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(() => {});
+			const navChannel = navState.channel;
+			const navUrl = navState.url;
+			if (navChannel) {
+				adoptBackgroundProgress().finally(() => startPlayback(navChannel, "nav"));
+			} else {
+				mpv.load(navUrl).catch(() => {});
+				setActiveChannelName(navState.channelName ?? null);
+				setActiveChannel(null);
 			}
 		} else {
 			// Navigating back to player without a new channel (e.g. via sidebar menu)
@@ -193,6 +388,7 @@ export const PlayerView = () => {
 					const ch: Channel = JSON.parse(saved);
 					setActiveChannel(ch);
 					setActiveChannelName(ch.name);
+					progressRef.current = progressFor(ch);
 				} catch {}
 			}
 			const savedEpisodes = sessionStorage.getItem("mvp_lastSeriesEpisodes");
@@ -322,27 +518,13 @@ export const PlayerView = () => {
 
 	const handleSelectChannel = useCallback(
 		(channel: Channel) => {
-			// Record end of current channel
-			if (activeChannelRef.current && playStartTimeRef.current !== null) {
-				const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
-				recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
-			}
-			playStartTimeRef.current = Date.now();
-			recordPlayStart(
-				channel.id,
-				channel.name,
-				channel.logoUrl ?? null,
-				channel.contentType
-			).catch(() => {});
-
-			mpv.load(channel.url).catch(() => {});
-			setActiveChannelName(channel.name);
-			setActiveChannel(channel);
-			setSeriesEpisodes([]);
-			setSelectedSubtitleId(null);
-			setSubtitleCues([]);
+			startPlayback(channel, "player", () => {
+				setSeriesEpisodes([]);
+				setSelectedSubtitleId(null);
+				setSubtitleCues([]);
+			});
 		},
-		[mpv]
+		[startPlayback]
 	);
 
 	// --- Series episode navigation ---
@@ -374,39 +556,24 @@ export const PlayerView = () => {
 
 	const playEpisode = useCallback(
 		(ep: Channel) => {
-			// Record end of current episode
-			if (activeChannelRef.current && playStartTimeRef.current !== null) {
-				const elapsed = Math.floor((Date.now() - playStartTimeRef.current) / 1000);
-				recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
-			}
-			playStartTimeRef.current = Date.now();
-			recordPlayStart(ep.id, ep.name, ep.logoUrl ?? null, ep.contentType).catch(() => {});
-
-			mpv.load(ep.url).catch(() => {});
-			setActiveChannelName(ep.name);
-			setActiveChannel(ep);
 			setShowInfoDrawer(false);
-			setSelectedSubtitleId(null);
-			setSubtitleCues([]);
-			setSelectedSubtitleEntry(null);
-			setSubtitleEditMode(false);
-			setSubtitleDelay(0);
-			// Increment trigger so the auto-load effect fires for this episode.
-			setAutoLoadTrigger((t) => t + 1);
+			startPlayback(ep, "player", () => {
+				setSelectedSubtitleId(null);
+				setSubtitleCues([]);
+				setSelectedSubtitleEntry(null);
+				setSubtitleEditMode(false);
+				setSubtitleDelay(0);
+				// Increment trigger so the auto-load effect fires for this episode.
+				setAutoLoadTrigger((t) => t + 1);
+			});
 		},
-		[mpv]
+		[startPlayback]
 	);
 
 	// --- Autoplay next episode ---
 	// Use refs to avoid stale closures while keeping the effect dependency minimal
 	const nextEpisodeRef = useRef(nextEpisode);
 	nextEpisodeRef.current = nextEpisode;
-	const mpvStateRef = useRef(mpv.state);
-	mpvStateRef.current = mpv.state;
-	const activeChannelRef = useRef(activeChannel);
-	activeChannelRef.current = activeChannel;
-	const playStartTimeRef = useRef<number | null>(null);
-
 	// On unmount, record end of play
 	useEffect(() => {
 		return () => {
@@ -492,6 +659,12 @@ export const PlayerView = () => {
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
+			// The resume prompt handles its own keys; Escape still cancels it if
+			// focus ended up elsewhere in the player.
+			if (pendingResume) {
+				if (e.key === "Escape") resolveResume("cancel");
+				return;
+			}
 			if (isTypingTarget(e.target)) return;
 			// While the subtitle settings pane is open, arrow keys belong to subtitle
 			// position/delay handlers — don't let them also seek or change volume.
@@ -580,6 +753,7 @@ export const PlayerView = () => {
 					} else {
 						// Note: playStartTimeRef is NOT nulled here intentionally.
 						// The unmount cleanup records the elapsed time when the route changes.
+						flushProgress();
 						mpv.stop();
 						navigate("/");
 					}
@@ -589,6 +763,8 @@ export const PlayerView = () => {
 		},
 		[
 			mpv,
+			pendingResume,
+			resolveResume,
 			showShortcuts,
 			isFullscreen,
 			showInfoDrawer,
@@ -604,6 +780,7 @@ export const PlayerView = () => {
 			playEpisode,
 			canShowSubtitles,
 			activeChannel,
+			flushProgress,
 		]
 	);
 
@@ -613,9 +790,10 @@ export const PlayerView = () => {
 			recordPlayEnd(activeChannelRef.current.id, elapsed).catch(() => {});
 			playStartTimeRef.current = null;
 		}
+		flushProgress();
 		mpv.stop();
 		navigate("/");
-	}, [mpv, navigate]);
+	}, [mpv, navigate, flushProgress]);
 
 	// --- Info drawer episode source ---
 	const episodesForDrawer = sortedEpisodes.length > 0 ? sortedEpisodes : localSeriesEpisodes;
@@ -815,23 +993,8 @@ export const PlayerView = () => {
 					movie={activeChannel}
 					onClose={() => setShowInfoDrawer(false)}
 					onPlay={(ch) => {
-						// Record end of current playback
-						if (activeChannel && playStartTimeRef.current !== null) {
-							const elapsed = Math.floor(
-								(Date.now() - playStartTimeRef.current) / 1000
-							);
-							recordPlayEnd(activeChannel.id, elapsed).catch(() => {});
-						}
-						// Start tracking new playback
-						playStartTimeRef.current = Date.now();
-						recordPlayStart(ch.id, ch.name, ch.logoUrl ?? null, ch.contentType).catch(
-							() => {}
-						);
-
 						setShowInfoDrawer(false);
-						mpv.load(ch.url).catch(() => {});
-						setActiveChannelName(ch.name);
-						setActiveChannel(ch);
+						startPlayback(ch, "player");
 					}}
 					prefetchedOmdbData={enrichedMeta?.omdbData}
 					prefetchedWhatsonData={enrichedMeta?.whatsonData}
@@ -843,6 +1006,17 @@ export const PlayerView = () => {
 			)}
 
 			{showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+
+			{pendingResume && (
+				<ResumePrompt
+					title={pendingResume.channel.name}
+					position={pendingResume.position}
+					duration={pendingResume.duration}
+					onResume={() => resolveResume("resume")}
+					onStartOver={() => resolveResume("restart")}
+					onCancel={() => resolveResume("cancel")}
+				/>
+			)}
 		</div>
 	);
 };

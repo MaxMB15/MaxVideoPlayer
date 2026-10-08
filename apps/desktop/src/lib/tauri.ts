@@ -12,6 +12,7 @@ import type {
 	SubtitleSearchResult,
 	GroupHierarchyEntry,
 	PinnedGroup,
+	PlaybackPosition,
 } from "./types";
 
 // --- MPV Player Commands ---
@@ -191,6 +192,21 @@ export const deleteHistoryEntry = (channelId: string): Promise<void> =>
 	invoke<void>("delete_history_entry", { channelId });
 
 export const clearWatchHistory = (): Promise<void> => invoke<void>("clear_watch_history");
+
+// --- Playback Position (resume) Commands ---
+
+export const savePlaybackPosition = (
+	contentKey: string,
+	positionSeconds: number,
+	durationSeconds: number
+): Promise<void> =>
+	invoke<void>("save_playback_position", { contentKey, positionSeconds, durationSeconds });
+
+export const getPlaybackPosition = (contentKey: string): Promise<PlaybackPosition | null> =>
+	invoke<PlaybackPosition | null>("get_playback_position", { contentKey });
+
+export const deletePlaybackPosition = (contentKey: string): Promise<void> =>
+	invoke<void>("delete_playback_position", { contentKey });
 
 export const clearAllCaches = (): Promise<void> => invoke<void>("clear_all_caches");
 

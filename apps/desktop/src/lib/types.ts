@@ -177,3 +177,10 @@ export interface PinnedGroup {
 	groupName: string;
 	sortOrder: number;
 }
+
+export interface PlaybackPosition {
+	contentKey: string;
+	positionSeconds: number;
+	durationSeconds: number;
+	updatedAt: number;
+}

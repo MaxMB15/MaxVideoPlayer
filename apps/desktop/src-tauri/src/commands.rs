@@ -1,4 +1,6 @@
-use mvp_core::cache::store::{CacheStore, GroupHierarchyEntry, PinnedGroup, WatchHistoryEntry};
+use mvp_core::cache::store::{
+    CacheStore, GroupHierarchyEntry, PinnedGroup, PlaybackPosition, WatchHistoryEntry,
+};
 use mvp_core::iptv::m3u::{fetch_and_parse_m3u_with_epg, parse_m3u_file};
 use mvp_core::iptv::mdblist::MdbListData;
 use mvp_core::iptv::omdb::{fetch_omdb, OmdbData};
@@ -920,6 +922,41 @@ pub async fn delete_history_entry(
 pub async fn clear_watch_history(state: State<'_, AppState>) -> Result<(), String> {
     let cache = state.cache.lock().map_err(|e| e.to_string())?;
     cache.clear_watch_history().map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn save_playback_position(
+    state: State<'_, AppState>,
+    content_key: String,
+    position_seconds: f64,
+    duration_seconds: f64,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .save_playback_position(&content_key, position_seconds, duration_seconds)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn get_playback_position(
+    state: State<'_, AppState>,
+    content_key: String,
+) -> Result<Option<PlaybackPosition>, String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .get_playback_position(&content_key)
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn delete_playback_position(
+    state: State<'_, AppState>,
+    content_key: String,
+) -> Result<(), String> {
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    cache
+        .delete_playback_position(&content_key)
+        .map_err(|e| e.to_string())
 }
 
 #[command]
