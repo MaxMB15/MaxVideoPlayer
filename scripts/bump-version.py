@@ -53,8 +53,8 @@ def bump(new: str) -> None:
 
     raw = SETTINGS_TSX.read_text(encoding="utf-8")
     updated = re.sub(
-        r"MaxVideoPlayer v\d+\.\d+\.\d+",
-        f"MaxVideoPlayer v{new}",
+        r"Max Video Player v\d+\.\d+\.\d+",
+        f"Max Video Player v{new}",
         raw,
         count=1,
     )

@@ -1,4 +1,4 @@
-# MaxVideoPlayer
+# Max Video Player
 
 [![Build & Bundle](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/MaxMB15/MaxVideoPlayer/build.yml?branch=main&label=tests&job=test)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
@@ -131,7 +131,7 @@ On macOS, `bundle-libmpv.sh` runs automatically as `beforeBundleCommand` and use
 
 ## Auto-Updates
 
-MaxVideoPlayer uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/updater) to check for new releases on startup. When an update is found, a dismissible banner appears with a one-click install.
+Max Video Player uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/updater) to check for new releases on startup. When an update is found, a dismissible banner appears with a one-click install.
 
 ### Setting up signing (required for production)
 

@@ -1,4 +1,4 @@
-# MaxVideoPlayer — iOS
+# Max Video Player — iOS
 
 Native iOS app using Swift/SwiftUI with AVPlayer for video playback.
 

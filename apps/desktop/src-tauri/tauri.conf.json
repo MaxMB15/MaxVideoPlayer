@@ -1,6 +1,6 @@
 {
 	"$schema": "https://raw.githubusercontent.com/nichobi/tauri-apps/tauri-v2/core/tauri-config-schema/schema.json",
-	"productName": "MaxVideoPlayer",
+	"productName": "Max Video Player",
 	"version": "0.4.9",
 	"identifier": "com.maxvideoplayer.app",
 	"build": {

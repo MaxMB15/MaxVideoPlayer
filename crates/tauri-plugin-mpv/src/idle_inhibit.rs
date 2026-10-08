@@ -78,7 +78,7 @@ impl IdleInhibitor {
 
         // kIOPMAssertionTypePreventUserIdleDisplaySleep
         let assertion_type = cfstring("PreventUserIdleDisplaySleep");
-        let reason = cfstring("MaxVideoPlayer: video playback active");
+        let reason = cfstring("Max Video Player: video playback active");
         if assertion_type.is_null() || reason.is_null() {
             if !assertion_type.is_null() { unsafe { CFRelease(assertion_type) }; }
             if !reason.is_null() { unsafe { CFRelease(reason) }; }
@@ -264,7 +264,7 @@ fn dbus_screensaver_inhibit() -> Option<u32> {
         "org.freedesktop.ScreenSaver",
         "/org/freedesktop/ScreenSaver",
         "org.freedesktop.ScreenSaver.Inhibit",
-        &["MaxVideoPlayer", "Video playback active"],
+        &["Max Video Player", "Video playback active"],
     )
 }
 

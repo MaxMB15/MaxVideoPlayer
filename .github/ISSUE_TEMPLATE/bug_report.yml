@@ -15,7 +15,7 @@ body:
       placeholder: |
         - OS: e.g. Pop!_OS (COSMIC / Wayland), macOS 15.3, Windows 11
         - GPU: e.g. Intel (Mesa), NVIDIA 535
-        - App version: e.g. MaxVideoPlayer 0.3.8
+        - App version: e.g. Max Video Player 0.3.8
         - Install method: e.g. .deb, .dmg, built from source
         - mpv version (if relevant): e.g. 0.37.0
     validations:
