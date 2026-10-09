@@ -357,15 +357,24 @@
     // The event queue owns the handle's teardown: stop sends "quit", and this
     // block destroys the handle once mpv reports MPV_EVENT_SHUTDOWN, so
     // mpv_terminate_destroy never runs while mpv_wait_event is waiting.
+    // mpv can also shut down without stop, so self.mpv is cleared first on the
+    // main thread, where every other use of it runs. The destroy goes back to
+    // the event queue so it can't block the main thread.
     // mpv draws into the view's layer until it's destroyed, so the view is
     // kept alive until then and released on the main thread.
     mpv_handle *mpv = self.mpv;
     __block MpvMetalView *view = self.metalView;
-    self.eventQueue = dispatch_queue_create("mpv.events", DISPATCH_QUEUE_SERIAL);
-    dispatch_async(self.eventQueue, ^{
+    dispatch_queue_t queue = dispatch_queue_create("mpv.events", DISPATCH_QUEUE_SERIAL);
+    self.eventQueue = queue;
+    dispatch_async(queue, ^{
         [self pumpEvents:mpv];
-        mpv_terminate_destroy(mpv);
-        dispatch_async(dispatch_get_main_queue(), ^{ view = nil; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.mpv == mpv) self.mpv = NULL;
+            dispatch_async(queue, ^{
+                mpv_terminate_destroy(mpv);
+                dispatch_async(dispatch_get_main_queue(), ^{ view = nil; });
+            });
+        });
     });
 
     const char *urlC = [url UTF8String];
