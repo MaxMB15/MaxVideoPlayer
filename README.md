@@ -164,6 +164,8 @@ Max Video Player uses [tauri-plugin-updater](https://github.com/tauri-apps/plugi
 
 The `release.yml` workflow (on tag `v*`) builds signed artifacts for macOS (`.dmg`) and Linux (`.deb`, `.rpm`, `.AppImage`), creates a draft GitHub Release, and uploads `latest.json` for the auto-updater.
 
+To sign and notarize the macOS app with a Developer ID certificate, add the Apple secrets described in [docs/macos-signing.md](docs/macos-signing.md). Without them the macOS build is unsigned.
+
 ## Features
 
 - **M3U / M3U+** playlist support (URL and local file)

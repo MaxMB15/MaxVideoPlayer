@@ -150,4 +150,14 @@ if [[ -n "$too_new" ]]; then
   echo "This build only runs on this Mac's macOS version. Release builds run on a macOS $MIN_MACOS CI runner." >&2
 fi
 
+# Tauri signs the app, its binary and the ffmpeg sidecar, but not the libraries it
+# copies into Contents/Frameworks. Under the hardened runtime a Developer ID app
+# only loads libraries signed by the same team, and notarization rejects unsigned
+# or untimestamped code, so sign them here with the identity Tauri will use.
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$APPLE_SIGNING_IDENTITY" != "-" ]]; then
+  dylibs=("$LIBS_BUNDLE"/*.dylib)
+  codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "${dylibs[@]}"
+  echo "Signed ${#dylibs[@]} libraries with $APPLE_SIGNING_IDENTITY"
+fi
+
 echo "Bundled libmpv and dependencies to $LIBS_BUNDLE"
