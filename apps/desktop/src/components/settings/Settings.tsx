@@ -846,7 +846,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardHeader>
 					<CardContent className="space-y-3">
 						<p className="text-sm text-muted-foreground">
-							Max Video Player is free and open source. If you find it useful,
+							Max Video Player is free for noncommercial use. If you find it useful,
 							consider supporting development.
 						</p>
 						<div className="flex items-center gap-4">

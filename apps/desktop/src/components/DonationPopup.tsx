@@ -49,7 +49,7 @@ export const DonationPopup = ({ onDismiss }: DonationPopupProps) => {
 			</button>
 
 			<p className="text-[10px] text-muted-foreground text-center">
-				Free &amp; open source forever ·{" "}
+				Free for noncommercial use ·{" "}
 				<button onClick={onDismiss} className="underline hover:text-foreground">
 					dismiss
 				</button>
