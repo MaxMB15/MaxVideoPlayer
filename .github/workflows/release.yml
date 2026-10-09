@@ -343,13 +343,13 @@ jobs:
           # from productName, so they stay "max-video-player".)
           shopt -s nullglob
           for f in "$BUNDLE_DIR"/deb/*.deb; do
-            mv "$f" "$BUNDLE_DIR/deb/MaxVideoPlayer_amd64.deb" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/deb/MaxVideoPlayer_amd64.deb"
           done
           for f in "$BUNDLE_DIR"/rpm/*.rpm; do
-            mv "$f" "$BUNDLE_DIR/rpm/MaxVideoPlayer_x86_64.rpm" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/rpm/MaxVideoPlayer_x86_64.rpm"
           done
           for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
-            mv "$f" "$BUNDLE_DIR/appimage/MaxVideoPlayer_amd64.AppImage" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/appimage/MaxVideoPlayer_amd64.AppImage"
           done
           shopt -u nullglob
 

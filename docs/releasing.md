@@ -32,10 +32,12 @@ Tick **Dry run** to see the merge and the new version without pushing anything.
 
 If `main` is protected so that only pull requests can change it:
 
-1. Actions → **Release — bump version (PR)** opens a pull request that bumps the
+1. Open a pull request from `dev` to `main` and merge it. The next step only bumps
+   the version, so skipping this one releases the old code.
+2. Actions → **Release — bump version (PR)** opens a pull request that bumps the
    version on `main`. Merge it once checks pass. Squash merge if `main` requires
    signed commits.
-2. Actions → **Release — push tag** tags `main` with the version from
+3. Actions → **Release — push tag** tags `main` with the version from
    `tauri.conf.json`.
 
 ### From your machine
@@ -56,8 +58,9 @@ git tag v0.6.0 && git push origin v0.6.0
 3. Writes `latest.json`, the file the in-app updater reads, and uploads it.
 4. Merges `main` back into `dev` so the version bump reaches `dev`.
 
-The download assets have no version in their names, so the README links to
-`releases/latest/download/<name>` always get the newest build:
+The installers have no version in their names, so the README links to
+`releases/latest/download/<name>` always get the newest build. A release has nine
+assets:
 
 | Asset | What it is |
 | --- | --- |
@@ -67,6 +70,7 @@ The download assets have no version in their names, so the README links to
 | `MaxVideoPlayer_x86_64.rpm` | Fedora package |
 | `MaxVideoPlayer_<version>_aarch64.app.tar.gz` | macOS update for the in-app updater |
 | `MaxVideoPlayer_linux.tar.gz` | AppImage update for the in-app updater |
+| `MaxVideoPlayer_<version>_aarch64.app.tar.gz.sig`, `MaxVideoPlayer_linux.tar.gz.sig` | Signatures for the two updates |
 | `latest.json` | Update manifest: version, signatures and download links |
 
 Don't rename these. The README, `latest.json` and the Linux package updater in
@@ -75,12 +79,13 @@ Don't rename these. The README, `latest.json` and the Linux package updater in
 ## Publishing
 
 1. Open the draft on the [releases page](https://github.com/MaxMB15/MaxVideoPlayer/releases).
-2. Check that all seven assets are there.
+2. Check that all nine assets are there.
 3. Replace the notes with the version's section from the changelog.
 4. Publish.
 
 Publishing makes it the latest release, so the README links and the in-app updater
-switch to it right away. Then check that `latest.json` points at files that exist:
+switch to it right away. Then check that the README download links and every link in
+`latest.json` work:
 
 ```bash
 ./scripts/validate-release.sh            # the latest release
