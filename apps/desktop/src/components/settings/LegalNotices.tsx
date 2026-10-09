@@ -4,13 +4,14 @@
 import { openUrl } from "@/lib/openUrl";
 
 export const REPO_URL = "https://github.com/MaxMB15/MaxVideoPlayer";
-export const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
-export const NOTICE_URL = `${REPO_URL}/blob/main/NOTICE`;
-export const THIRD_PARTY_URL = `${REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md`;
 
-// Each release is tagged, so the tag holds the exact source of the running build.
+// Each release is tagged, so the tag holds the exact source and license files
+// of the running build. Without a version, the links fall back to main.
 export const sourceUrl = (version?: string): string =>
 	version ? `${REPO_URL}/tree/v${version}` : REPO_URL;
+
+export const fileUrl = (file: string, version?: string): string =>
+	`${REPO_URL}/blob/${version ? `v${version}` : "main"}/${file}`;
 
 interface LegalNoticesProps {
 	version?: string;
@@ -20,10 +21,10 @@ interface LegalNoticesProps {
 // The "Created by" line is the attribution that NOTICE term 1 protects.
 export const LegalNotices = ({ version }: LegalNoticesProps) => {
 	const links = [
-		{ label: "License", url: LICENSE_URL },
-		{ label: "Additional terms", url: NOTICE_URL },
+		{ label: "License", url: fileUrl("LICENSE", version) },
+		{ label: "Additional terms", url: fileUrl("NOTICE", version) },
 		{ label: "Source code", url: sourceUrl(version) },
-		{ label: "Third-party notices", url: THIRD_PARTY_URL },
+		{ label: "Third-party notices", url: fileUrl("THIRD_PARTY_NOTICES.md", version) },
 	];
 
 	return (

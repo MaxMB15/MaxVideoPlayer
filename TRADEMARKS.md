@@ -1,6 +1,6 @@
 # Name and logo policy
 
-The code of Max Video Player is free software under the [GNU General Public License version 3](LICENSE). The name "Max Video Player", its logo and its app icon are not covered by that license. They tell people that a copy is the official app made by Max Boksem, so they stay with the official app. Term 4 of [NOTICE](NOTICE) says the same thing in legal form.
+Max Video Player is free software under the [GNU General Public License version 3](LICENSE). That license covers the files in this repository, including the logo and icon files, under copyright law. It grants no rights in the name "Max Video Player", its logo or its app icon under trademark law. They tell people that a copy is the official app made by Max Boksem, so they stay with the official app. Term 4 of [NOTICE](NOTICE) says this in legal form, and term 2 requires modified versions to use a different name and icon.
 
 ## What you can do without asking
 

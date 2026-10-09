@@ -184,7 +184,7 @@ Max Video Player is free software. Anyone can use it for any purpose, and you ca
 The license has a few [additional terms](NOTICE), which section 7 of the GPL allows:
 
 - Modified versions have to keep the credit "Based on Max Video Player by Max Boksem" on their About screen.
-- Modified versions need their own name and icon. The license doesn't cover the Max Video Player name or logo. See [TRADEMARKS.md](TRADEMARKS.md).
+- Modified versions need their own name and icon. The license grants no trademark rights in the Max Video Player name or logo. See [TRADEMARKS.md](TRADEMARKS.md).
 - The author's name can't be used to promote another product without permission.
 
 If you need other terms, for example to ship it in a closed-source product, a commercial license is available. Get in touch through [github.com/MaxMB15](https://github.com/MaxMB15).
