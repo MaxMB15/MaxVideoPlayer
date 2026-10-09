@@ -52,16 +52,27 @@ case "$PLATFORM" in
       rm -f "${DEMUX_MKV}.bak"
     fi
 
+    # Target the app's declared minimum instead of whatever the build machine's
+    # toolchain defaults to, so bundle-libmpv.sh's minimum-version check passes.
+    TAURI_CONF="$(dirname "$LIBS_DIR")/apps/desktop/src-tauri/tauri.conf.json"
+    export MACOSX_DEPLOYMENT_TARGET
+    MACOSX_DEPLOYMENT_TARGET=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["bundle"]["macOS"]["minimumSystemVersion"])' "$TAURI_CONF")
+    echo "    Deployment target: macOS $MACOSX_DEPLOYMENT_TARGET"
+
     # Build
     BUILD_DIR="$MPV_SRC/build-macos"
     echo "    Running meson setup..."
+    # libavdevice is only for capture devices (av://), which we never open.
+    # Homebrew links it against sdl2-compat, which needs an SDL3 we don't bundle
+    # and aborts the app at launch when it can't find one.
     meson setup "$BUILD_DIR" "$MPV_SRC" \
       --buildtype=release \
       --wipe \
       -Dlibmpv=true \
       -Dgl=enabled \
       -Dvulkan=disabled \
-      -Dcocoa=enabled
+      -Dcocoa=enabled \
+      -Dlibavdevice=disabled
 
     echo "    Building libmpv dylib only (this takes a few minutes)..."
     ninja -C "$BUILD_DIR" libmpv.2.dylib

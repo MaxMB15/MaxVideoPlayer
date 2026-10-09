@@ -60,7 +60,7 @@
 				"Frameworks": "../../../libs/macos-bundle"
 			},
 			"infoPlist": "./Info.plist",
-			"minimumSystemVersion": "10.15"
+			"minimumSystemVersion": "15.0"
 		},
 		"linux": {
 			"deb": {
