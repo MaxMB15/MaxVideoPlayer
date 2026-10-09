@@ -43,7 +43,7 @@ MINOR=$(echo "$CURRENT" | cut -d. -f2)
 PATCH=$(echo "$CURRENT" | cut -d. -f3)
 
 echo ""
-echo "  MaxVideoPlayer Release Script"
+echo "  Max Video Player Release Script"
 echo "  ─────────────────────────────"
 echo "  Current version: $CURRENT"
 echo ""

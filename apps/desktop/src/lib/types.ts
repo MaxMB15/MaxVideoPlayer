@@ -9,6 +9,12 @@ export interface Channel {
 	isFavorite: boolean;
 	contentType: "live" | "movie" | "series";
 	sources: string[];
+	/**
+	 * Frontend-only: the full ordered source list, captured when a non-default
+	 * source is picked so the original order (and "Source N" numbering) survives
+	 * `url` being swapped. See `withSource()` in lib/sources.ts.
+	 */
+	sourceList?: string[];
 	seriesTitle?: string;
 	season?: number;
 	episode?: number;
@@ -177,3 +183,31 @@ export interface PinnedGroup {
 	groupName: string;
 	sortOrder: number;
 }
+
+export interface PlaybackPosition {
+	contentKey: string;
+	positionSeconds: number;
+	durationSeconds: number;
+	updatedAt: number;
+}
+
+export type DownloadStatus = "queued" | "downloading" | "completed" | "failed" | "cancelled";
+
+export interface DownloadRecord {
+	id: string;
+	channelId: string;
+	title: string;
+	kind: "movie" | "episode";
+	seriesChannelId: string | null;
+	status: DownloadStatus;
+	destPath: string;
+	totalBytes: number | null;
+	downloadedBytes: number;
+	avgRateBps: number | null;
+	error: string | null;
+	createdAt: number;
+	finishedAt: number | null;
+}
+
+/** Aggregate download state for a series card (computed in the hook). */
+export type AggregateDownloadState = "none" | "downloading" | "partial" | "complete";

@@ -51,6 +51,7 @@ describe("useMpv", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockListenCallbacks.clear();
+		sessionStorage.clear();
 		mockMpvGetState.mockResolvedValue({
 			isPlaying: false,
 			isPaused: false,
@@ -269,6 +270,75 @@ describe("useMpv", () => {
 
 		expect(mockMpvSetVolume).toHaveBeenCalledWith(75);
 		expect(result.current.state.volume).toBe(75);
+	});
+
+	it("toggleMute mutes and restores the previous volume", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(60);
+		});
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(0);
+		expect(result.current.state.volume).toBe(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(60);
+		expect(result.current.state.volume).toBe(60);
+	});
+
+	it("re-applies the user's volume after a load", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(40);
+		});
+		mockMpvSetVolume.mockClear();
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(40);
+		expect(result.current.state.volume).toBe(40);
+	});
+
+	it("does not touch volume on load when the user never changed it", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).not.toHaveBeenCalled();
+	});
+
+	it("keeps the volume and mute state when the player is reopened", async () => {
+		const first = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+		await act(async () => {
+			await first.result.current.setVolume(40);
+		});
+		await act(async () => {
+			await first.result.current.toggleMute();
+		});
+		first.unmount();
+
+		mockMpvSetVolume.mockClear();
+		const { result } = renderHook(() => useMpv());
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(40);
 	});
 
 	// ── Tauri events ──────────────────────────────────────────────────

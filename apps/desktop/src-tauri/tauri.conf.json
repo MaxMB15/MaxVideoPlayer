@@ -1,6 +1,6 @@
 {
 	"$schema": "https://raw.githubusercontent.com/nichobi/tauri-apps/tauri-v2/core/tauri-config-schema/schema.json",
-	"productName": "MaxVideoPlayer",
+	"productName": "Max Video Player",
 	"version": "0.4.9",
 	"identifier": "com.maxvideoplayer.app",
 	"build": {
@@ -44,6 +44,7 @@
 		"active": true,
 		"targets": "all",
 		"createUpdaterArtifacts": true,
+		"externalBin": ["binaries/ffmpeg"],
 		"icon": [
 			"icons/32x32.png",
 			"icons/128x128.png",

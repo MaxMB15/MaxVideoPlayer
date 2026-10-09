@@ -84,6 +84,7 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv-linux.sh'
+              - 'scripts/fetch-ffmpeg.sh'
             macos:
               - 'crates/tauri-plugin-mpv/src/macos.rs'
               - 'crates/tauri-plugin-mpv/src/renderer.rs'
@@ -100,6 +101,7 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv.sh'
+              - 'scripts/fetch-ffmpeg.sh'
 
   # ── Tests (run on every push and PR) ────────────────────────────────────
   test:
@@ -212,6 +214,9 @@ jobs:
       - name: Prepare libmpv for bundle
         run: ./scripts/build-libmpv.sh macos
 
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh macos
+
       - name: Build frontend
         run: npm run build:desktop
 
@@ -271,6 +276,9 @@ jobs:
         run: |
           ./scripts/build-libmpv.sh linux
           echo "LD_LIBRARY_PATH=$(pwd)/libs/linux:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh linux
 
       - name: Install frontend deps
         run: |
