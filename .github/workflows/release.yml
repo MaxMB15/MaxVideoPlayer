@@ -42,6 +42,9 @@ jobs:
     # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
     # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
     runs-on: macos-15
+    # The Apple signing secrets live in this environment, which waits for a
+    # reviewer to approve the job before it starts.
+    environment: macos-signing
     env:
       CARGO_HOME: /Users/runner/.cargo
     permissions:

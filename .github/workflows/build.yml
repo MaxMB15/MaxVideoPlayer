@@ -196,6 +196,9 @@ jobs:
     # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
     # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
     runs-on: macos-15
+    # Manual runs sign, so they use the environment that holds the Apple
+    # secrets and wait for approval. Push and PR builds use no environment.
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'macos-signing' || '' }}
     steps:
       - uses: actions/checkout@v5
 
