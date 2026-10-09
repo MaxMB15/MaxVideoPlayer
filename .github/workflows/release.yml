@@ -39,7 +39,9 @@ jobs:
 
   release-macos:
     needs: [prepare-release]
-    runs-on: macos-latest
+    # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
+    # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
+    runs-on: macos-15
     env:
       CARGO_HOME: /Users/runner/.cargo
     permissions:

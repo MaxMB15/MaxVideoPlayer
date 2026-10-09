@@ -183,7 +183,9 @@ jobs:
   build-macos:
     if: needs.detect-changes.outputs.macos == 'true' && !startsWith(github.head_ref, 'chore-bump-v')
     needs: [test, detect-changes]
-    runs-on: macos-latest
+    # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
+    # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
 
