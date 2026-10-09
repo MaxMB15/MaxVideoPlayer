@@ -12,6 +12,15 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_store::StoreExt;
+
+/// The download folder and concurrency live in the same store file as the
+/// other settings so they survive a restart.
+const SETTINGS_STORE_FILE: &str = "settings.json";
+const FOLDER_KEY: &str = "download_folder";
+const CONCURRENCY_KEY: &str = "download_concurrency";
+/// Matches the range the Settings page allows.
+const MAX_CONCURRENCY: usize = 10;
 
 /// Wrapper so we store the plugin's CommandChild (which exposes `kill`).
 pub struct RunningChildHandle {
@@ -51,6 +60,50 @@ impl DownloadManager {
     pub fn set_concurrency(&self, n: usize) {
         *self.concurrency.lock().unwrap() = n.max(1);
     }
+}
+
+/// Apply the download folder and concurrency saved in an earlier session.
+/// Call once after `DownloadManager` is managed. A missing or unreadable
+/// store leaves the defaults in place.
+pub fn restore_settings<R: Runtime>(app: &AppHandle<R>) {
+    let store = match app.store(SETTINGS_STORE_FILE) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Could not open the settings store for download settings: {e}");
+            return;
+        }
+    };
+    let manager = app.state::<DownloadManager>();
+    if let Some(folder) = store
+        .get(FOLDER_KEY)
+        .and_then(|v| v.as_str().map(str::to_string))
+        .filter(|s| !s.is_empty())
+    {
+        manager.set_root(PathBuf::from(folder));
+    }
+    if let Some(n) = store.get(CONCURRENCY_KEY).and_then(|v| v.as_u64()) {
+        manager.set_concurrency((n as usize).min(MAX_CONCURRENCY));
+    }
+}
+
+/// Save the download folder so the next launch uses it.
+pub fn save_folder<R: Runtime>(app: &AppHandle<R>, folder: &str) -> Result<(), String> {
+    save_setting(app, FOLDER_KEY, serde_json::Value::from(folder))
+}
+
+/// Save the download concurrency so the next launch uses it.
+pub fn save_concurrency<R: Runtime>(app: &AppHandle<R>, n: usize) -> Result<(), String> {
+    save_setting(app, CONCURRENCY_KEY, serde_json::Value::from(n))
+}
+
+fn save_setting<R: Runtime>(
+    app: &AppHandle<R>,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let store = app.store(SETTINGS_STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(key, value);
+    store.save().map_err(|e| e.to_string())
 }
 
 /// Create a queued DownloadRecord for a channel and persist it. Returns the id.

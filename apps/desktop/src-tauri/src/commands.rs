@@ -1514,6 +1514,9 @@ pub async fn set_download_concurrency(
     app: AppHandle,
     n: usize,
 ) -> Result<(), String> {
+    // Save first, so a failed write leaves the running limit unchanged.
+    let n = n.max(1);
+    manager::save_concurrency(&app, n)?;
     manager.set_concurrency(n);
     manager::pump(&app)?;
     Ok(())
@@ -1527,9 +1530,12 @@ pub async fn get_download_concurrency(manager: State<'_, DownloadManager>) -> Re
 #[command]
 pub async fn set_download_folder(
     manager: State<'_, DownloadManager>,
+    app: AppHandle,
     path: String,
 ) -> Result<(), String> {
-    manager.set_root(std::path::PathBuf::from(path));
+    // Save first, so a failed write doesn't switch the folder for this session only.
+    manager::save_folder(&app, &path)?;
+    manager.set_root(std::path::PathBuf::from(&path));
     Ok(())
 }
 

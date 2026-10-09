@@ -38,6 +38,13 @@ import {
 	getDownloadConcurrency,
 	setDownloadConcurrency,
 } from "@/lib/tauri";
+import {
+	MAX_VOLUME,
+	readDefaultVolume,
+	readHwdecEnabled,
+	writeDefaultVolume,
+	writeHwdecEnabled,
+} from "@/lib/player-prefs";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { DownloadHistoryDialog } from "./DownloadHistory";
 
@@ -79,8 +86,19 @@ interface SettingsProps {
 export const Settings = ({ updateState }: SettingsProps) => {
 	const { platform, layoutMode } = usePlatform();
 	const [appVersion, setAppVersion] = useState("");
-	const [hwAccel, setHwAccel] = useState(true);
-	const [defaultVolume, setDefaultVolume] = useState(100);
+	const [hwAccel, setHwAccel] = useState(readHwdecEnabled);
+	const [defaultVolume, setDefaultVolume] = useState(readDefaultVolume);
+
+	const handleHwAccelToggle = () => {
+		const next = !hwAccel;
+		setHwAccel(next);
+		writeHwdecEnabled(next);
+	};
+
+	const handleDefaultVolumeChange = (volume: number) => {
+		setDefaultVolume(volume);
+		writeDefaultVolume(volume);
+	};
 
 	// OMDB state
 	const [omdbKey, setOmdbKey] = useState("");
@@ -355,15 +373,19 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					<CardContent className="space-y-4">
 						<div className="flex items-center justify-between">
 							<div>
-								<p className="text-sm font-medium">Hardware Acceleration</p>
+								<p className="text-sm font-medium">Hardware decoding</p>
 								<p className="text-xs text-muted-foreground">
-									Use GPU decoding when available
+									Decode video on the GPU when possible. Turn off if
+									video shows artifacts or green frames. Applies to the
+									next video you play.
 								</p>
 							</div>
 							<Button
 								variant={hwAccel ? "default" : "secondary"}
 								size="sm"
-								onClick={() => setHwAccel(!hwAccel)}
+								aria-label="Hardware decoding"
+								aria-pressed={hwAccel}
+								onClick={handleHwAccelToggle}
 							>
 								{hwAccel ? "On" : "Off"}
 							</Button>
@@ -371,7 +393,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 
 						<div>
 							<div className="flex items-center justify-between mb-2">
-								<p className="text-sm font-medium">Default Volume</p>
+								<p className="text-sm font-medium">Default volume</p>
 								<span className="text-sm text-muted-foreground">
 									{defaultVolume}%
 								</span>
@@ -379,10 +401,15 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							<Slider
 								value={defaultVolume}
 								min={0}
-								max={150}
+								max={MAX_VOLUME}
 								step={5}
-								onValueChange={setDefaultVolume}
+								onValueChange={handleDefaultVolumeChange}
+								aria-label="Default volume"
 							/>
+							<p className="text-xs text-muted-foreground mt-2">
+								Playback starts at this volume. Changes you make in the
+								player last until you quit the app.
+							</p>
 						</div>
 					</CardContent>
 				</Card>
@@ -820,7 +847,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardHeader>
 					<CardContent className="space-y-3">
 						<p className="text-sm text-muted-foreground">
-							Max Video Player is free and open source. If you find it useful,
+							Max Video Player is free for noncommercial use. If you find it useful,
 							consider supporting development.
 						</p>
 						<div className="flex items-center gap-4">
