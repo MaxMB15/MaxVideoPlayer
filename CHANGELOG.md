@@ -4,6 +4,16 @@ All notable changes to Max Video Player are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- Max Video Player is now licensed under the GNU General Public License version 3. Its additional terms require modified versions to credit the original on their About screen and to use their own name and icon. Releases up to 0.5.3 stay under the PolyForm Noncommercial License 1.0.0. See NOTICE and TRADEMARKS.md (#75).
+- Pull requests now need the contributor agreement in CLA.md (#75).
+
+### Added
+
+- Settings > About shows the copyright and license, with links to the license, the source code of the version you're running, and the third-party notices (#75).
+- THIRD_PARTY_NOTICES.md lists the licenses of mpv, FFmpeg and every library bundled in the macOS app. The app now includes it, along with LICENSE, NOTICE and TRADEMARKS.md (#75).
+
 ## [0.5.3] - 2026-10-09
 
 ### Added

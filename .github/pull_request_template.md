@@ -16,3 +16,4 @@
 - [ ] `npm run lint`, `npm test` and `cargo check` pass
 - [ ] User-facing changes are added to the `Unreleased` section of `CHANGELOG.md`
 - [ ] No playlist URLs, logins or API keys in the code, tests or screenshots
+- [ ] I have read the [Contributor License Agreement](https://github.com/MaxMB15/MaxVideoPlayer/blob/main/CLA.md) and agree to it

@@ -11,7 +11,7 @@ Add your M3U playlist or Xtream Codes account and watch live TV, movies and seri
 [![Downloads](https://img.shields.io/github/downloads/MaxMB15/MaxVideoPlayer/total)](https://github.com/MaxMB15/MaxVideoPlayer/releases)
 [![Build](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
 [![Coverage](https://MaxMB15.github.io/MaxVideoPlayer/coverage/badge.svg)](https://MaxMB15.github.io/MaxVideoPlayer/coverage/)
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 
 [Download](#download) · [Features](#features) · [Getting started](#getting-started) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md) · [Disclaimer](#disclaimer)
 
@@ -179,8 +179,18 @@ The app is provided as is, without warranty of any kind. As far as the law allow
 
 ## License
 
-Max Video Player is free for personal and other noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use isn't permitted.
+Max Video Player is free software. Anyone can use it for any purpose, and you can study, change and share the code under the [GNU General Public License version 3](LICENSE). Anything you distribute that's based on it has to use the same license and come with its source code.
+
+The license has a few [additional terms](NOTICE), which section 7 of the GPL allows:
+
+- Modified versions have to keep the credit "Based on Max Video Player by Max Boksem" on their About screen.
+- Modified versions need their own name and icon. The license doesn't cover the Max Video Player name or logo. See [TRADEMARKS.md](TRADEMARKS.md).
+- The author's name can't be used to promote another product without permission.
+
+If you need other terms, for example to ship it in a closed-source product, a commercial license is available. Get in touch through [github.com/MaxMB15](https://github.com/MaxMB15).
+
+Releases up to and including 0.5.3 were published under the PolyForm Noncommercial License 1.0.0.
 
 It's an independent project and isn't affiliated with Max, Warner Bros. Discovery, or any product with a similar name.
 
-Built with [Tauri](https://tauri.app), [mpv](https://mpv.io), [FFmpeg](https://ffmpeg.org) and [React](https://react.dev).
+Built with [Tauri](https://tauri.app), [mpv](https://mpv.io), [FFmpeg](https://ffmpeg.org) and [React](https://react.dev). [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists their licenses and where to get their source code.
