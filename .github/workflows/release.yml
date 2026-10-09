@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Create draft GitHub release (if missing)
         env:
@@ -46,7 +46,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -58,7 +58,7 @@ jobs:
           cache-on-failure: true
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -179,7 +179,7 @@ jobs:
           fi
 
       - name: Upload macOS updater signature
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-updater-sig
           path: target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig
@@ -220,7 +220,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -232,7 +232,7 @@ jobs:
           cache-on-failure: true
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -344,7 +344,7 @@ jobs:
           fi
 
       - name: Upload Linux updater signature
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-updater-sig
           path: target/release/bundle/MaxVideoPlayer_linux.tar.gz.sig
@@ -395,10 +395,10 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download updater signatures
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: sigs
 
@@ -465,7 +465,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}
