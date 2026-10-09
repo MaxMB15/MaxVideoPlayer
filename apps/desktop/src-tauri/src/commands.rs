@@ -1515,6 +1515,7 @@ pub async fn set_download_concurrency(
     n: usize,
 ) -> Result<(), String> {
     manager.set_concurrency(n);
+    manager::save_concurrency(&app, manager.concurrency())?;
     manager::pump(&app)?;
     Ok(())
 }
@@ -1527,10 +1528,11 @@ pub async fn get_download_concurrency(manager: State<'_, DownloadManager>) -> Re
 #[command]
 pub async fn set_download_folder(
     manager: State<'_, DownloadManager>,
+    app: AppHandle,
     path: String,
 ) -> Result<(), String> {
-    manager.set_root(std::path::PathBuf::from(path));
-    Ok(())
+    manager.set_root(std::path::PathBuf::from(&path));
+    manager::save_folder(&app, &path)
 }
 
 #[command]
