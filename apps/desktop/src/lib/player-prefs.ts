@@ -22,6 +22,12 @@ export interface VolumePreference {
 
 const clampVolume = (v: number): number => Math.min(MAX_VOLUME, Math.max(0, Math.round(v)));
 
+const isVolumePreference = (v: unknown): v is VolumePreference =>
+	typeof v === "object" &&
+	v !== null &&
+	Number.isFinite((v as VolumePreference).volume) &&
+	Number.isFinite((v as VolumePreference).preMute);
+
 /** The volume playback starts at in a new session (Settings → Default volume). */
 export const readDefaultVolume = (): number => {
 	try {
@@ -49,7 +55,10 @@ export const writeDefaultVolume = (volume: number): void => {
 export const readVolumePreference = (): VolumePreference => {
 	try {
 		const raw = sessionStorage.getItem(VOLUME_KEY);
-		if (raw) return JSON.parse(raw) as VolumePreference;
+		const saved: unknown = raw ? JSON.parse(raw) : null;
+		if (isVolumePreference(saved)) {
+			return { volume: clampVolume(saved.volume), preMute: clampVolume(saved.preMute) };
+		}
 	} catch {}
 	const volume = readDefaultVolume();
 	return { volume, preMute: volume > 0 ? volume : BUILTIN_VOLUME };

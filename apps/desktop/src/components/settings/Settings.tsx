@@ -383,6 +383,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							<Button
 								variant={hwAccel ? "default" : "secondary"}
 								size="sm"
+								aria-label="Hardware decoding"
 								aria-pressed={hwAccel}
 								onClick={handleHwAccelToggle}
 							>
@@ -406,7 +407,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 								aria-label="Default volume"
 							/>
 							<p className="text-xs text-muted-foreground mt-2">
-								The volume playback starts at. Changes you make in the
+								Playback starts at this volume. Changes you make in the
 								player last until you quit the app.
 							</p>
 						</div>

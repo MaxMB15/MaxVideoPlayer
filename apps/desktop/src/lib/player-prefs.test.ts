@@ -59,6 +59,14 @@ describe("player-prefs", () => {
 			writeDefaultVolume(90);
 			expect(readVolumePreference()).toEqual({ volume: 90, preMute: 90 });
 		});
+
+		it("ignores session data that isn't a volume preference", () => {
+			writeDefaultVolume(70);
+			for (const bad of ["null", "42", "{}", '{"volume":"loud","preMute":50}', "not json"]) {
+				sessionStorage.setItem("mvp_volume", bad);
+				expect(readVolumePreference()).toEqual({ volume: 70, preMute: 70 });
+			}
+		});
 	});
 
 	describe("hardware decoding", () => {
