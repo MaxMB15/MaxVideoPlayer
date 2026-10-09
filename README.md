@@ -15,6 +15,10 @@ Add your M3U playlist or Xtream Codes account and watch live TV, movies and seri
 
 [Download](#download) · [Features](#features) · [Getting started](#getting-started) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md)
 
+<br>
+
+<img src="docs/images/channels.jpg" alt="The live TV tab: recently played channels, category filters, and a programme guide timeline for each channel">
+
 </div>
 
 ## Download
@@ -96,6 +100,13 @@ chmod +x MaxVideoPlayer_amd64.AppImage
 - Automatic updates, checked at launch and every two hours
 
 OpenSubtitles, OMDb and Gemini each need a free API key, which you add in Settings.
+
+<p align="center">
+  <img src="docs/images/movies.jpg" width="49%" alt="The movies tab: a poster grid with genre filters, favorites and download status">
+  <img src="docs/images/movie-details.jpg" width="49%" alt="A movie's details: poster, rating, cast, plot, source picker, and Play and Download buttons">
+</p>
+
+<p align="center"><sub>Screenshots use made-up channels and titles.</sub></p>
 
 ## Getting started
 
