@@ -94,7 +94,8 @@ gh secret set APPLE_API_PRIVATE_KEY < AuthKey_ABC123DEFG.p8
 ```
 
 With only the two certificate secrets set, builds are signed but not notarized. Set
-either none or all three API key secrets; a partial set fails the build.
+either none or all three API key secrets; a partial set fails the build. So do API
+key secrets without the certificate, since Apple only notarizes signed apps.
 
 Delete the `.p12` and `.p8` files afterwards, or keep them in a password manager.
 
