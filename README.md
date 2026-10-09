@@ -1,190 +1,176 @@
+<div align="center">
+
+<img src="apps/desktop/src-tauri/icons/128x128@2x.png" width="128" height="128" alt="Max Video Player icon">
+
 # Max Video Player
 
-[![Build & Bundle](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/MaxMB15/MaxVideoPlayer/build.yml?branch=main&label=tests&job=test)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
+A fast desktop IPTV player for macOS and Linux.<br>
+Add your M3U playlist or Xtream Codes account and watch live TV, movies and series in one app.
+
+[![Latest release](https://img.shields.io/github/v/release/MaxMB15/MaxVideoPlayer?label=release)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/MaxMB15/MaxVideoPlayer/total)](https://github.com/MaxMB15/MaxVideoPlayer/releases)
+[![Build](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/build.yml)
 [![Coverage](https://MaxMB15.github.io/MaxVideoPlayer/coverage/badge.svg)](https://MaxMB15.github.io/MaxVideoPlayer/coverage/)
-[![Release](https://img.shields.io/github/v/release/MaxMB15/MaxVideoPlayer?include_prereleases&label=release)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
-> **Want to use Max Video Player?** Download the latest release for your platform:
-> **[macOS (.dmg)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)** | **[Linux (.deb / .rpm / .AppImage)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest)**
->
-> No build required — just download, install, and run.
+[Download](#download) · [Features](#features) · [Getting started](#getting-started) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md)
 
-A cross-platform IPTV player built with **Tauri v2**, **React**, and **libmpv**. The Rust core (`mvp-core`) handles M3U/Xtream/EPG parsing and SQLite caching across all targets. A custom `tauri-plugin-mpv` embeds libmpv directly into the native window — using `NSOpenGLView` on macOS and EGL + X11/Wayland subsurfaces on Linux — for hardware-accelerated playback of virtually any IPTV protocol (HLS, RTMP, RTSP, TS, etc.).
+<br>
 
-See [LICENSE](LICENSE) for terms, [NOTICE](NOTICE) for trademark and legal disclaimers.
+<img src="docs/images/channels.jpg" alt="The live TV tab: recently played channels, category filters, and a programme guide timeline for each channel">
 
-## Platform Support
+</div>
 
-| Platform | Status | Video | Packages |
-|----------|--------|-------|----------|
-| macOS | Active | libmpv embedded (NSOpenGLView + OpenGL Core 3.2) | `.dmg` |
-| Linux | Active | libmpv embedded (EGL + X11 child window / Wayland subsurface) | `.deb`, `.rpm`, `.AppImage` |
-| Windows | Planned | libmpv | |
-| iOS / iPadOS | Planned | AVPlayer + mvp-core via UniFFI | |
-| Android / Fire Stick | Planned | ExoPlayer + mvp-core via JNI | |
+## Download
 
-**macOS requirements:** macOS 15 (Sequoia) or later on Apple Silicon. Intel Macs are not supported.
+| Platform | Download | Requirements |
+| --- | --- | --- |
+| **macOS** | [**Apple Silicon (.dmg)**](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/MaxVideoPlayer_aarch64.dmg) | macOS 15 Sequoia or later on an M-series Mac |
+| **Linux** | [**AppImage**](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/MaxVideoPlayer_amd64.AppImage) · [Debian / Ubuntu (.deb)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/MaxVideoPlayer_amd64.deb) · [Fedora (.rpm)](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/MaxVideoPlayer_x86_64.rpm) | x86_64 |
+| Windows | Planned | |
+| iOS, iPadOS | Planned | |
+| Android, Fire TV | Planned | |
 
-## Architecture
+These links always point at the newest version. Older versions and release notes are on the [releases page](https://github.com/MaxMB15/MaxVideoPlayer/releases), and the [changelog](CHANGELOG.md) lists what changed in each one. Once installed, the app updates itself.
 
-```
-MaxVideoPlayer/
-├── crates/
-│   ├── core/                  # mvp-core — M3U, Xtream Codes, EPG, SQLite cache
-│   └── tauri-plugin-mpv/      # Custom Tauri plugin wrapping libmpv2
-│       ├── src/engine.rs      # MpvEngine — libmpv lifecycle
-│       ├── src/renderer.rs    # PlatformRenderer trait
-│       ├── src/macos.rs       # NSOpenGLView + OpenGL Core 3.2 (macOS)
-│       ├── src/linux.rs       # EGL + X11/Wayland (Linux)
-│       ├── src/mpv.rs         # MpvState — Tauri managed state
-│       └── src/commands.rs    # Tauri command handlers
-├── apps/
-│   └── desktop/
-│       ├── src-tauri/         # Tauri app entry point
-│       └── src/               # React frontend (TypeScript)
-│           ├── components/    # UI components by domain
-│           ├── hooks/         # useMpv, useChannels, usePlatform
-│           └── lib/tauri.ts   # All invoke() calls in one place
-├── libs/                      # libmpv binaries (gitignored, built by script)
-└── scripts/
-    ├── build-libmpv.sh            # Build libmpv from source (macOS/Linux)
-    ├── bundle-libmpv.sh           # Platform dispatch for bundling at release
-    └── bundle-libmpv-linux.sh     # Bundle .so deps for Linux AppImage
-```
+There's no version for Intel Macs or for macOS 14 and earlier. Older releases claimed to support them, but their bundled libraries needed macOS 15 on Apple Silicon too.
 
-## macOS Setup
+### Installing
 
-Homebrew's `mpv` formula is Vulkan-only. The embedded renderer requires OpenGL, so libmpv must be built from source:
+**macOS.** Open the DMG and drag Max Video Player into Applications.
+
+<details>
+<summary>macOS says the app "can't be opened" or "is damaged"</summary>
+
+<br>
+
+Releases that aren't notarized by Apple are blocked by Gatekeeper the first time you open them. To open the app anyway:
+
+1. Try to open Max Video Player once and close the warning.
+2. Open System Settings → Privacy & Security, scroll down, and click **Open Anyway** next to the message about Max Video Player.
+3. Confirm with your password or Touch ID.
+
+If macOS says the app is damaged, run this in Terminal and open it again:
 
 ```bash
-# Install build dependencies
-# Note: ffmpeg@7 required — mpv 0.40.0 uses APIs removed in ffmpeg 8.x
-brew install meson ninja pkg-config ffmpeg@7 libass dylibbundler
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-# Build libmpv from source (~3 min first run)
-./scripts/build-libmpv.sh macos
+xattr -dr com.apple.quarantine "/Applications/Max Video Player.app"
 ```
 
-This clones the mpv source into `libs/mpv-src/` and outputs `libs/macos/libmpv.dylib`. Subsequent runs skip the clone.
+</details>
 
-## Linux (Ubuntu) Setup
-
-Install system dependencies:
+**Linux AppImage.** It includes libmpv, so there's nothing else to install:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-  libmpv-dev libegl-dev \
-  libgtk-3-dev libwebkit2gtk-4.1-dev \
-  libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-  libayatana-appindicator3-dev \
-  libssl-dev pkg-config librsvg2-dev \
-  patchelf
+chmod +x MaxVideoPlayer_amd64.AppImage
+./MaxVideoPlayer_amd64.AppImage
 ```
 
-The system `libmpv-dev` package is used for development. To build libmpv from source instead:
+**Debian and Ubuntu.** `sudo apt install ./MaxVideoPlayer_amd64.deb` installs the app and the libraries it needs, including libmpv.
 
-```bash
-sudo apt-get install meson ninja-build \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-  libass-dev libdrm-dev
-
-./scripts/build-libmpv.sh linux
-export LD_LIBRARY_PATH="$(pwd)/libs/linux:$LD_LIBRARY_PATH"
-```
-
-## Development
-
-```bash
-npm install
-
-# macOS
-export DYLD_LIBRARY_PATH="$(pwd)/libs/macos:$DYLD_LIBRARY_PATH"
-cd apps/desktop && npx tauri dev
-
-# Linux (system libmpv-dev)
-cd apps/desktop && npx tauri dev
-
-# Linux (source-built libmpv)
-export LD_LIBRARY_PATH="$(pwd)/libs/linux:$LD_LIBRARY_PATH"
-cd apps/desktop && npx tauri dev
-```
-
-## Testing
-
-```bash
-cargo test -p mvp-core                  # Rust core tests
-cd apps/desktop && npm test             # Frontend tests (Vitest)
-cd apps/desktop && npm run test:coverage # Frontend tests with coverage report
-```
-
-Coverage reports are generated with `@vitest/coverage-v8` and output to `apps/desktop/coverage/`. Open `coverage/index.html` for a detailed line-by-line breakdown.
-
-## Production Build
-
-```bash
-cd apps/desktop && npx tauri build
-```
-
-On macOS, `bundle-libmpv.sh` runs automatically as `beforeBundleCommand` and uses `dylibbundler` to embed libmpv into the `.app`. On Linux, `bundle-libmpv-linux.sh` bundles `libmpv.so` and its dependencies for AppImage distribution using `ldd` + `patchelf`. For `.deb` and `.rpm`, libmpv is declared as a system dependency.
-
-## Auto-Updates
-
-Max Video Player uses [tauri-plugin-updater](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/updater) to check for new releases on startup. When an update is found, a dismissible banner appears with a one-click install.
-
-### Setting up signing (required for production)
-
-1. Generate a signing keypair:
-   ```bash
-   cd apps/desktop && npx tauri signer generate -w ~/.tauri/maxvideoplayer.key
-   ```
-2. Copy the **public key** output into `apps/desktop/src-tauri/tauri.conf.json` -> `plugins.updater.pubkey`.
-3. Add the **private key** and optional password as GitHub repository secrets:
-   - `TAURI_SIGNING_PRIVATE_KEY` — contents of `~/.tauri/maxvideoplayer.key`
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — password (leave empty if none)
-
-### Releasing a new version
-
-**Recommended (GitHub Actions):** two workflows so rulesets that require **pull requests**, **status checks**, and **verified commits** on `main` still work.
-
-1. **[Release — bump version (PR)](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-bump.yml)** → **Run workflow** and pick **patch** / **minor** / **major** ([semver.org](https://semver.org)). It opens a PR from branch `chore-bump-vX.Y.Z` that updates `tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`, Settings About text, and `Cargo.lock`.
-2. Wait for CI (and Code Scanning if enabled for PRs). **Merge the PR** when green. If your rules require **signed commits** on `main`, prefer **Squash merge** so the merge commit uses your verified identity.
-3. **[Release — push tag](https://github.com/MaxMB15/MaxVideoPlayer/actions/workflows/release-tag.yml)** → **Run workflow**. It reads the version from `tauri.conf.json` on `main`, creates **`vX.Y.Z`**, and pushes the tag so **`release.yml`** runs (builds macOS + Linux, draft GitHub Release, `latest.json`).
-
-**Who can run it:** By default only the **repository owner** login matches the allowlist. For **organization-owned** repos, set a repository **variable** `RELEASE_ALLOWED_ACTORS` (comma-separated GitHub usernames).
-
-**Secret `RELEASE_AUTOMATION_PAT` (required for bump workflow):** add a [fine-grained PAT](https://github.com/settings/tokens?type=beta) as repository secret **`RELEASE_AUTOMATION_PAT`** with **Contents: Read and write** and **Pull requests: Read and write** on this repo. GitHub often blocks the default `GITHUB_TOKEN` from creating pull requests (`createPullRequest`). For **Release — push tag**, the same PAT is optional unless **tag protection** or other rules require it; otherwise `GITHUB_TOKEN` may work.
-
-**Optional:** Uncomment `environment: release` in `.github/workflows/release-bump.yml` and create a [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) named `release` with **required reviewers** so a second approval is required before the version bump runs.
-
-**Local script (same semver rules):** `./scripts/release.sh` from `main` — uses `scripts/bump-version.py` and can merge `main` → `dev` interactively. After merging locally, push tag `vX.Y.Z` or run **Release — push tag** on GitHub.
-
-The `release.yml` workflow (on tag `v*`) builds signed artifacts for macOS (`.dmg`) and Linux (`.deb`, `.rpm`, `.AppImage`), creates a draft GitHub Release, and uploads `latest.json` for the auto-updater.
-
-To sign and notarize the macOS app with a Developer ID certificate, add the Apple secrets described in [docs/macos-signing.md](docs/macos-signing.md). Without them the macOS build is unsigned.
+**Fedora.** `sudo dnf install ./MaxVideoPlayer_x86_64.rpm`
 
 ## Features
 
-- **M3U / M3U+** playlist support (URL and local file)
-- **Xtream Codes** provider support
-- **EPG / XMLTV** programme guide
-- **Favorites** with persistent SQLite storage
-- **Hardware-accelerated** playback (VideoToolbox on macOS, VAAPI/NVDEC on Linux)
-- Sidebar navigation with Channels, Player, Guide, Playlists, and Settings views
-- Channel list with virtual scrolling (`@tanstack/react-virtual`) for large playlists
-- Graceful fallback to a native mpv window if the embedded renderer fails
+**Your playlists**
 
-## Tech Stack
+- M3U and M3U+ playlists from a URL or a file, and Xtream Codes accounts
+- Several providers side by side, each refreshed on a schedule you choose
+- XMLTV programme guide (EPG), shown as a timeline of what's on for each live channel
 
-| Layer | Technology |
-|-------|------------|
-| Desktop shell | Tauri v2 |
-| Frontend | React 18, TypeScript, Tailwind CSS v3 |
-| UI components | shadcn-style (Radix UI primitives) |
-| Video engine | libmpv2 (custom Tauri plugin) |
-| Rust core | mvp-core (M3U, Xtream, EPG, SQLite) |
-| Database | SQLite via rusqlite (bundled) |
-| EPG parsing | quick-xml |
+**Browsing**
+
+- Separate tabs for live TV, movies and series, plus favorites, downloads and watch history
+- Search by channel or title, and on live TV by programme name
+- Pin, rename, reorder and create categories, so a playlist with thousands of channels stays manageable
+
+**Playback**
+
+- Plays nearly every IPTV stream format, including HLS, MPEG-TS, RTMP and RTSP, through [mpv](https://mpv.io) with hardware decoding
+- Reconnects on its own when the stream or your network drops, and picks up where it left off
+- Resumes movies and episodes where you stopped, with next episode and autoplay for series
+- Keyboard shortcuts for playback; press <kbd>?</kbd> in the player to see them
+- Subtitles from OpenSubtitles, with timing and position adjustment
+- Keeps your screen awake while you watch
+
+**More**
+
+- Download movies, episodes or whole seasons to watch offline
+- Plot, cast and ratings for movies and series from OMDb
+- Optional category sorting with Google Gemini
+- Automatic updates, checked at launch and every two hours
+
+OpenSubtitles, OMDb and Gemini each need a free API key, which you add in Settings.
+
+<p align="center">
+  <img src="docs/images/movies.jpg" width="49%" alt="The movies tab: a poster grid with genre filters, favorites and download status">
+  <img src="docs/images/movie-details.jpg" width="49%" alt="A movie's details: poster, rating, cast, plot, source picker, and Play and Download buttons">
+  <img src="docs/images/series.jpg" width="49%" alt="The series tab: recently played shows and a grid of series with favorite and download buttons">
+  <img src="docs/images/series-details.jpg" width="49%" alt="A series' details: rating, creator, cast, plot, a partially downloaded tag, and a download button for each season">
+</p>
+
+<p align="center"><sub>Screenshots use made-up channels and titles.</sub></p>
+
+## Getting started
+
+1. Open **Playlists** and add a provider: an M3U URL, an M3U file, or an Xtream Codes server with your username and password.
+2. If your playlist doesn't come with a programme guide, open the provider's settings and add an EPG (XMLTV) URL.
+3. Go to **Channels** and pick something to watch.
+
+Max Video Player doesn't come with any channels or content. You need a playlist from a provider you're allowed to use.
+
+<p align="center">
+  <img src="docs/images/playlists.jpg" width="49%" alt="The playlists page: the form for adding an M3U or Xtream Codes provider, and two providers already added">
+  <img src="docs/images/settings.jpg" width="49%" alt="Settings: hardware decoding, default volume, and the Gemini and OMDb API key fields">
+</p>
+
+## FAQ
+
+<details>
+<summary>Does Max Video Player collect any data?</summary>
+
+<br>
+
+No. There are no accounts, analytics or telemetry. The app connects to the providers you add, to GitHub to check for updates, and to OMDb, OpenSubtitles or Google Gemini only if you add a key for them. When OMDb finds a title, the app also fetches extra ratings for it from [whatson-api](https://whatson-api.onrender.com). Your playlists, favorites and history stay in a database on your computer.
+
+</details>
+
+<details>
+<summary>Where does the app keep its data?</summary>
+
+<br>
+
+In `~/Library/Application Support/com.maxvideoplayer.app` on macOS and `~/.local/share/com.maxvideoplayer.app` on Linux. Downloads go to the `downloads` folder inside it.
+
+</details>
+
+<details>
+<summary>A stream won't play</summary>
+
+<br>
+
+Check whether the same URL plays in [mpv](https://mpv.io) or VLC. If it does, [open a bug report](https://github.com/MaxMB15/MaxVideoPlayer/issues/new?template=bug_report.yml) with your OS and app version. Leave out your playlist URL and login details.
+
+</details>
+
+<details>
+<summary>The app updated and now won't open (macOS, version 0.5.0 or 0.5.1)</summary>
+
+<br>
+
+Versions 0.5.0 and 0.5.1 crash at launch, before they can check for updates. Download the [latest version](https://github.com/MaxMB15/MaxVideoPlayer/releases/latest/download/MaxVideoPlayer_aarch64.dmg) and install it over the old one. Your playlists and settings are kept.
+
+</details>
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [docs/development.md](docs/development.md) to build the app from source. Report security issues privately as described in [SECURITY.md](SECURITY.md).
+
+If you find the app useful, you can [buy me a coffee](https://buymeacoffee.com/MaxMB15).
+
+## License
+
+Max Video Player is free for personal and other noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use isn't permitted.
+
+It's an independent project and isn't affiliated with Max, Warner Bros. Discovery, or any product with a similar name. Use it only with content you have the rights to watch. See [NOTICE](NOTICE) for the full disclaimer.
+
+Built with [Tauri](https://tauri.app), [mpv](https://mpv.io), [FFmpeg](https://ffmpeg.org) and [React](https://react.dev).
