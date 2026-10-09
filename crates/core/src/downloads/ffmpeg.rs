@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /// Map a container extension to the ffmpeg muxer (`-f`) name. We pass this
 /// explicitly because the download writes to a temporary `.part` file whose
 /// extension ffmpeg cannot use to guess the output format (it would fail with

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import type { Channel } from "./types";
 
 /** Positions earlier than this aren't worth offering a resume for. */

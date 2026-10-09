@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 # Bundle libmpv and its dependencies for Linux AppImage distribution.
 # Analogous to bundle-libmpv.sh (macOS). Uses ldd + patchelf instead of dylibbundler.
 # CWD when run: workspace root (via beforeBundleCommand cwd)

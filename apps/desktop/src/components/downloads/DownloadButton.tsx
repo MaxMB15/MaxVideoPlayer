@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState } from "react";
 import { Download, DownloadCloud, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";

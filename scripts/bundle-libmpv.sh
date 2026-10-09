@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 # Bundle libmpv and its dependencies into the macOS app for distribution.
 # Run as beforeBundleCommand during tauri build. Requires: brew install mpv dylibbundler
 # CWD when run: workspace root (via beforeBundleCommand cwd)

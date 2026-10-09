@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { UpdateState } from "@/hooks/useUpdateChecker";

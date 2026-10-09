@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 use mvp_core::downloads::model::DownloadStatus;
 
 /// Given the currently-active items (queued + downloading) ordered FIFO and a

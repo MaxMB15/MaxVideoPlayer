@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 # validate-release.sh — Verify that a release's download links work: every URL in
 # latest.json, and the versionless installer names the README links to.
 #

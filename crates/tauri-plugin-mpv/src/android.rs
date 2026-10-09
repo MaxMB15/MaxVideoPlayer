@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /// Android-specific MPV embedding (covers Fire Stick + Android phones/tablets).
 ///
 /// On Android, libmpv is loaded as a shared library (libmpv.so) from the

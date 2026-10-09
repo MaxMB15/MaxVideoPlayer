@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 //! PlatformRenderer trait — the contract each OS must implement.
 //! All platform code lives in its own file (macos.rs / windows.rs / etc.)
 //! and is selected at compile time via #[cfg]. This file has no #[cfg] blocks.
