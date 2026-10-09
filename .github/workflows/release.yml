@@ -57,7 +57,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-macos
+          save-if: false
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -231,7 +234,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-linux
+          save-if: false
 
       - name: Setup Node
         uses: actions/setup-node@v5

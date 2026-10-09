@@ -117,6 +117,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Only branch pushes save. A PR's caches can only be used by that PR, and
+          # its three jobs add ~1.7 GB against the repo's 10 GB limit, which was
+          # evicting the dev and main caches that PRs restore from.
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
@@ -197,6 +201,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-macos
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -252,6 +259,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-linux
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
