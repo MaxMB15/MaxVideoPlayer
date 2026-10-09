@@ -16,7 +16,7 @@ const App = () => {
 		setStatus(`Calling ${label}…`);
 		try {
 			const result = await invoke<string>(command, { url });
-			setStatus(`OK — ${result}`);
+			setStatus(`Queued: ${result}`);
 		} catch (err) {
 			setStatus(`ERR (${label}) — ${String(err)}`);
 		}
@@ -38,8 +38,11 @@ const App = () => {
 					maxWidth: 420,
 				}}
 			>
-				<label style={{ fontSize: 12, opacity: 0.7 }}>Stream URL</label>
+				<label htmlFor="stream-url" style={{ fontSize: 12, opacity: 0.7 }}>
+					Stream URL
+				</label>
 				<input
+					id="stream-url"
 					value={url}
 					onChange={(e) => setUrl(e.target.value)}
 					placeholder="https:// or http:// URL"

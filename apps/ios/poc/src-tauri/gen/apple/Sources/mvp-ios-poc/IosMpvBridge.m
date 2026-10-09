@@ -340,7 +340,12 @@
     mpv_set_option_string(self.mpv, "msg-level", "all=v");
 
     int init = mpv_initialize(self.mpv);
-    if (init < 0) { [self logStatus:[NSString stringWithFormat:@"mpv_initialize: %s", mpv_error_string(init)]]; return; }
+    if (init < 0) {
+        [self logStatus:[NSString stringWithFormat:@"mpv_initialize: %s", mpv_error_string(init)]];
+        mpv_terminate_destroy(self.mpv);
+        self.mpv = NULL;
+        return;
+    }
     [self logStatus:@"mpv_initialize OK (gpu-next/moltenvk)"];
 
     mpv_request_log_messages(self.mpv, "v");
@@ -349,8 +354,19 @@
     mpv_observe_property(self.mpv, 3, "pause", MPV_FORMAT_FLAG);
     mpv_observe_property(self.mpv, 4, "paused-for-cache", MPV_FORMAT_FLAG);
 
+    // The event queue owns the handle's teardown: stop sends "quit", and this
+    // block destroys the handle once mpv reports MPV_EVENT_SHUTDOWN, so
+    // mpv_terminate_destroy never runs while mpv_wait_event is waiting.
+    // mpv draws into the view's layer until it's destroyed, so the view is
+    // kept alive until then and released on the main thread.
+    mpv_handle *mpv = self.mpv;
+    __block MpvMetalView *view = self.metalView;
     self.eventQueue = dispatch_queue_create("mpv.events", DISPATCH_QUEUE_SERIAL);
-    dispatch_async(self.eventQueue, ^{ [self pumpEvents]; });
+    dispatch_async(self.eventQueue, ^{
+        [self pumpEvents:mpv];
+        mpv_terminate_destroy(mpv);
+        dispatch_async(dispatch_get_main_queue(), ^{ view = nil; });
+    });
 
     const char *urlC = [url UTF8String];
     const char *cmd[] = { "loadfile", urlC, NULL };
@@ -362,14 +378,26 @@
 
 - (void)configureRemoteCommands {
     MPRemoteCommandCenter *c = [MPRemoteCommandCenter sharedCommandCenter];
-    [c.playCommand addTarget:self action:@selector(togglePause)];
-    [c.pauseCommand addTarget:self action:@selector(togglePause)];
+    [c.playCommand addTarget:self action:@selector(playCmd:)];
+    [c.pauseCommand addTarget:self action:@selector(pauseCmd:)];
     [c.skipForwardCommand addTarget:self action:@selector(skipFwd:)];
     [c.skipBackwardCommand addTarget:self action:@selector(skipBwd:)];
     c.skipForwardCommand.preferredIntervals = @[@10];
     c.skipBackwardCommand.preferredIntervals = @[@10];
 }
 
+- (MPRemoteCommandHandlerStatus)playCmd:(MPRemoteCommandEvent *)e {
+    if (!self.mpv) return MPRemoteCommandHandlerStatusCommandFailed;
+    const char *cmd[] = { "set", "pause", "no", NULL };
+    mpv_command_async(self.mpv, 0, cmd);
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+- (MPRemoteCommandHandlerStatus)pauseCmd:(MPRemoteCommandEvent *)e {
+    if (!self.mpv) return MPRemoteCommandHandlerStatusCommandFailed;
+    const char *cmd[] = { "set", "pause", "yes", NULL };
+    mpv_command_async(self.mpv, 0, cmd);
+    return MPRemoteCommandHandlerStatusSuccess;
+}
 - (MPRemoteCommandHandlerStatus)skipFwd:(MPRemoteCommandEvent *)e {
     if (!self.mpv) return MPRemoteCommandHandlerStatusCommandFailed;
     const char *cmd[] = { "seek", "10", "relative", NULL };
@@ -411,9 +439,9 @@
                      completion:^(BOOL _) { [flash removeFromSuperview]; }];
 }
 
-- (void)pumpEvents {
-    while (self.mpv) {
-        mpv_event *ev = mpv_wait_event(self.mpv, 0.5);
+- (void)pumpEvents:(mpv_handle *)mpv {
+    for (;;) {
+        mpv_event *ev = mpv_wait_event(mpv, -1);
         if (!ev || ev->event_id == MPV_EVENT_NONE) continue;
         if (ev->event_id == MPV_EVENT_SHUTDOWN) break;
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
@@ -475,7 +503,13 @@
     [c.skipBackwardCommand removeTarget:self];
     [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = nil;
 
-    if (self.mpv) { mpv_terminate_destroy(self.mpv); self.mpv = NULL; }
+    // Ask mpv to quit; the event queue destroys the handle after shutdown.
+    mpv_handle *mpv = self.mpv;
+    self.mpv = NULL;
+    if (mpv) {
+        const char *cmd[] = { "quit", NULL };
+        mpv_command_async(mpv, 0, cmd);
+    }
     [self.modal dismissViewControllerAnimated:YES completion:nil];
     self.modal = nil;
     self.metalView = nil;

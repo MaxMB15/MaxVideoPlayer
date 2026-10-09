@@ -29,7 +29,6 @@
 		B46524674A5BB9BBCB0675A5 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0BEC3087F08CFBB1562D67AB /* WebKit.framework */; };
 		B88A713D22CB2DE358646EFF /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2553A47ECF2C8F67091FA715 /* MediaPlayer.framework */; };
 		BA4739C2BAB3D00C0DB8B060 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 47DFCD5B4F44C2A5C628BF17 /* libapp.a */; };
-		BBC28027C69A58B2191AA430 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 4E6976EA926EB45E12AB9FC9 /* libapp.a */; };
 		DA30D61B79EE9329BDF7A279 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EE2298D4828DB102488CEC07 /* AudioToolbox.framework */; };
 		DC9ED26C34F50A28B5B6FAA4 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C35AA6CC2F24CF6AD535E9B6 /* libc++.tbd */; };
 		DEF592C74E16AF0EF49B0F1E /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = A598AEDF7BABB78D99E89BDC /* main.mm */; };
@@ -48,7 +47,6 @@
 		47DFCD5B4F44C2A5C628BF17 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		48E7426D236B73887DF7C9C6 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		4D522C28AE4DE69E716BE6E3 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
-		4E6976EA926EB45E12AB9FC9 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		7532FAA61D11F239E1E7F0B7 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		845264D2A04F6DF31DD1B771 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
 		84C909A9F5A30BB90A6821AF /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
@@ -105,29 +103,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		1CE87D7410098FA597BCE26F /* debug */ = {
-			isa = PBXGroup;
-			children = (
-				4E6976EA926EB45E12AB9FC9 /* libapp.a */,
-			);
-			path = debug;
-			sourceTree = "<group>";
-		};
-		22BDA02567132E14E77050CB /* arm64 */ = {
-			isa = PBXGroup;
-			children = (
-				1CE87D7410098FA597BCE26F /* debug */,
-			);
-			path = arm64;
-			sourceTree = "<group>";
-		};
 		29A45B8A21EF6287923F7AD3 = {
 			isa = PBXGroup;
 			children = (
 				8E13CB76866B93C6D9217364 /* assets */,
 				0B087F490A011882963DF37A /* Assets.xcassets */,
 				FEF0846BBE23A6D9F3F8D0D1 /* LaunchScreen.storyboard */,
-				4AD2434BB776D8CE9EC1A808 /* Externals */,
 				665F05F424B81E4E9E7C6BA0 /* mvp-ios-poc_iOS */,
 				FEF1BA4D7E825FD786182608 /* Sources */,
 				574C9187049A9EBFD6BAA271 /* src */,
@@ -142,14 +123,6 @@
 				9EFF69CCE212F078D70F2B44 /* mvp-ios-poc_iOS.app */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		4AD2434BB776D8CE9EC1A808 /* Externals */ = {
-			isa = PBXGroup;
-			children = (
-				22BDA02567132E14E77050CB /* arm64 */,
-			);
-			path = Externals;
 			sourceTree = "<group>";
 		};
 		574C9187049A9EBFD6BAA271 /* src */ = {
@@ -225,13 +198,6 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		"TEMP_E844DB96-DD0A-415F-93A2-C1421578BFF8" /* x86_64 */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = x86_64;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -301,7 +267,6 @@
 				0699332CC049BADFD9F72B58 /* Assets.xcassets in Resources */,
 				A6E4907247B2CFBFC05E3E57 /* LaunchScreen.storyboard in Resources */,
 				1DBB5E38CDE1AB4FED0B6510 /* assets in Resources */,
-				BBC28027C69A58B2191AA430 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

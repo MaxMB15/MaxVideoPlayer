@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Convenience runner: builds ffmpeg + libplacebo + libass (+freetype/fribidi/harfbuzz) + libmpv
-# for iOS (aarch64-apple-ios) in dependency order. Each sub-script is idempotent
-# and skips already-built libs, so re-running is cheap.
+# for iOS (aarch64-apple-ios) in dependency order. Re-running reuses the cloned
+# sources and skips libass and its dependencies once they're built, but it reruns
+# ffmpeg's configure and make and rebuilds libplacebo and libmpv from scratch.
 #
 # Usage: ./scripts/build-all-ios.sh
 

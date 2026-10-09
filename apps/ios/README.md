@@ -27,7 +27,7 @@ device has not been confirmed yet.
 
 Requirements:
 
-- macOS with Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+- macOS with Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
   (`brew install xcodegen`)
 - Rust iOS targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`
 - Tauri CLI as a cargo subcommand: `cargo install tauri-cli` (the Xcode

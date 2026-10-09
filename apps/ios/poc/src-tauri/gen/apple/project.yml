@@ -36,7 +36,6 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
       - path: mvp-ios-poc_iOS
       - path: assets
         buildPhase: resources
@@ -50,6 +49,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         UIRequiredDeviceCapabilities: [arm64, metal]
+        UIBackgroundModes: [audio]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

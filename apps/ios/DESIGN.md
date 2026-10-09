@@ -16,7 +16,7 @@
 
 Port MaxVideoPlayer to iOS and iPadOS while preserving the existing Tauri + Rust + React architecture. The core bet: **Tauri Mobile (v2) + a dual-engine player** where AVPlayer handles App‑Store‑friendly formats (HLS/MP4) and libmpv handles everything else (RTMP/RTSP/raw‑TS/UDP/MKV) on sideloaded builds. React components are reused verbatim for iPad landscape, lightly re-composed for iPad portrait, and a subset are rebuilt as a purpose-built iPhone shell.
 
-Distribution rolls out in phases: **sideload (AltStore) first**, then **Apple Developer ID**, then optionally an **App Store build** that compiles the MPV engine out via Cargo feature.
+Distribution rolls out in phases: **sideload (AltStore) first**, then the **Apple Developer Program**, then optionally an **App Store build** that compiles the MPV engine out via Cargo feature.
 
 ---
 
@@ -27,7 +27,7 @@ Distribution rolls out in phases: **sideload (AltStore) first**, then **Apple De
 | Mobile framework         | Tauri v2 Mobile                                                                                                                                          | Preserves Rust core + React UI; already wired (`cfg_attr(mobile, tauri::mobile_entry_point)`) and `staticlib`/`cdylib` crate types in place. |
 | Player engine            | Dual: AVPlayer default, libmpv fallback via `PlayerEngine` trait + URL router                                                                            | AVPlayer covers ~80% of modern IPTV for free; libmpv fills protocol gaps. Single abstraction keeps call sites uniform.                       |
 | App Store build          | Cargo feature `mpv-engine`, default‑off on `ios-appstore` profile                                                                                        | Strips libmpv entirely — avoids GPL / binary‑size / license review risk.                                                                     |
-| Distribution order       | Sideload → Developer ID → App Store                                                                                                                      | Ship fast with full format support; App Store gets the AVPlayer‑only subset later.                                                           |
+| Distribution order       | Sideload → Developer Program → App Store                                                                                                                 | Ship fast with full format support; App Store gets the AVPlayer‑only subset later.                                                           |
 | Device scope             | iPhone + iPad, iOS 17+                                                                                                                                   | iOS 17 unlocks modern SwiftUI/AVKit APIs and aligns with current Tauri mobile toolchain. No legacy device burden.                            |
 | UI composition           | Three-tier responsive: Desktop ≈ iPad‑Landscape (same code), iPad‑Portrait (tweaked composition), iPhone (rebuilt shell)                                 | Tauri gives us ~95% component reuse on iPad; iPhone needs native patterns (tab bar, sheets).                                                 |
 | iPhone EPG               | Hybrid A+C — "Live" tab as home (channel cards w/ now-playing + ⓘ), drawer opens per-channel vertical schedule. No standalone EPG tab, no mini timeline. | Grid is unreadable at 390 px; per-channel drawer is the iOS‑native pattern.                                                                  |
@@ -164,7 +164,7 @@ Donation popup (App Store IAP rules) · Updater plugin (App Store handles it; si
 - Distributed as `.ipa` on GitHub Releases alongside desktop artifacts.
 - 7‑day re‑sign cadence for free Apple IDs; AltStore handles refresh.
 
-### Phase B — Apple Developer ID ($99/yr)
+### Phase B — Apple Developer Program ($99/yr)
 
 - Same binary as Phase A, signed with paid cert → 1‑year re‑sign cadence.
 - Enables TestFlight for beta testers (up to 10k users).
