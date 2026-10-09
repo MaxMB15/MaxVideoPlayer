@@ -7,9 +7,11 @@ pub async fn mpv_load<R: Runtime>(
     state: State<'_, MpvState>,
     url: String,
     start_pos: Option<f64>,
+    hwdec: Option<bool>,
 ) -> Result<(), String> {
-    tracing::info!("[MPV cmd] load url={} start_pos={:?}", url, start_pos);
-    state.load(&url, start_pos, &app)?;
+    let hwdec = hwdec.unwrap_or(true);
+    tracing::info!("[MPV cmd] load url={} start_pos={:?} hwdec={}", url, start_pos, hwdec);
+    state.load(&url, start_pos, hwdec, &app)?;
     tracing::debug!("[MPV cmd] load complete, state={:?}", state.get_state());
     Ok(())
 }

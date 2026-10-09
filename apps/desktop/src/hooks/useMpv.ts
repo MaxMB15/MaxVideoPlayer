@@ -10,6 +10,7 @@ import {
 	mpvSetVolume,
 	mpvGetState,
 } from "@/lib/tauri";
+import { readHwdecEnabled, readVolumePreference, writeVolumePreference } from "@/lib/player-prefs";
 
 const DEFAULT_STATE: PlayerState = {
 	isPlaying: false,
@@ -18,32 +19,6 @@ const DEFAULT_STATE: PlayerState = {
 	volume: 100,
 	position: 0,
 	duration: 0,
-};
-
-// The volume preference outlives the hook: the player can be left and
-// reopened (remounting this hook) while the app keeps running.
-const VOLUME_KEY = "mvp_volume";
-
-interface VolumePreference {
-	/** The volume the user last chose. */
-	volume: number;
-	/** Volume to restore when unmuting. */
-	preMute: number;
-}
-
-const readVolumePreference = (): VolumePreference | null => {
-	try {
-		const raw = sessionStorage.getItem(VOLUME_KEY);
-		return raw ? (JSON.parse(raw) as VolumePreference) : null;
-	} catch {
-		return null;
-	}
-};
-
-const writeVolumePreference = (pref: VolumePreference): void => {
-	try {
-		sessionStorage.setItem(VOLUME_KEY, JSON.stringify(pref));
-	} catch {}
 };
 
 export const useMpv = () => {
@@ -86,13 +61,15 @@ export const useMpv = () => {
 	}, []);
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const loadingRef = useRef(false);
-	// The volume the user last chose (null = never changed). mpv is recreated
-	// on every load and starts at 100, so this is re-applied after each load
-	// to keep volume / mute consistent across channel and episode switches.
+	// The volume the user last chose this session, or the default volume from
+	// Settings. mpv is recreated on every load and starts at 100, so this is
+	// re-applied after each load to keep volume / mute consistent across
+	// channel and episode switches. The preference outlives the hook: the
+	// player can be left and reopened (remounting it) while the app runs.
 	const [savedVolume] = useState(readVolumePreference);
-	const userVolumeRef = useRef<number | null>(savedVolume?.volume ?? null);
+	const userVolumeRef = useRef(savedVolume.volume);
 	// Volume to restore when unmuting.
-	const preMuteVolumeRef = useRef(savedVolume?.preMute ?? 100);
+	const preMuteVolumeRef = useRef(savedVolume.preMute);
 	const volumeRef = useRef(DEFAULT_STATE.volume);
 	useEffect(() => {
 		volumeRef.current = state.volume;
@@ -281,9 +258,9 @@ export const useMpv = () => {
 			duration: 0,
 		}));
 		try {
-			await mpvLoad(url, startPos);
+			await mpvLoad(url, startPos, readHwdecEnabled());
 			const userVolume = userVolumeRef.current;
-			if (userVolume !== null && userVolume !== 100) {
+			if (userVolume !== 100) {
 				try {
 					await mpvSetVolume(userVolume);
 					setState((s) => ({ ...s, volume: userVolume }));

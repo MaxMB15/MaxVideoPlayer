@@ -52,6 +52,7 @@ describe("useMpv", () => {
 		vi.clearAllMocks();
 		mockListenCallbacks.clear();
 		sessionStorage.clear();
+		localStorage.clear();
 		mockMpvGetState.mockResolvedValue({
 			isPlaying: false,
 			isPaused: false,
@@ -109,7 +110,7 @@ describe("useMpv", () => {
 			await result.current.load("http://stream.url");
 		});
 
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url", undefined);
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url", undefined, true);
 		expect(result.current.state.currentUrl).toBe("http://stream.url");
 	});
 
@@ -138,7 +139,7 @@ describe("useMpv", () => {
 
 		// Only one call should have been made
 		expect(mockMpvLoad).toHaveBeenCalledTimes(1);
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url", undefined);
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url", undefined, true);
 
 		// Resolve first load
 		await act(async () => {
@@ -315,6 +316,28 @@ describe("useMpv", () => {
 			await result.current.load("http://test/next.m3u8");
 		});
 		expect(mockMpvSetVolume).not.toHaveBeenCalled();
+	});
+
+	it("starts at the default volume from Settings", async () => {
+		localStorage.setItem("mvp_default_volume", "60");
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(60);
+	});
+
+	it("passes the hardware decoding setting to mpvLoad", async () => {
+		localStorage.setItem("mvp_hwdec", "off");
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://test/next.m3u8", undefined, false);
 	});
 
 	it("keeps the volume and mute state when the player is reopened", async () => {
@@ -607,7 +630,7 @@ describe("useMpv", () => {
 			});
 
 			expect(mockMpvLoad).toHaveBeenCalledTimes(1);
-			expect(mockMpvLoad).toHaveBeenCalledWith("http://s", 42);
+			expect(mockMpvLoad).toHaveBeenCalledWith("http://s", 42, true);
 		});
 
 		it("online event is a no-op when not in a failure state", async () => {
