@@ -216,14 +216,14 @@ jobs:
           set -euo pipefail
           VERSION="$VERSION"
           DMG_BUILT="target/release/bundle/dmg/${PRODUCT_NAME}_${VERSION}_aarch64.dmg"
-          DMG="target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg"
+          # No version in the name, so the README's releases/latest/download link
+          # always points at the newest DMG.
+          DMG="target/release/bundle/dmg/MaxVideoPlayer_aarch64.dmg"
           UPDATER="target/release/bundle/macos/MaxVideoPlayer.app.tar.gz"
           UPDATER_VERSIONED="target/release/bundle/macos/MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz"
 
           # Space-free asset name (GitHub would otherwise rewrite spaces to dots)
-          if [[ "$DMG_BUILT" != "$DMG" ]]; then
-            cp "$DMG_BUILT" "$DMG"
-          fi
+          cp "$DMG_BUILT" "$DMG"
 
           # Rename updater files so the download URL matches what latest.json expects
           cp "$UPDATER" "$UPDATER_VERSIONED"
@@ -336,19 +336,20 @@ jobs:
           BUNDLE_DIR="target/release/bundle"
 
           # productName contains spaces ("Max Video Player"), which the bundler
-          # copies into the artifact filenames. Normalize to the space-free
-          # "MaxVideoPlayer" names that latest.json and the README link to.
+          # copies into the artifact filenames. Rename to space-free names without
+          # a version, so the README's releases/latest/download links always
+          # point at the newest packages; latest.json links to them by tag.
           # (Package identity is unaffected: deb/rpm names are kebab-cased
           # from productName, so they stay "max-video-player".)
           shopt -s nullglob
           for f in "$BUNDLE_DIR"/deb/*.deb; do
-            mv "$f" "$BUNDLE_DIR/deb/MaxVideoPlayer_${VERSION}_amd64.deb" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/deb/MaxVideoPlayer_amd64.deb" 2>/dev/null || true
           done
           for f in "$BUNDLE_DIR"/rpm/*.rpm; do
-            mv "$f" "$BUNDLE_DIR/rpm/MaxVideoPlayer-${VERSION}-1.x86_64.rpm" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/rpm/MaxVideoPlayer_x86_64.rpm" 2>/dev/null || true
           done
           for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
-            mv "$f" "$BUNDLE_DIR/appimage/MaxVideoPlayer_${VERSION}_amd64.AppImage" 2>/dev/null || true
+            mv "$f" "$BUNDLE_DIR/appimage/MaxVideoPlayer_amd64.AppImage" 2>/dev/null || true
           done
           shopt -u nullglob
 
@@ -461,8 +462,8 @@ jobs:
               }
           base_url = f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}"
           packages = {
-              "linux-deb-x86_64": f"{base_url}/MaxVideoPlayer_{version}_amd64.deb",
-              "linux-rpm-x86_64": f"{base_url}/MaxVideoPlayer-{version}-1.x86_64.rpm",
+              "linux-deb-x86_64": f"{base_url}/MaxVideoPlayer_amd64.deb",
+              "linux-rpm-x86_64": f"{base_url}/MaxVideoPlayer_x86_64.rpm",
           }
           data = {
               "version": version,
