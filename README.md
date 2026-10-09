@@ -13,7 +13,7 @@ Add your M3U playlist or Xtream Codes account and watch live TV, movies and seri
 [![Coverage](https://MaxMB15.github.io/MaxVideoPlayer/coverage/badge.svg)](https://MaxMB15.github.io/MaxVideoPlayer/coverage/)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
-[Download](#download) · [Features](#features) · [Getting started](#getting-started) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md)
+[Download](#download) · [Features](#features) · [Getting started](#getting-started) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md) · [Disclaimer](#disclaimer)
 
 <br>
 
@@ -167,10 +167,20 @@ Bug reports, ideas and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIB
 
 If you find the app useful, you can [buy me a coffee](https://buymeacoffee.com/MaxMB15).
 
+## Disclaimer
+
+Max Video Player is only a player. It doesn't include, host, sell or link to any channels, playlists or streams. You add your own sources, and the author has no control over, and no knowledge of, what you add or watch.
+
+The app is meant for content you have the legal right to watch, such as a service you subscribe to legally or streams you own. It isn't meant for pirated or otherwise illegally obtained content, and the author doesn't support using it that way.
+
+You're responsible for what you play with it and for following the copyright and broadcasting laws where you live.
+
+The app is provided as is, without warranty of any kind. As far as the law allows, the author and contributors aren't liable for any claim, damage or other loss arising from the app, from how anyone uses it, or from any content played with it. The [license](LICENSE) has the full terms, and [NOTICE](NOTICE) has the full legal notice.
+
 ## License
 
 Max Video Player is free for personal and other noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use isn't permitted.
 
-It's an independent project and isn't affiliated with Max, Warner Bros. Discovery, or any product with a similar name. Use it only with content you have the rights to watch. See [NOTICE](NOTICE) for the full disclaimer.
+It's an independent project and isn't affiliated with Max, Warner Bros. Discovery, or any product with a similar name.
 
 Built with [Tauri](https://tauri.app), [mpv](https://mpv.io), [FFmpeg](https://ffmpeg.org) and [React](https://react.dev).
