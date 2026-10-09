@@ -25,6 +25,11 @@ When the secrets are set, the macOS release job:
    that executables use the hardened runtime, and that Gatekeeper accepts the app and
    the DMG ([`scripts/verify-macos-signing.sh`](../scripts/verify-macos-signing.sh)).
 
+The secrets live in the `macos-signing` environment, which needs a reviewer's
+approval. Each release and each manual Build & Bundle run waits in Actions until a
+reviewer approves it. Push and pull request builds don't use the environment, so they
+never wait and are never signed.
+
 Apple's signature is separate from the updater signature (`TAURI_SIGNING_PRIVATE_KEY`).
 The updater still needs its own key.
 
@@ -69,10 +74,15 @@ certificates can't sign apps distributed outside the App Store, and CI rejects t
 
 Use a Team Key. Individual Keys have no Issuer ID, and `notarytool` needs one.
 
-### 4. Add the repository secrets
+### 4. Add the secrets to the `macos-signing` environment
 
-GitHub → the repository → Settings → Secrets and variables → Actions → New repository
-secret:
+GitHub → the repository → Settings → Environments → `macos-signing`. If it isn't
+there, click **New environment** and name it `macos-signing`. Then:
+
+1. Under **Deployment protection rules**, tick **Required reviewers**, add yourself,
+   and click **Save protection rules**. Leave **Prevent self-review** off, or you
+   can't approve your own releases.
+2. Under **Environment secrets**, click **Add environment secret** for each of these:
 
 | Secret | Value |
 | --- | --- |
@@ -86,12 +96,15 @@ With the GitHub CLI, values go straight from the files to GitHub without passing
 through the clipboard:
 
 ```bash
-base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE
-gh secret set APPLE_CERTIFICATE_PASSWORD          # prompts for the value
-gh secret set APPLE_API_KEY_ID --body "ABC123DEFG"
-gh secret set APPLE_API_ISSUER --body "00000000-0000-0000-0000-000000000000"
-gh secret set APPLE_API_PRIVATE_KEY < AuthKey_ABC123DEFG.p8
+base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE --env macos-signing
+gh secret set APPLE_CERTIFICATE_PASSWORD --env macos-signing    # prompts for the value
+gh secret set APPLE_API_KEY_ID --env macos-signing --body "ABC123DEFG"
+gh secret set APPLE_API_ISSUER --env macos-signing --body "00000000-0000-0000-0000-000000000000"
+gh secret set APPLE_API_PRIVATE_KEY --env macos-signing < AuthKey_ABC123DEFG.p8
 ```
+
+Don't add them as repository secrets. Any workflow could read those without
+approval.
 
 With only the two certificate secrets set, builds are signed but not notarized. Set
 either none or all three API key secrets; a partial set fails the build. So do API
@@ -108,6 +121,10 @@ request builds stay unsigned so they don't wait on Apple.
 ```bash
 gh workflow run build.yml --ref dev    # or any branch
 ```
+
+The macOS job then waits for approval. Open the run in Actions, click **Review
+deployments**, tick `macos-signing` and click **Approve and deploy**. Releases wait
+the same way.
 
 Once this change reaches `main`, you can also use Actions → **Build & Bundle** →
 **Run workflow**. GitHub only shows that button for workflows that accept manual runs
@@ -133,7 +150,8 @@ twice (the app, then the DMG).
 ## Renewing the certificate
 
 Developer ID certificates are valid for five years. Create a new one, export it, and
-replace `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD`. Apps signed with the
+replace `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` in the `macos-signing`
+environment. Apps signed with the
 old certificate keep working after it expires, because their signatures carry a
 timestamp.
 
