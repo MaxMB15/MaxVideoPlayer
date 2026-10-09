@@ -60,7 +60,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-macos
+          save-if: false
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -257,7 +260,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-linux
+          save-if: false
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -268,20 +274,7 @@ jobs:
         run: rm -f package-lock.json && npm install
 
       - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libayatana-appindicator3-dev \
-            libegl-dev libssl-dev pkg-config librsvg2-dev \
-            patchelf rpm \
-            meson ninja-build \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev \
-            libplacebo-dev \
-            libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev \
-            libwayland-dev
+        uses: ./.github/actions/install-linux-deps
 
       - name: Build libmpv from source
         run: |

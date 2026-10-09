@@ -95,6 +95,7 @@ jobs:
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv-linux.sh'
               - 'scripts/fetch-ffmpeg.sh'
+              - '.github/actions/install-linux-deps/**'
             macos:
               - 'crates/tauri-plugin-mpv/src/macos.rs'
               - 'crates/tauri-plugin-mpv/src/renderer.rs'
@@ -126,6 +127,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Only branch pushes save. A PR's caches can only be used by that PR, and
+          # its three jobs add ~1.7 GB against the repo's 10 GB limit, which was
+          # evicting the dev and main caches that PRs restore from.
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
@@ -209,6 +214,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-macos
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -287,6 +295,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-linux
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -295,20 +306,7 @@ jobs:
           cache: npm
 
       - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libayatana-appindicator3-dev \
-            libegl-dev libssl-dev pkg-config librsvg2-dev \
-            patchelf rpm \
-            meson ninja-build \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev \
-            libplacebo-dev \
-            libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev \
-            libwayland-dev
+        uses: ./.github/actions/install-linux-deps
 
       - name: Build libmpv from source
         run: |
