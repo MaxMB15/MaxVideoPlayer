@@ -95,4 +95,36 @@ for f in "$BINARY" "$LIBS_BUNDLE"/*.dylib; do
   fi
 done
 
+# Homebrew bottles target the macOS version of the machine that builds them, so
+# a newer runner quietly raises the real minimum (v0.5.0 needed macOS 26.4 while
+# declaring 10.15). Check everything we ship against minimumSystemVersion.
+TAURI_CONF="$WORKSPACE_ROOT/apps/desktop/src-tauri/tauri.conf.json"
+MIN_MACOS=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["bundle"]["macOS"]["minimumSystemVersion"])' "$TAURI_CONF")
+
+minos_of() {
+  otool -l "$1" | awk '$1 == "cmd" && ($2 == "LC_BUILD_VERSION" || $2 == "LC_VERSION_MIN_MACOSX") { found = 1 }
+    found && ($1 == "minos" || $1 == "version") { print $2; exit }'
+}
+
+too_new=""
+for f in "$BINARY" "$LIBS_BUNDLE"/*.dylib "$WORKSPACE_ROOT"/apps/desktop/src-tauri/binaries/ffmpeg-*; do
+  [[ -f "$f" ]] || continue
+  minos=$(minos_of "$f")
+  [[ -n "$minos" ]] || continue
+  if [[ "$(printf '%s\n%s\n' "$MIN_MACOS" "$minos" | sort -V | tail -n 1)" != "$MIN_MACOS" ]]; then
+    too_new+=$'\n'"  $(basename "$f") needs macOS $minos"
+  fi
+done
+
+if [[ -n "$too_new" ]]; then
+  msg="bundled binaries need a newer macOS than minimumSystemVersion ($MIN_MACOS):$too_new"
+  if [[ -n "${CI:-}" ]]; then
+    echo "Error: $msg" >&2
+    exit 1
+  fi
+  # Local Homebrew targets this Mac's macOS, so a dev build can't meet the minimum.
+  echo "Warning: $msg" >&2
+  echo "This build only runs on this Mac's macOS version. Release builds run on a macOS $MIN_MACOS CI runner." >&2
+fi
+
 echo "Bundled libmpv and dependencies to $LIBS_BUNDLE"

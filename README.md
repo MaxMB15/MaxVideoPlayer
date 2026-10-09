@@ -25,6 +25,8 @@ See [LICENSE](LICENSE) for terms, [NOTICE](NOTICE) for trademark and legal discl
 | iOS / iPadOS | Planned | AVPlayer + mvp-core via UniFFI | |
 | Android / Fire Stick | Planned | ExoPlayer + mvp-core via JNI | |
 
+**macOS requirements:** macOS 15 (Sequoia) or later on Apple Silicon. Intel Macs are not supported.
+
 ## Architecture
 
 ```
