@@ -4,9 +4,21 @@ All notable changes to Max Video Player are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-09
+
+### Added
+
+- A short disclaimer under Add Provider on the Playlists page, with a link to the full disclaimer (#73).
+
 ### Changed
 
+- The macOS app is signed with a Developer ID certificate and notarized by Apple, so it opens without a Gatekeeper warning (#67, #70).
 - Release downloads no longer have the version in their file names, so links to the latest release always get the newest version.
+
+### Fixed
+
+- The Hardware decoding and Default volume settings had no effect. Hardware decoding now applies from the next video, and new sessions start at the default volume (#69).
+- The download folder and the number of downloads that run at once reset when the app restarted (#69).
 
 ## [0.5.2] - 2026-10-09
 
