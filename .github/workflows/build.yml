@@ -19,9 +19,13 @@ on:
       - "docs/**"
       - ".vscode/**"
       - ".idea/**"
+  # A manual run builds only macOS, signed and notarized when the Apple secrets
+  # are set, so signing can be tested without making a release.
+  workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.ref }}
+  # Keep a manual run from cancelling, or being cancelled by, a push build.
+  group: build-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && '-manual' || '' }}
   cancel-in-progress: true
 
 env:
@@ -47,11 +51,12 @@ jobs:
   # ── Detect which platform-specific files changed ─────────────────────────
   # On PRs: uses dorny/paths-filter to check changed files.
   # On push: outputs 'true' for both so builds always run.
+  # On manual runs: macOS only.
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
       linux: ${{ steps.push-all.outputs.linux || steps.filter.outputs.linux }}
-      macos: ${{ steps.push-all.outputs.macos || steps.filter.outputs.macos }}
+      macos: ${{ steps.push-all.outputs.macos || steps.manual.outputs.macos || steps.filter.outputs.macos }}
     steps:
       - uses: actions/checkout@v5
 
@@ -61,6 +66,11 @@ jobs:
         run: |
           echo "linux=true" >> "$GITHUB_OUTPUT"
           echo "macos=true" >> "$GITHUB_OUTPUT"
+
+      - name: Manual run — build macOS only
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "macos=true" >> "$GITHUB_OUTPUT"
 
       - name: PR — detect changed paths
         if: github.event_name == 'pull_request'
@@ -222,10 +232,33 @@ jobs:
       - name: Build frontend
         run: npm run build:desktop
 
+      - name: Set up Developer ID signing
+        id: apple
+        # Only manual runs sign, so push and PR builds don't wait on Apple.
+        if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          api-private-key: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+
       - name: Build Tauri app (macOS)
         # Override createUpdaterArtifacts=false so Tauri doesn't require a signing key in CI.
         # The updater artifact + signature is only needed in the release workflow.
         run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Notarize the DMG
+        if: steps.apple.outputs.notarizing == 'true'
+        run: ./scripts/notarize-macos.sh target/release/bundle/dmg/*.dmg
+
+      - name: Verify signing
+        if: steps.apple.outputs.signing == 'true'
+        run: >-
+          ./scripts/verify-macos-signing.sh
+          ${{ steps.apple.outputs.notarizing == 'true' && '--notarized' || '' }}
+          target/release/bundle/macos/*.app target/release/bundle/dmg/*.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v6

@@ -1,0 +1,102 @@
+name: Set up macOS signing
+description: >-
+  Import the Developer ID Application certificate into a temporary keychain and
+  set APPLE_SIGNING_IDENTITY, which bundle-libmpv.sh and tauri build sign with.
+  Given an App Store Connect API key, also set the variables Tauri notarizes
+  with. Without a certificate it does nothing and the build stays unsigned.
+
+inputs:
+  certificate:
+    description: Base64-encoded Developer ID Application certificate (.p12)
+    default: ""
+  certificate-password:
+    description: Password the .p12 was exported with
+    default: ""
+  api-key-id:
+    description: App Store Connect API key ID
+    default: ""
+  api-issuer:
+    description: App Store Connect API issuer ID
+    default: ""
+  api-private-key:
+    description: Contents of the App Store Connect API key file (AuthKey_<id>.p8)
+    default: ""
+
+outputs:
+  signing:
+    description: "'true' if the build is signed with a Developer ID"
+    value: ${{ steps.import.outputs.signing }}
+  notarizing:
+    description: "'true' if the build is also notarized"
+    value: ${{ steps.import.outputs.notarizing }}
+
+runs:
+  using: composite
+  steps:
+    - name: Import Developer ID certificate
+      id: import
+      shell: bash
+      env:
+        CERTIFICATE: ${{ inputs.certificate }}
+        CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+        API_KEY_ID: ${{ inputs.api-key-id }}
+        API_ISSUER: ${{ inputs.api-issuer }}
+        API_PRIVATE_KEY: ${{ inputs.api-private-key }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$CERTIFICATE" ]]; then
+          echo "::notice::APPLE_CERTIFICATE is not set, so this build is not signed or notarized."
+          { echo "signing=false"; echo "notarizing=false"; } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        keychain_password=$(openssl rand -hex 16)
+        security create-keychain -p "$keychain_password" "$keychain"
+        # Stay unlocked for the whole build (6 hours) instead of the default 5 minutes.
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+        security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+        rm "$RUNNER_TEMP/certificate.p12"
+        # Let codesign use the key without a password prompt.
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+        # codesign only finds identities in the keychain search list.
+        keychains=("$keychain")
+        while IFS= read -r line; do
+          line=${line#*\"}
+          keychains+=("${line%\"}")
+        done < <(security list-keychains -d user)
+        security list-keychains -d user -s "${keychains[@]}"
+
+        # Sign with the certificate's SHA-1 hash, which can't be ambiguous the way
+        # its name can when an old and a renewed certificate are both imported.
+        read -r hash name < <(security find-identity -p codesigning "$keychain" |
+          awk -F'"' '/"Developer ID Application: / { split($1, f, " "); print f[2], $2; exit }') || true
+        if [[ -z "${hash:-}" ]]; then
+          echo "::error::APPLE_CERTIFICATE has no Developer ID Application certificate. It contains:"
+          security find-identity -p codesigning "$keychain"
+          exit 1
+        fi
+        echo "Signing with $name ($hash)"
+        echo "APPLE_SIGNING_IDENTITY=$hash" >> "$GITHUB_ENV"
+        echo "signing=true" >> "$GITHUB_OUTPUT"
+
+        if [[ -z "$API_KEY_ID$API_ISSUER$API_PRIVATE_KEY" ]]; then
+          echo "::notice::The App Store Connect API key secrets are not set, so this build is signed but not notarized."
+          echo "notarizing=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ -z "$API_KEY_ID" || -z "$API_ISSUER" || -z "$API_PRIVATE_KEY" ]]; then
+          echo "::error::Notarizing needs all three of APPLE_API_KEY_ID, APPLE_API_ISSUER and APPLE_API_PRIVATE_KEY."
+          exit 1
+        fi
+        key_path="$RUNNER_TEMP/AuthKey_$API_KEY_ID.p8"
+        printf '%s\n' "$API_PRIVATE_KEY" > "$key_path"
+        # The names Tauri reads. APPLE_API_KEY is the key's ID, not the key itself.
+        {
+          echo "APPLE_API_KEY=$API_KEY_ID"
+          echo "APPLE_API_ISSUER=$API_ISSUER"
+          echo "APPLE_API_KEY_PATH=$key_path"
+        } >> "$GITHUB_ENV"
+        echo "notarizing=true" >> "$GITHUB_OUTPUT"

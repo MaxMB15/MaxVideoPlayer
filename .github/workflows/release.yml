@@ -138,10 +138,33 @@ jobs:
           print("[signing] Key written to GITHUB_ENV.")
           EOF
 
+      - name: Set up Developer ID signing
+        id: apple
+        # Tauri signs and notarizes the app during the build when these secrets are
+        # set. Without them the release is built unsigned, as before.
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          api-private-key: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+
       - name: Build Tauri app
         # Build without updater artifacts so bundle_dmg.sh doesn't race with
         # hdiutil over the .app bundle. We create the updater artifacts manually below.
         run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Notarize the DMG
+        if: steps.apple.outputs.notarizing == 'true'
+        run: ./scripts/notarize-macos.sh target/release/bundle/dmg/*.dmg
+
+      - name: Verify signing
+        if: steps.apple.outputs.signing == 'true'
+        run: >-
+          ./scripts/verify-macos-signing.sh
+          ${{ steps.apple.outputs.notarizing == 'true' && '--notarized' || '' }}
+          target/release/bundle/macos/*.app target/release/bundle/dmg/*.dmg
 
       - name: Create updater artifacts
         run: |
