@@ -7,7 +7,8 @@ the draft.
 
 ## Before you start
 
-1. Make sure `dev` builds and its CI is green.
+1. Merge everything for the release into `dev`. The one-click pipeline checks that
+   `dev`'s build passed. The other ways don't, so check Actions first if you use them.
 2. Add the release to [CHANGELOG.md](../CHANGELOG.md) on `dev`: rename the
    `Unreleased` section to the new version and date, and start a new empty
    `Unreleased` section above it.
@@ -21,12 +22,22 @@ Actions → **Release — one-click pipeline** → **Run workflow**, then pick `
 
 The workflow:
 
-1. Merges `dev` into `main`.
-2. Bumps the version in `tauri.conf.json` and `Cargo.toml` with
+1. Waits for **Build & Bundle** on `dev` to finish, and stops if it failed. Merges
+   that only change docs or Markdown don't start a build, so it checks the newest
+   merge that changed anything else. It gives up after an hour.
+2. Merges that `dev` commit into `main`. Anything pushed to `dev` while it waits
+   stays out of the release.
+3. Bumps the version in `tauri.conf.json` and `Cargo.toml` with
    [`scripts/bump-version.py`](../scripts/bump-version.py) and commits it.
-3. Pushes the `vX.Y.Z` tag, which starts `release.yml`.
+4. Pushes the `vX.Y.Z` tag, which starts `release.yml`.
 
-Tick **Dry run** to see the merge and the new version without pushing anything.
+The run's summary links to the release run. Open it and approve the macOS job
+(**Review deployments**, tick `macos-signing`, **Approve and deploy**) so it can sign
+and notarize the app. When the release run finishes, publish the draft (see
+[Publishing](#publishing)).
+
+Tick **Dry run** to check the build and see the merge and the new version without
+pushing anything.
 
 ### Two-step fallback
 

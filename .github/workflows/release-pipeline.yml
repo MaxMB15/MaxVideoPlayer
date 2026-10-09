@@ -1,15 +1,20 @@
 # One-click release pipeline: dev -> main -> version bump -> tag -> release build.
 #
 # Replaces the manual 13-step process:
-#   1. Merges dev into main (fast-forward or merge commit)
-#   2. Bumps version on main
-#   3. Pushes annotated tag vX.Y.Z (triggers release.yml)
+#   1. Waits for Build & Bundle to pass on dev's newest code, and stops if it failed
+#   2. Merges dev into main (fast-forward or merge commit)
+#   3. Bumps version on main
+#   4. Pushes annotated tag vX.Y.Z (triggers release.yml)
 #
-# After release.yml completes, its sync-dev job auto-merges main back to dev.
+# release.yml's macOS job then waits for approval in the macos-signing
+# environment before it signs and notarizes the app. The run summary links to
+# that run. After release.yml completes, its sync-dev job auto-merges main
+# back to dev.
 #
 # Prerequisites:
 #   - Secret: RELEASE_AUTOMATION_PAT (fine-grained PAT: Contents + Pull requests RW)
 #   - Secret: TAURI_SIGNING_PRIVATE_KEY (for release.yml)
+#   - Optional environment: macos-signing with the Apple secrets (docs/macos-signing.md)
 #   - Optional var: RELEASE_ALLOWED_ACTORS (comma-separated usernames)
 #
 # The existing release-bump.yml and release-tag.yml still work as manual fallbacks.
@@ -34,6 +39,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 
@@ -88,13 +94,68 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Wait for Build & Bundle to pass on dev
+        id: dev
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin dev
+          # Pin the commit, so a push to dev while this waits doesn't get
+          # released untested.
+          DEV_SHA=$(git rev-parse origin/dev)
+          echo "sha=$DEV_SHA" >> "$GITHUB_OUTPUT"
+
+          # Build & Bundle doesn't run for pushes that only change the paths it
+          # ignores, so check the newest dev commit that changed anything else.
+          CODE_SHA=$(git log --first-parent -1 --format=%H "$DEV_SHA" -- . \
+            ':(exclude,glob)**/*.md' ':(exclude)LICENSE' \
+            ':(exclude,glob).github/workflows/release-*.yml' \
+            ':(exclude)docs' ':(exclude).vscode' ':(exclude).idea')
+          echo "dev is at ${DEV_SHA:0:7}. Checking the build of ${CODE_SHA:0:7}."
+
+          # Right after a merge the push build can take a few seconds to appear.
+          RUN_ID=""
+          for _ in $(seq 1 12); do
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml \
+              --branch dev --event push --commit "$CODE_SHA" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')
+            [[ -n "$RUN_ID" ]] && break
+            sleep 10
+          done
+          if [[ -z "$RUN_ID" ]]; then
+            echo "::error::Couldn't find a Build & Bundle push run for dev at ${CODE_SHA:0:7}. Check Actions → Build & Bundle."
+            exit 1
+          fi
+
+          URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          while :; do
+            # A failed API call just means checking again next time.
+            RESULT=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --json status,conclusion --jq '"\(.status) \(.conclusion)"') || RESULT="unknown "
+            STATUS=${RESULT%% *}
+            CONCLUSION=${RESULT#* }
+            [[ "$STATUS" == "completed" ]] && break
+            echo "Build & Bundle is $STATUS. Checking again in 30 seconds. $URL"
+            sleep 30
+          done
+          # A newer push to dev cancels this build, which also stops the release.
+          if [[ "$CONCLUSION" != "success" ]]; then
+            echo "::error::Build & Bundle on dev ended with '$CONCLUSION', so nothing was released. $URL"
+            exit 1
+          fi
+          echo "Build & Bundle passed on dev. $URL"
+
       - name: Merge dev into main
+        env:
+          DEV_SHA: ${{ steps.dev.outputs.sha }}
         run: |
           set -euo pipefail
           git fetch origin main dev
 
           # Check that dev is ahead of main
-          BEHIND=$(git rev-list --count origin/main..origin/dev)
+          BEHIND=$(git rev-list --count "origin/main..$DEV_SHA")
           if [ "$BEHIND" = "0" ]; then
             echo "::warning::dev has no new commits over main. Continuing with version bump only."
           fi
@@ -102,9 +163,9 @@ jobs:
           git checkout main
           git reset --hard origin/main
 
-          # Merge dev into main (non-interactive)
-          echo "Merging origin/dev into main..."
-          git merge origin/dev --no-edit -m "Merge branch 'dev' into main for release"
+          # Merge the dev commit that passed the build (non-interactive)
+          echo "Merging dev (${DEV_SHA:0:7}) into main..."
+          git merge "$DEV_SHA" --no-edit -m "Merge branch 'dev' into main for release"
 
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "::notice::DRY RUN — would merge dev into main"
@@ -192,23 +253,52 @@ jobs:
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Find the release run
+        id: release_run
+        if: ${{ !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # The tag push starts release.yml. Link its run in the summary, since
+          # its macOS job waits there for approval.
+          for _ in $(seq 1 12); do
+            URL=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml \
+              --branch "$TAG" --limit 1 --json url --jq '.[0].url // empty')
+            if [[ -n "$URL" ]]; then
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::The release run for $TAG hasn't appeared yet. Find it under Actions → Release."
+
       - name: Summary
         env:
           NEW: ${{ steps.ver.outputs.new }}
           CURRENT: ${{ steps.ver.outputs.current }}
           TAG: ${{ steps.tag.outputs.tag }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RUN_URL: ${{ steps.release_run.outputs.url }}
+          DEV_SHA: ${{ steps.dev.outputs.sha }}
+          RELEASE_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/release.yml
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "### Dry run complete" >> "$GITHUB_STEP_SUMMARY"
-            echo "Would have:" >> "$GITHUB_STEP_SUMMARY"
+            echo "Build & Bundle passed on \`dev\` (\`${DEV_SHA:0:7}\`). Would have:" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### Release pipeline complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "Build & Bundle passed on \`dev\` (\`${DEV_SHA:0:7}\`)." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "- Merged \`dev\` into \`main\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Bumped version: \`$CURRENT\` -> \`$NEW\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Pushed tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
           if [ "$DRY_RUN" != "true" ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "**Next:** [release.yml](${{ github.server_url }}/${{ github.repository }}/actions/workflows/release.yml) builds and publishes the release, then auto-syncs \`main\` back to \`dev\`." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo ""
+              echo "**Next:**"
+              echo "1. Open [the release run](${RUN_URL:-$RELEASE_WORKFLOW_URL}) and approve the macOS job: **Review deployments**, tick \`macos-signing\`, **Approve and deploy**. It signs and notarizes the app."
+              echo "2. When the run finishes, publish the draft release \`$TAG\`. The run also merges \`main\` back into \`dev\`."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
