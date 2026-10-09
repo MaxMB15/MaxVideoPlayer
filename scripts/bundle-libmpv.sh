@@ -106,12 +106,35 @@ minos_of() {
     found && ($1 == "minos" || $1 == "version") { print $2; exit }'
 }
 
+sdk_of() {
+  otool -l "$1" | awk '$1 == "cmd" && $2 == "LC_BUILD_VERSION" { found = 1 } found && $1 == "sdk" { print $2; exit }'
+}
+
+newer_than() {
+  [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" != "$2" ]]
+}
+
+# Homebrew's tesseract bottle records the exact macOS version of the machine that
+# built it (15.7.5, then 15.7.9 after a rebuild) instead of 15.0, although it is
+# built against the 15.4 SDK and every system symbol it imports exists on 15.0.
+# ffmpeg links it for its OCR filter, which we never use. Lower a point-release
+# minimum to ours; a different major version still fails the check below.
+TESSERACT="$LIBS_BUNDLE/libtesseract.5.dylib"
+if [[ -f "$TESSERACT" ]]; then
+  minos=$(minos_of "$TESSERACT")
+  if newer_than "$minos" "$MIN_MACOS" && [[ "${minos%%.*}" == "${MIN_MACOS%%.*}" ]]; then
+    vtool -set-build-version macos "$MIN_MACOS" "$(sdk_of "$TESSERACT")" -replace -output "$TESSERACT" "$TESSERACT"
+    codesign --force --preserve-metadata=entitlements,requirements,flags,runtime --sign - "$TESSERACT"
+    echo "Lowered the minimum macOS of $(basename "$TESSERACT") from $minos to $MIN_MACOS"
+  fi
+fi
+
 too_new=""
 for f in "$BINARY" "$LIBS_BUNDLE"/*.dylib "$WORKSPACE_ROOT"/apps/desktop/src-tauri/binaries/ffmpeg-*; do
   [[ -f "$f" ]] || continue
   minos=$(minos_of "$f")
   [[ -n "$minos" ]] || continue
-  if [[ "$(printf '%s\n%s\n' "$MIN_MACOS" "$minos" | sort -V | tail -n 1)" != "$MIN_MACOS" ]]; then
+  if newer_than "$minos" "$MIN_MACOS"; then
     too_new+=$'\n'"  $(basename "$f") needs macOS $minos"
   fi
 done
