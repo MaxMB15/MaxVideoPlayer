@@ -114,11 +114,15 @@ Everything lives in the app data folder (`com.maxvideoplayer.app` under
 `~/Library/Application Support` on macOS, `~/.local/share` on Linux):
 
 - `maxvideoplayer.db`: the SQLite database
-- `settings.json`, `gemini.json`: API keys, via the Tauri store plugin
+- `settings.json`: the OMDb, MDBList and OpenSubtitles keys, the download folder and
+  the number of downloads that run at once, via the Tauri store plugin
+- `gemini.json`: the Gemini key
 - `downloads/`: downloaded movies and series
 
-Some per-provider preferences, such as refresh intervals, are kept in the webview's
-local storage.
+The webview's local storage keeps some per-provider preferences, such as refresh
+intervals, and the player preferences in `lib/player-prefs.ts`: `mvp_default_volume`
+and `mvp_hwdec`. The volume picked in the player lasts until the app quits, in session
+storage (`mvp_volume`).
 
 ## Updates
 
