@@ -50,9 +50,9 @@ git tag v0.6.0 && git push origin v0.6.0
 ## What the release workflow does
 
 1. Creates the draft release `vX.Y.Z`.
-2. Builds macOS and Linux in parallel and uploads them to the draft. On macOS it
-   signs and notarizes the app when the Apple secrets are set (see
-   [macos-signing.md](macos-signing.md)).
+2. Builds macOS and Linux in parallel and uploads them to the draft. The macOS job
+   waits until you approve it in Actions, then signs and notarizes the app when the
+   Apple secrets are set (see [macos-signing.md](macos-signing.md)).
 3. Writes `latest.json`, the file the in-app updater reads, and uploads it.
 4. Merges `main` back into `dev` so the version bump reaches `dev`.
 
@@ -89,14 +89,15 @@ switch to it right away. Then check that `latest.json` points at files that exis
 
 ## Secrets and settings
 
-All under Settings → Secrets and variables → Actions.
+All under Settings → Secrets and variables → Actions, except the Apple secrets, which
+are in Settings → Environments → `macos-signing`.
 
 | Name | Kind | Used for |
 | --- | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY` | Secret | Signs updates so installed apps accept them. Required. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | The key's password, if it has one. |
 | `RELEASE_AUTOMATION_PAT` | Secret | Fine-grained token with Contents and Pull requests write access. The release workflows push to `main` and open pull requests with it, because `GITHUB_TOKEN` often isn't allowed to. Required. |
-| `APPLE_CERTIFICATE` and four others | Secrets | Optional macOS signing and notarization. See [macos-signing.md](macos-signing.md). |
+| `APPLE_CERTIFICATE` and four others | Environment secrets | Optional macOS signing and notarization, in the `macos-signing` environment. See [macos-signing.md](macos-signing.md). |
 | `RELEASE_ALLOWED_ACTORS` | Variable | Comma-separated GitHub usernames allowed to run the release workflows. Defaults to the repository owner. |
 
 The updater key pair is created once:
