@@ -100,9 +100,17 @@ Delete the `.p12` and `.p8` files afterwards, or keep them in a password manager
 
 ### 5. Test it without releasing
 
-Actions → **Build & Bundle** → **Run workflow**, on any branch. A manual run builds
-only macOS, and it signs, notarizes and verifies the app the same way a release does.
-Push and pull request builds stay unsigned so they don't wait on Apple.
+Run the **Build & Bundle** workflow by hand. A manual run builds only macOS, and it
+signs, notarizes and verifies the app the same way a release does. Push and pull
+request builds stay unsigned so they don't wait on Apple.
+
+```bash
+gh workflow run build.yml --ref dev    # or any branch
+```
+
+Once this change reaches `main`, you can also use Actions → **Build & Bundle** →
+**Run workflow**. GitHub only shows that button for workflows that accept manual runs
+on the default branch.
 
 Download the `MaxVideoPlayer-macOS` artifact, open the DMG on a Mac and drag the app to
 Applications. It should open without a Gatekeeper warning. Test with the DMG rather
