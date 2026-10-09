@@ -7,6 +7,7 @@ import { usePlatform } from "@/hooks/usePlatform";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { ContentDisclaimer } from "./ContentDisclaimer";
 
 type M3uMode = "url" | "file";
 
@@ -310,6 +311,9 @@ export const AddProvider = ({ onAddM3u, onAddM3uFile, onAddXtream }: AddProvider
 							: "Connect"}
 					</Button>
 				</form>
+				<div className="mt-4">
+					<ContentDisclaimer />
+				</div>
 			</CardContent>
 		</Card>
 	);
