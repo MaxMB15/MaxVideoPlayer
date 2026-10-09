@@ -26,7 +26,7 @@ When the secrets are set, the macOS release job:
    the DMG ([`scripts/verify-macos-signing.sh`](../scripts/verify-macos-signing.sh)).
 
 The secrets live in the `macos-signing` environment, which needs a reviewer's
-approval. Each release and each manual Build & Bundle run waits in Actions until a
+approval and only accepts `main`, `dev` and `v*` tags. Each release and each manual Build & Bundle run waits in Actions until a
 reviewer approves it. Push and pull request builds don't use the environment, so they
 never wait and are never signed.
 
@@ -82,7 +82,11 @@ there, click **New environment** and name it `macos-signing`. Then:
 1. Under **Deployment protection rules**, tick **Required reviewers**, add yourself,
    and click **Save protection rules**. Leave **Prevent self-review** off, or you
    can't approve your own releases.
-2. Under **Environment secrets**, click **Add environment secret** for each of these:
+2. Under **Deployment branches and tags**, choose **Selected branches and tags**. Add
+   the branches `main` and `dev` and the tag pattern `v*`. An approved job runs the
+   build scripts from its own branch with the Apple secrets, so only refs you trust
+   may use them.
+3. Under **Environment secrets**, click **Add environment secret** for each of these:
 
 | Secret | Value |
 | --- | --- |
@@ -119,12 +123,13 @@ signs, notarizes and verifies the app the same way a release does. Push and pull
 request builds stay unsigned so they don't wait on Apple.
 
 ```bash
-gh workflow run build.yml --ref dev    # or any branch
+gh workflow run build.yml --ref dev    # or main
 ```
 
-The macOS job then waits for approval. Open the run in Actions, click **Review
-deployments**, tick `macos-signing` and click **Approve and deploy**. Releases wait
-the same way.
+The macOS job then waits for approval. Open the run in Actions and check that it's on
+the branch and commit you expect, then click **Review deployments**, tick
+`macos-signing` and click **Approve and deploy**. Releases wait the same way. A manual
+run on any other branch fails, because the environment doesn't accept it.
 
 Once this change reaches `main`, you can also use Actions → **Build & Bundle** →
 **Run workflow**. GitHub only shows that button for workflows that accept manual runs
