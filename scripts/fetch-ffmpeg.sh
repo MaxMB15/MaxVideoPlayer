@@ -37,7 +37,8 @@ esac
 echo "Fetching ffmpeg for $PLATFORM ($TARGET_TRIPLE) from $URL"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-curl -L "$URL" -o "$TMP/dl"
+# The download hosts drop connections now and then, so retry on any error.
+curl -fL --retry 3 --retry-all-errors --retry-delay 5 "$URL" -o "$TMP/dl"
 
 # Extract a single ffmpeg binary out of whatever archive format we got.
 cd "$TMP"
