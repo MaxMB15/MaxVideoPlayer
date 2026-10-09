@@ -3,7 +3,8 @@ description: >-
   Import the Developer ID Application certificate into a temporary keychain and
   set APPLE_SIGNING_IDENTITY, which bundle-libmpv.sh and tauri build sign with.
   Given an App Store Connect API key, also set the variables Tauri notarizes
-  with. Without a certificate it does nothing and the build stays unsigned.
+  with. With no Apple secrets at all it does nothing and the build stays
+  unsigned. A partial API key, or an API key without a certificate, fails.
 
 inputs:
   certificate:
@@ -44,7 +45,18 @@ runs:
         API_PRIVATE_KEY: ${{ inputs.api-private-key }}
       run: |
         set -euo pipefail
+        # Check the secrets before anything else, so a half-finished setup fails
+        # instead of quietly producing an unsigned release.
+        api_key_set="$API_KEY_ID$API_ISSUER$API_PRIVATE_KEY"
+        if [[ -n "$api_key_set" && ( -z "$API_KEY_ID" || -z "$API_ISSUER" || -z "$API_PRIVATE_KEY" ) ]]; then
+          echo "::error::Notarizing needs all three of APPLE_API_KEY_ID, APPLE_API_ISSUER and APPLE_API_PRIVATE_KEY."
+          exit 1
+        fi
         if [[ -z "$CERTIFICATE" ]]; then
+          if [[ -n "$api_key_set" ]]; then
+            echo "::error::The App Store Connect API key secrets are set but APPLE_CERTIFICATE isn't. Notarizing needs a signed build."
+            exit 1
+          fi
           echo "::notice::APPLE_CERTIFICATE is not set, so this build is not signed or notarized."
           { echo "signing=false"; echo "notarizing=false"; } >> "$GITHUB_OUTPUT"
           exit 0
@@ -82,14 +94,10 @@ runs:
         echo "APPLE_SIGNING_IDENTITY=$hash" >> "$GITHUB_ENV"
         echo "signing=true" >> "$GITHUB_OUTPUT"
 
-        if [[ -z "$API_KEY_ID$API_ISSUER$API_PRIVATE_KEY" ]]; then
+        if [[ -z "$api_key_set" ]]; then
           echo "::notice::The App Store Connect API key secrets are not set, so this build is signed but not notarized."
           echo "notarizing=false" >> "$GITHUB_OUTPUT"
           exit 0
-        fi
-        if [[ -z "$API_KEY_ID" || -z "$API_ISSUER" || -z "$API_PRIVATE_KEY" ]]; then
-          echo "::error::Notarizing needs all three of APPLE_API_KEY_ID, APPLE_API_ISSUER and APPLE_API_PRIVATE_KEY."
-          exit 1
         fi
         key_path="$RUNNER_TEMP/AuthKey_$API_KEY_ID.p8"
         printf '%s\n' "$API_PRIVATE_KEY" > "$key_path"
