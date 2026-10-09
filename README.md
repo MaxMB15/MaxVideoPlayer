@@ -104,6 +104,8 @@ OpenSubtitles, OMDb and Gemini each need a free API key, which you add in Settin
 <p align="center">
   <img src="docs/images/movies.jpg" width="49%" alt="The movies tab: a poster grid with genre filters, favorites and download status">
   <img src="docs/images/movie-details.jpg" width="49%" alt="A movie's details: poster, rating, cast, plot, source picker, and Play and Download buttons">
+  <img src="docs/images/series.jpg" width="49%" alt="The series tab: recently played shows and a grid of series with favorite and download buttons">
+  <img src="docs/images/series-details.jpg" width="49%" alt="A series' details: rating, creator, cast, plot, a partially downloaded tag, and a download button for each season">
 </p>
 
 <p align="center"><sub>Screenshots use made-up channels and titles.</sub></p>
@@ -115,6 +117,11 @@ OpenSubtitles, OMDb and Gemini each need a free API key, which you add in Settin
 3. Go to **Channels** and pick something to watch.
 
 Max Video Player doesn't come with any channels or content. You need a playlist from a provider you're allowed to use.
+
+<p align="center">
+  <img src="docs/images/playlists.jpg" width="49%" alt="The playlists page: the form for adding an M3U or Xtream Codes provider, and two providers already added">
+  <img src="docs/images/settings.jpg" width="49%" alt="Settings: hardware decoding, default volume, and the Gemini and OMDb API key fields">
+</p>
 
 ## FAQ
 
