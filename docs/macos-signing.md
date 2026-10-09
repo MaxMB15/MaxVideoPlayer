@@ -26,9 +26,9 @@ When the secrets are set, the macOS release job:
    the DMG ([`scripts/verify-macos-signing.sh`](../scripts/verify-macos-signing.sh)).
 
 The secrets live in the `macos-signing` environment, which needs a reviewer's
-approval and only accepts `main`, `dev` and `v*` tags. Each release and each manual Build & Bundle run waits in Actions until a
-reviewer approves it. Push and pull request builds don't use the environment, so they
-never wait and are never signed.
+approval and only accepts `main`, `dev` and `v*` tags. Each release and each manual
+Build & Bundle run waits in Actions until a reviewer approves it. Push and pull
+request builds don't use the environment, so they never wait and are never signed.
 
 Apple's signature is separate from the updater signature (`TAURI_SIGNING_PRIVATE_KEY`).
 The updater still needs its own key.
