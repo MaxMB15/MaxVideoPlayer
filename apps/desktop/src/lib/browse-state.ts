@@ -1,7 +1,8 @@
 /**
  * Channel-list state that survives the list unmounting while the player is
- * open: the selected tab, the search text, and the current watch session
- * (used to decide whether to keep the search when coming back).
+ * open: the selected tab, the search text, and how much has been watched
+ * since the list was last shown (used to decide whether to keep the search
+ * when coming back).
  */
 
 const KEY = "mvp_browseState";
@@ -12,10 +13,8 @@ export const SEARCH_RESET_AFTER_MS = 60_000;
 interface StoredBrowseState {
 	tab?: string;
 	search?: string;
-	/** When the current player session started playing something. */
-	watchStartedAt?: number;
-	/** When the player was left (unset while still in the player). */
-	watchEndedAt?: number;
+	/** Playback time since the list was last shown; paused and buffering time not included. */
+	watchedMs?: number;
 }
 
 const read = (): StoredBrowseState => {
@@ -36,29 +35,22 @@ export const saveBrowseTab = (tab: string): void => write({ tab });
 
 export const saveBrowseSearch = (search: string): void => write({ search });
 
-/** Called by the player when playback starts; continues an open session. */
-export const markWatchStarted = (now = Date.now()): void => {
-	const s = read();
-	write({ watchStartedAt: s.watchStartedAt ?? now, watchEndedAt: undefined });
-};
-
-/** Called by the player when it's left. */
-export const markWatchEnded = (now = Date.now()): void => {
-	if (read().watchStartedAt !== undefined) write({ watchEndedAt: now });
+/** Called by the player as playback advances. */
+export const addWatchedTime = (ms: number): void => {
+	if (ms > 0) write({ watchedMs: (read().watchedMs ?? 0) + ms });
 };
 
 /**
- * Read the state to restore when the channel list opens. Ends any watch
- * session: if it lasted at least SEARCH_RESET_AFTER_MS the search is cleared,
+ * Read the state to restore when the channel list opens, and reset the watch
+ * time. If at least SEARCH_RESET_AFTER_MS was watched the search is cleared,
  * otherwise it's kept so the user can pick another result.
  */
-export const consumeBrowseState = (now = Date.now()): { tab?: string; search: string } => {
+export const consumeBrowseState = (): { tab?: string; search: string } => {
 	const s = read();
 	let search = s.search ?? "";
-	if (s.watchStartedAt !== undefined) {
-		const watched = (s.watchEndedAt ?? now) - s.watchStartedAt;
-		if (watched >= SEARCH_RESET_AFTER_MS) search = "";
-		write({ search, watchStartedAt: undefined, watchEndedAt: undefined });
+	if (s.watchedMs !== undefined) {
+		if (s.watchedMs >= SEARCH_RESET_AFTER_MS) search = "";
+		write({ search, watchedMs: undefined });
 	}
 	return { tab: s.tab, search };
 };

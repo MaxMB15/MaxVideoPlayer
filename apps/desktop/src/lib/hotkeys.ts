@@ -53,10 +53,10 @@ export const resolvePlayerHotkey = (e: KeyLike): PlayerAction | null => {
 			return { type: "seekBy", seconds: e.shiftKey ? SEEK_LONG : SEEK_SHORT };
 		case "j":
 		case "J":
-			return { type: "seekBy", seconds: -SEEK_SHORT };
+			return { type: "seekBy", seconds: e.shiftKey ? -SEEK_LONG : -SEEK_SHORT };
 		case "l":
 		case "L":
-			return { type: "seekBy", seconds: SEEK_SHORT };
+			return { type: "seekBy", seconds: e.shiftKey ? SEEK_LONG : SEEK_SHORT };
 		case "Home":
 			return { type: "seekToPercent", percent: 0 };
 		case "ArrowUp":
@@ -90,8 +90,9 @@ export const PLAYER_SHORTCUTS: { keys: string[]; label: string }[] = [
 	{ keys: ["F"], label: "Toggle fullscreen (or double-click)" },
 	{ keys: ["M"], label: "Mute / unmute" },
 	{ keys: ["←", "→"], label: `Seek ${SEEK_SHORT}s back / forward` },
-	{ keys: ["Shift ←", "Shift →"], label: `Seek ${SEEK_LONG}s back / forward` },
 	{ keys: ["J", "L"], label: `Seek ${SEEK_SHORT}s back / forward` },
+	{ keys: ["Shift ←", "Shift →"], label: `Seek ${SEEK_LONG}s back / forward` },
+	{ keys: ["Shift J", "Shift L"], label: `Seek ${SEEK_LONG}s back / forward` },
 	{ keys: ["0–9"], label: "Jump to 0%–90%" },
 	{ keys: ["Home"], label: "Jump to start" },
 	{ keys: ["↑", "↓"], label: "Volume up / down" },
@@ -107,4 +108,35 @@ export const isTypingTarget = (target: EventTarget | null): boolean => {
 	if (!(target instanceof HTMLElement)) return false;
 	const tag = target.tagName;
 	return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+};
+
+const BUTTON_ROLES = new Set([
+	"button",
+	"link",
+	"checkbox",
+	"switch",
+	"tab",
+	"menuitem",
+	"menuitemcheckbox",
+	"menuitemradio",
+]);
+
+/**
+ * True when the target is a button-like control reached with the keyboard, so
+ * Space should activate it rather than play/pause. Clicking a button also
+ * focuses it in Chromium and WebKitGTK; those focuses don't match
+ * :focus-visible, so Space keeps controlling playback after a mouse click.
+ */
+export const isKeyboardFocusedControl = (target: EventTarget | null): boolean => {
+	if (!(target instanceof HTMLElement)) return false;
+	const isControl =
+		target.tagName === "BUTTON" ||
+		target.tagName === "A" ||
+		BUTTON_ROLES.has(target.getAttribute("role") ?? "");
+	if (!isControl) return false;
+	try {
+		return target.matches(":focus-visible");
+	} catch {
+		return true;
+	}
 };

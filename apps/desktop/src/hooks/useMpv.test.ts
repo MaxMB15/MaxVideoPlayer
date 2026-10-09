@@ -51,6 +51,7 @@ describe("useMpv", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockListenCallbacks.clear();
+		sessionStorage.clear();
 		mockMpvGetState.mockResolvedValue({
 			isPlaying: false,
 			isPaused: false,
@@ -314,6 +315,30 @@ describe("useMpv", () => {
 			await result.current.load("http://test/next.m3u8");
 		});
 		expect(mockMpvSetVolume).not.toHaveBeenCalled();
+	});
+
+	it("keeps the volume and mute state when the player is reopened", async () => {
+		const first = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+		await act(async () => {
+			await first.result.current.setVolume(40);
+		});
+		await act(async () => {
+			await first.result.current.toggleMute();
+		});
+		first.unmount();
+
+		mockMpvSetVolume.mockClear();
+		const { result } = renderHook(() => useMpv());
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(40);
 	});
 
 	// ── Tauri events ──────────────────────────────────────────────────

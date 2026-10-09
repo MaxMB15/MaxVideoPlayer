@@ -41,14 +41,16 @@ import { DownloadButton, type DownloadIconState } from "@/components/downloads/D
 import { playbackKey, isFinished, shouldOfferResume, MIN_RESUME_SECONDS } from "@/lib/playback";
 import { channelSources, withSource } from "@/lib/sources";
 import { sortEpisodes } from "@/lib/episodes";
-import { resolvePlayerHotkey, isTypingTarget } from "@/lib/hotkeys";
+import { resolvePlayerHotkey, isTypingTarget, isKeyboardFocusedControl } from "@/lib/hotkeys";
 import { formatTime } from "@/lib/format";
-import { markWatchEnded, markWatchStarted } from "@/lib/browse-state";
+import { addWatchedTime } from "@/lib/browse-state";
 
 /** How often (ms) watch progress is persisted while playing. */
 const PROGRESS_SAVE_INTERVAL = 5000;
 const MAX_VOLUME = 150;
 const LOADED_URL_KEY = "mvp_lastLoadedUrl";
+/** Position jumps larger than this between polls are seeks, not watching. */
+const MAX_WATCH_STEP_SECONDS = 5;
 
 interface PlaybackProgress {
 	/** Resume key (see playbackKey); null for live or nothing playing. */
@@ -283,9 +285,21 @@ export const PlayerView = () => {
 
 	useEffect(() => () => flushProgress(), [flushProgress]);
 
-	// Watch-session timing: the channel list keeps its search unless the user
-	// watched for a while (see lib/browse-state).
-	useEffect(() => () => markWatchEnded(), []);
+	// Watch time: the channel list keeps its search unless the user watched for
+	// a while (see lib/browse-state). Only forward playback counts, so time spent
+	// paused, buffering or loading doesn't.
+	const watchTickRef = useRef<{ url: string | null; position: number }>({
+		url: null,
+		position: 0,
+	});
+	useEffect(() => {
+		const { currentUrl, position, isPlaying, isPaused } = mpv.state;
+		const last = watchTickRef.current;
+		watchTickRef.current = { url: currentUrl, position };
+		if (!currentUrl || currentUrl !== last.url || !isPlaying || isPaused) return;
+		const advanced = position - last.position;
+		if (advanced > 0 && advanced <= MAX_WATCH_STEP_SECONDS) addWatchedTime(advanced * 1000);
+	}, [mpv.state]);
 
 	/** Actually start playing `ch` (optionally from `startPos`), replacing whatever is playing. */
 	const commitPlayback = useCallback(
@@ -299,7 +313,6 @@ export const PlayerView = () => {
 
 			const progress = progressFor(ch, startPos);
 			progressRef.current = progress;
-			markWatchStarted();
 			// Prefer a completed download so playback works offline; fall back to
 			// the stream URL if there is none or the lookup fails.
 			const loadId = ++loadRequestRef.current;
@@ -363,6 +376,12 @@ export const PlayerView = () => {
 				if (pending.origin === "nav") navigate(-1);
 				return;
 			}
+			if (choice === "restart") {
+				// Forget the old resume point now; progress tracking only clears it
+				// once playback moves, which a quick stop would skip.
+				const key = playbackKey(pending.channel);
+				if (key) deletePlaybackPosition(key).catch(() => {});
+			}
 			commitPlayback(
 				pending.channel,
 				choice === "resume" ? pending.position : undefined,
@@ -404,7 +423,6 @@ export const PlayerView = () => {
 				const ch = navChannel.url === navUrl ? navChannel : withSource(navChannel, navUrl);
 				adoptBackgroundProgress().finally(() => startPlayback(ch, "nav"));
 			} else {
-				markWatchStarted();
 				loadRequestRef.current++;
 				sessionStorage.setItem(LOADED_URL_KEY, navUrl);
 				mpv.load(navUrl).catch(() => {});
@@ -424,12 +442,6 @@ export const PlayerView = () => {
 						undefined,
 						sessionStorage.getItem(LOADED_URL_KEY) ?? ch.url
 					);
-					// Only counts as watching if it's still playing in the background.
-					mpvGetState()
-						.then((st) => {
-							if (st.isPlaying || st.isPaused) markWatchStarted();
-						})
-						.catch(() => {});
 				} catch {}
 			}
 			const savedEpisodes = sessionStorage.getItem("mvp_lastSeriesEpisodes");
@@ -751,6 +763,8 @@ export const PlayerView = () => {
 				return;
 			}
 			if (isTypingTarget(e.target)) return;
+			// Space on a button reached with Tab presses that button.
+			if (e.key === " " && isKeyboardFocusedControl(e.target)) return;
 			// While the subtitle settings pane is open, arrow keys belong to subtitle
 			// position/delay handlers — don't let them also seek or change volume.
 			const isArrow = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key);

@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+	addWatchedTime,
 	consumeBrowseState,
-	markWatchEnded,
-	markWatchStarted,
 	saveBrowseSearch,
 	saveBrowseTab,
 	SEARCH_RESET_AFTER_MS,
@@ -23,43 +22,38 @@ describe("browse-state", () => {
 
 	it("keeps the search after a short watch", () => {
 		saveBrowseSearch("matrix");
-		markWatchStarted(1_000);
-		markWatchEnded(1_000 + SEARCH_RESET_AFTER_MS - 1);
-		expect(consumeBrowseState(10_000_000).search).toBe("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		expect(consumeBrowseState().search).toBe("matrix");
 	});
 
 	it("clears the search after watching for a minute", () => {
 		saveBrowseSearch("matrix");
-		markWatchStarted(1_000);
-		markWatchEnded(1_000 + SEARCH_RESET_AFTER_MS);
+		addWatchedTime(SEARCH_RESET_AFTER_MS);
 		expect(consumeBrowseState().search).toBe("");
 		// The cleared search sticks.
 		expect(consumeBrowseState().search).toBe("");
 	});
 
-	it("measures up to now when the player hasn't recorded an end yet", () => {
+	it("adds up watch time across player visits", () => {
 		saveBrowseSearch("matrix");
-		markWatchStarted(1_000);
-		expect(consumeBrowseState(1_000 + SEARCH_RESET_AFTER_MS).search).toBe("");
-	});
-
-	it("ends the session once consumed", () => {
-		saveBrowseSearch("matrix");
-		markWatchStarted(1_000);
-		markWatchEnded(2_000);
-		consumeBrowseState();
-		saveBrowseSearch("other");
-		// No session anymore, so a late markWatchEnded is ignored and the search stays.
-		markWatchEnded(1_000_000);
-		expect(consumeBrowseState(1_000_000).search).toBe("other");
-	});
-
-	it("a session continues across player visits", () => {
-		saveBrowseSearch("matrix");
-		markWatchStarted(1_000);
-		markWatchEnded(2_000);
-		markWatchStarted(50_000); // back in the player without visiting the list
-		markWatchEnded(1_000 + SEARCH_RESET_AFTER_MS);
+		addWatchedTime(SEARCH_RESET_AFTER_MS / 2);
+		addWatchedTime(SEARCH_RESET_AFTER_MS / 2);
 		expect(consumeBrowseState().search).toBe("");
+	});
+
+	it("resets the watch time once consumed", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		consumeBrowseState();
+		addWatchedTime(1);
+		expect(consumeBrowseState().search).toBe("matrix");
+	});
+
+	it("ignores non-positive amounts", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(0);
+		addWatchedTime(-SEARCH_RESET_AFTER_MS);
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		expect(consumeBrowseState().search).toBe("matrix");
 	});
 });

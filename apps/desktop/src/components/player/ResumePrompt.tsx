@@ -1,5 +1,7 @@
+import { useRef } from "react";
 import { RotateCcw, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { formatTime } from "@/lib/format";
 
 interface ResumePromptProps {
@@ -21,6 +23,8 @@ export const ResumePrompt = ({
 	onCancel,
 }: ResumePromptProps) => {
 	const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useFocusTrap(dialogRef);
 
 	return (
 		<div
@@ -36,9 +40,11 @@ export const ResumePrompt = ({
 			}}
 		>
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="resume-prompt-title"
+				tabIndex={-1}
 				className="w-full max-w-sm mx-4 rounded-xl border border-white/10 bg-neutral-900/95 p-5 text-white shadow-2xl"
 			>
 				<h2 id="resume-prompt-title" className="text-base font-semibold">
@@ -59,7 +65,7 @@ export const ResumePrompt = ({
 				</div>
 
 				<div className="mt-5 flex flex-col gap-2">
-					<Button autoFocus onClick={onResume} className="w-full justify-center gap-2">
+					<Button onClick={onResume} className="w-full justify-center gap-2">
 						<Play className="h-4 w-4" />
 						Resume from {formatTime(position)}
 					</Button>

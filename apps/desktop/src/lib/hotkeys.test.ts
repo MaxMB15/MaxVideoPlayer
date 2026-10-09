@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { resolvePlayerHotkey, SEEK_LONG, SEEK_SHORT, VOLUME_STEP } from "./hotkeys";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+	isKeyboardFocusedControl,
+	resolvePlayerHotkey,
+	SEEK_LONG,
+	SEEK_SHORT,
+	VOLUME_STEP,
+} from "./hotkeys";
 
 const key = (
 	k: string,
@@ -32,6 +38,18 @@ describe("resolvePlayerHotkey", () => {
 			seconds: SEEK_LONG,
 		});
 	});
+	it("seeks with J/L, longer with shift", () => {
+		expect(resolvePlayerHotkey(key("j"))).toEqual({ type: "seekBy", seconds: -SEEK_SHORT });
+		expect(resolvePlayerHotkey(key("l"))).toEqual({ type: "seekBy", seconds: SEEK_SHORT });
+		expect(resolvePlayerHotkey(key("J", { shiftKey: true }))).toEqual({
+			type: "seekBy",
+			seconds: -SEEK_LONG,
+		});
+		expect(resolvePlayerHotkey(key("L", { shiftKey: true }))).toEqual({
+			type: "seekBy",
+			seconds: SEEK_LONG,
+		});
+	});
 	it("changes volume with up/down", () => {
 		expect(resolvePlayerHotkey(key("ArrowUp"))).toEqual({
 			type: "volumeBy",
@@ -53,5 +71,37 @@ describe("resolvePlayerHotkey", () => {
 	});
 	it("returns null for unbound keys", () => {
 		expect(resolvePlayerHotkey(key("z"))).toBeNull();
+	});
+});
+
+describe("isKeyboardFocusedControl", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		document.body.innerHTML = "";
+	});
+
+	it("is false for non-controls", () => {
+		const div = document.createElement("div");
+		document.body.appendChild(div);
+		expect(isKeyboardFocusedControl(div)).toBe(false);
+		expect(isKeyboardFocusedControl(null)).toBe(false);
+	});
+
+	it("is true for a button or button-role element that matches :focus-visible", () => {
+		const button = document.createElement("button");
+		const item = document.createElement("div");
+		item.setAttribute("role", "menuitemradio");
+		document.body.append(button, item);
+		for (const el of [button, item]) {
+			vi.spyOn(el, "matches").mockReturnValue(true);
+			expect(isKeyboardFocusedControl(el)).toBe(true);
+		}
+	});
+
+	it("is false for a button focused by a mouse click", () => {
+		const button = document.createElement("button");
+		document.body.appendChild(button);
+		vi.spyOn(button, "matches").mockReturnValue(false);
+		expect(isKeyboardFocusedControl(button)).toBe(false);
 	});
 });

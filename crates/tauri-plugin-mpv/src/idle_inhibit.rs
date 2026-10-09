@@ -286,7 +286,7 @@ fn dbus_gnome_inhibit() -> Option<u32> {
         "org.gnome.SessionManager",
         "/org/gnome/SessionManager",
         "org.gnome.SessionManager.Inhibit",
-        &["MaxVideoPlayer", "uint32 0", "Video playback active", "uint32 8"],
+        &["Max Video Player", "uint32 0", "Video playback active", "uint32 8"],
     )
 }
 

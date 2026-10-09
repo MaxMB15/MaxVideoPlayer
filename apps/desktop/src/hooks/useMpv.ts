@@ -20,6 +20,32 @@ const DEFAULT_STATE: PlayerState = {
 	duration: 0,
 };
 
+// The volume preference outlives the hook: the player can be left and
+// reopened (remounting this hook) while the app keeps running.
+const VOLUME_KEY = "mvp_volume";
+
+interface VolumePreference {
+	/** The volume the user last chose. */
+	volume: number;
+	/** Volume to restore when unmuting. */
+	preMute: number;
+}
+
+const readVolumePreference = (): VolumePreference | null => {
+	try {
+		const raw = sessionStorage.getItem(VOLUME_KEY);
+		return raw ? (JSON.parse(raw) as VolumePreference) : null;
+	} catch {
+		return null;
+	}
+};
+
+const writeVolumePreference = (pref: VolumePreference): void => {
+	try {
+		sessionStorage.setItem(VOLUME_KEY, JSON.stringify(pref));
+	} catch {}
+};
+
 export const useMpv = () => {
 	const [state, setState] = useState<PlayerState>(DEFAULT_STATE);
 	const [error, setError] = useState<string | null>(null);
@@ -63,9 +89,10 @@ export const useMpv = () => {
 	// The volume the user last chose (null = never changed). mpv is recreated
 	// on every load and starts at 100, so this is re-applied after each load
 	// to keep volume / mute consistent across channel and episode switches.
-	const userVolumeRef = useRef<number | null>(null);
+	const [savedVolume] = useState(readVolumePreference);
+	const userVolumeRef = useRef<number | null>(savedVolume?.volume ?? null);
 	// Volume to restore when unmuting.
-	const preMuteVolumeRef = useRef(100);
+	const preMuteVolumeRef = useRef(savedVolume?.preMute ?? 100);
 	const volumeRef = useRef(DEFAULT_STATE.volume);
 	useEffect(() => {
 		volumeRef.current = state.volume;
@@ -352,6 +379,7 @@ export const useMpv = () => {
 		console.log("[useMpv] setVolume volume=", volume);
 		userVolumeRef.current = volume;
 		volumeRef.current = volume;
+		writeVolumePreference({ volume, preMute: preMuteVolumeRef.current });
 		try {
 			await mpvSetVolume(volume);
 			setState((s) => ({ ...s, volume }));
