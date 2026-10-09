@@ -23,8 +23,8 @@ Actions → **Release — one-click pipeline** → **Run workflow**, then pick `
 The workflow:
 
 1. Waits for **Build & Bundle** on `dev` to finish, and stops if it failed. Merges
-   that only change docs or Markdown don't start a build, so it checks the newest
-   merge that changed anything else. It gives up after an hour.
+   that only change docs or Markdown don't start a build, so it checks the build
+   that covers the newest code change. It gives up after an hour.
 2. Merges that `dev` commit into `main`. Anything pushed to `dev` while it waits
    stays out of the release.
 3. Bumps the version in `tauri.conf.json` and `Cargo.toml` with

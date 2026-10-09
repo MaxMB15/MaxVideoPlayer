@@ -108,24 +108,32 @@ jobs:
           echo "sha=$DEV_SHA" >> "$GITHUB_OUTPUT"
 
           # Build & Bundle doesn't run for pushes that only change the paths it
-          # ignores, so check the newest dev commit that changed anything else.
+          # ignores, so find the newest dev commit that changed anything else.
           CODE_SHA=$(git log --first-parent -1 --format=%H "$DEV_SHA" -- . \
             ':(exclude,glob)**/*.md' ':(exclude)LICENSE' \
             ':(exclude,glob).github/workflows/release-*.yml' \
             ':(exclude)docs' ':(exclude).vscode' ':(exclude).idea')
-          echo "dev is at ${DEV_SHA:0:7}. Checking the build of ${CODE_SHA:0:7}."
+          # Every dev commit from there to DEV_SHA has the same code, so a build
+          # of any of them counts. A push of several commits is built only at
+          # its last one, which can be a docs-only commit after CODE_SHA.
+          CANDIDATES=$(git rev-list --first-parent "$DEV_SHA" "^$CODE_SHA"; echo "$CODE_SHA")
+          echo "dev is at ${DEV_SHA:0:7}. Its newest code change is ${CODE_SHA:0:7}."
 
           # Right after a merge the push build can take a few seconds to appear.
           RUN_ID=""
           for _ in $(seq 1 12); do
-            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml \
-              --branch dev --event push --commit "$CODE_SHA" --limit 1 \
-              --json databaseId --jq '.[0].databaseId // empty')
+            RUNS=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml \
+              --branch dev --event push --limit 20 \
+              --json headSha,databaseId --jq '.[] | "\(.headSha) \(.databaseId)"')
+            for SHA in $CANDIDATES; do
+              RUN_ID=$(awk -v sha="$SHA" '$1 == sha { print $2; exit }' <<< "$RUNS")
+              [[ -n "$RUN_ID" ]] && break
+            done
             [[ -n "$RUN_ID" ]] && break
             sleep 10
           done
           if [[ -z "$RUN_ID" ]]; then
-            echo "::error::Couldn't find a Build & Bundle push run for dev at ${CODE_SHA:0:7}. Check Actions → Build & Bundle."
+            echo "::error::Couldn't find a Build & Bundle push run on dev between ${CODE_SHA:0:7} and ${DEV_SHA:0:7}. Check Actions → Build & Bundle."
             exit 1
           fi
 
