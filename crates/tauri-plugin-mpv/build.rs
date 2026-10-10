@@ -11,10 +11,6 @@ const COMMANDS: &[&str] = &[
     "mpv_set_bounds",
     "mpv_set_visible",
     "mpv_get_state",
-    "mpv_sub_add",
-    "mpv_sub_remove",
-    "mpv_set_sub_pos",
-    "mpv_set_sub_delay",
     "mpv_set_media_info",
 ];
 
