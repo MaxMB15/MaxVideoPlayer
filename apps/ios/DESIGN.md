@@ -241,10 +241,10 @@ battery drain over an hour. Nothing else starts until this works.
   certificate, or with cloud-managed certificates if the App Store Connect API
   key has the Admin role. The same key uploads the build.
 - Add an iOS section to `THIRD_PARTY_NOTICES.md` for MPVKit's libraries and link
-  it from Settings > About. Besides mpv and FFmpeg, MPVKit 1.1.0 brings
-  OpenSSL, GnuTLS, Nettle, GMP, libass, FreeType, FriBidi, HarfBuzz, MoltenVK,
-  shaderc, Little CMS, libplacebo, libdovi, libunibreak, dav1d, uavs3d,
-  uchardet and libbluray.
+  it from Settings > About. Besides mpv and FFmpeg, MPVKit `1.1.0-n9.0.2`
+  brings OpenSSL, GnuTLS, Nettle, GMP, libass, FreeType, FriBidi, HarfBuzz,
+  MoltenVK, shaderc, Little CMS, libplacebo, libdovi, libunibreak, dav1d,
+  uavs3d, uchardet and libbluray.
 - Fill in the App Store privacy details. The app collects no data.
 
 **5. App Store release.**
@@ -283,7 +283,7 @@ Store build stays public for the same reason.
    Milestone 1 settles this.
 2. **Linking.** Settled in the simulator. The app crate dropped its `cdylib`,
    which can't link for iOS because libmpv only shows up at the Xcode link.
-   `libmpv2` links against MPVKit 1.1.0 there.
+   `libmpv2` links against MPVKit `1.1.0-n9.0.2` there.
 3. **Resizing.** The Metal layer has to follow rotation, Split View and the
    React layout without a frame of the wrong size. MPVKit's MoltenVK context
    only reads the layer's size when the video reconfigures
