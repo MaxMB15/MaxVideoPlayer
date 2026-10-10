@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 # Notarize a DMG with Apple and staple the ticket to it. Tauri notarizes the .app
 # while bundling, but not the DMG it puts the app in.
 #

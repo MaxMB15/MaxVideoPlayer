@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /// Scrub Xtream credentials from any string before it is logged, returned in an
 /// error, or emitted in an event. Xtream URLs embed credentials as path
 /// segments: `http://host:8080/movie/<user>/<pass>/12345.mkv`. We also redact

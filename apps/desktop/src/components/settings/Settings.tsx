@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useEffect, useRef } from "react";
 import { openUrl } from "@/lib/openUrl";
 import bmcQr from "@/assets/bmc-qr.png";
@@ -46,6 +49,7 @@ import {
 	writeHwdecEnabled,
 } from "@/lib/player-prefs";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { LegalNotices } from "./LegalNotices";
 import { DownloadHistoryDialog } from "./DownloadHistory";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
@@ -375,9 +379,8 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							<div>
 								<p className="text-sm font-medium">Hardware decoding</p>
 								<p className="text-xs text-muted-foreground">
-									Decode video on the GPU when possible. Turn off if
-									video shows artifacts or green frames. Applies to the
-									next video you play.
+									Decode video on the GPU when possible. Turn off if video shows
+									artifacts or green frames. Applies to the next video you play.
 								</p>
 							</div>
 							<Button
@@ -407,8 +410,8 @@ export const Settings = ({ updateState }: SettingsProps) => {
 								aria-label="Default volume"
 							/>
 							<p className="text-xs text-muted-foreground mt-2">
-								Playback starts at this volume. Changes you make in the
-								player last until you quit the app.
+								Playback starts at this volume. Changes you make in the player last
+								until you quit the app.
 							</p>
 						</div>
 					</CardContent>
@@ -847,7 +850,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardHeader>
 					<CardContent className="space-y-3">
 						<p className="text-sm text-muted-foreground">
-							Max Video Player is free for noncommercial use. If you find it useful,
+							Max Video Player is free and open source. If you find it useful,
 							consider supporting development.
 						</p>
 						<div className="flex items-center gap-4">
@@ -888,6 +891,8 @@ export const Settings = ({ updateState }: SettingsProps) => {
 						<p className="text-sm text-muted-foreground">
 							Max Video Player {appVersion ? `v${appVersion}` : ""}
 						</p>
+
+						<LegalNotices version={appVersion || undefined} />
 
 						<div className="space-y-3">
 							<div className="flex items-center gap-3">

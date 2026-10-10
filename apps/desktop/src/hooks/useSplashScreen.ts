@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { refreshProvider, refreshEpg } from "@/lib/tauri";

@@ -72,8 +72,16 @@ Common types are `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `ci` and `ch
 - Every call into the Rust backend goes through `apps/desktop/src/lib/tauri.ts`.
 - Prettier and ESLint settle formatting. Don't fight them.
 
-## License
+## License and contributor agreement
 
-Max Video Player is licensed under the
-[PolyForm Noncommercial License 1.0.0](LICENSE). By opening a pull request, you agree
-that your contribution is licensed under the same terms.
+Max Video Player is licensed under the [GNU General Public License version 3](LICENSE),
+with the additional terms in [NOTICE](NOTICE).
+
+Before your first pull request can be merged, you need to accept the
+[Contributor License Agreement](CLA.md). You keep the copyright in your work. The
+agreement lets the project's owner also offer Max Video Player under other licenses,
+such as a commercial license or a build for an app store that doesn't accept GPL
+software. You accept it by checking the box in the pull request template.
+
+If your pull request includes code you didn't write, say where it comes from and
+what license it has.

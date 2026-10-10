@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 # Check that a Developer ID build will open on other Macs. Every binary and
 # library in the app must be signed by the same team with a secure timestamp,
 # and executables must use the hardened runtime. With --notarized, the app (and

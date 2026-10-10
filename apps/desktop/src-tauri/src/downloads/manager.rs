@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 use crate::commands::AppState;
 use crate::downloads::scheduler::ids_to_start;
 use mvp_core::downloads::ffmpeg::{

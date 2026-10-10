@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /**
  * Channel-list state that survives the list unmounting while the player is
  * open: the selected tab, the search text, and how much has been watched

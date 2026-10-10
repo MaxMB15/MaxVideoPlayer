@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useMemo, useEffect } from "react";
 import { X, Play, ChevronLeft, ChevronRight, MonitorPlay, Loader2, Layers } from "lucide-react";
 import type {
