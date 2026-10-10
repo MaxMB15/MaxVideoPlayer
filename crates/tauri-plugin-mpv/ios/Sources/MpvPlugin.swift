@@ -4,8 +4,8 @@
 // The UIKit half of the mpv plugin on iOS. Rust drives mpv through libmpv and
 // calls the `mvp_ios_*` functions below for everything that has to happen in
 // UIKit: the video view, the audio session, Now Playing and the lock screen
-// controls. Rust gets lifecycle and remote control events back through the C
-// callbacks it registers with `mvp_ios_register_callbacks`.
+// controls. Rust gets lifecycle, remote control and resize events back through
+// the C callbacks it registers with `mvp_ios_register_callbacks`.
 
 import AVFoundation
 import MediaPlayer
@@ -15,6 +15,7 @@ import WebKit
 
 typealias MvpLifecycleCallback = @convention(c) (Bool) -> Void
 typealias MvpRemoteCallback = @convention(c) (Int32, Double) -> Void
+typealias MvpResizeCallback = @convention(c) () -> Void
 
 /// Remote commands sent to Rust. The raw values are shared with `ios.rs`.
 enum MvpRemoteCommand: Int32 {
@@ -46,6 +47,15 @@ final class MpvVideoView: UIView {
 
   var metalLayer: MpvMetalLayer { layer as! MpvMetalLayer }
 
+  /// Called after the drawable changes size.
+  var onDrawableResize: (() -> Void)?
+
+  /// The drawable size mpv was last told about. MoltenVK also sets
+  /// `drawableSize`, from mpv's thread, when it rebuilds its swapchain after
+  /// the layer's bounds change. That can happen before `layoutSubviews`
+  /// runs, so the layer's own value doesn't show whether mpv knows.
+  private var reportedSize = CGSize.zero
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     isUserInteractionEnabled = false
@@ -72,11 +82,15 @@ final class MpvVideoView: UIView {
   }
 
   /// mpv reads the drawable size when it sets up video output, so it has to
-  /// match the view before a stream starts.
+  /// match the view before a stream starts. After that mpv only reads it
+  /// again when told to, through `onDrawableResize`.
   private func updateDrawableSize() {
     let scale = contentScaleFactor
-    metalLayer.drawableSize = CGSize(
-      width: bounds.width * scale, height: bounds.height * scale)
+    let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    metalLayer.drawableSize = size
+    guard size.width > 1, size.height > 1, size != reportedSize else { return }
+    reportedSize = size
+    onDrawableResize?()
   }
 }
 
@@ -89,6 +103,7 @@ final class MpvHost: NSObject {
   private var videoView: MpvVideoView?
   private var lifecycleCallback: MvpLifecycleCallback?
   private var remoteCallback: MvpRemoteCallback?
+  private var resizeCallback: MvpResizeCallback?
   private var remoteCommandsReady = false
 
   func attach(webview: WKWebView) {
@@ -123,9 +138,12 @@ final class MpvHost: NSObject {
       name: AVAudioSession.routeChangeNotification, object: nil)
   }
 
-  func registerCallbacks(lifecycle: MvpLifecycleCallback?, remote: MvpRemoteCallback?) {
+  func registerCallbacks(
+    lifecycle: MvpLifecycleCallback?, remote: MvpRemoteCallback?, resize: MvpResizeCallback?
+  ) {
     lifecycleCallback = lifecycle
     remoteCallback = remote
+    resizeCallback = resize
     setUpRemoteCommands()
   }
 
@@ -141,6 +159,7 @@ final class MpvHost: NSObject {
       view = existing
     } else {
       view = MpvVideoView(frame: webview.frame)
+      view.onDrawableResize = { [weak self] in self?.resizeCallback?() }
       videoView = view
     }
     if view.superview !== container {
@@ -292,9 +311,11 @@ private func onMain<T>(_ work: () -> T) -> T {
 // MARK: C entry points called from ios.rs
 
 @_cdecl("mvp_ios_register_callbacks")
-func mvpIosRegisterCallbacks(_ lifecycle: MvpLifecycleCallback?, _ remote: MvpRemoteCallback?) {
+func mvpIosRegisterCallbacks(
+  _ lifecycle: MvpLifecycleCallback?, _ remote: MvpRemoteCallback?, _ resize: MvpResizeCallback?
+) {
   DispatchQueue.main.async {
-    MpvHost.shared.registerCallbacks(lifecycle: lifecycle, remote: remote)
+    MpvHost.shared.registerCallbacks(lifecycle: lifecycle, remote: remote, resize: resize)
   }
 }
 

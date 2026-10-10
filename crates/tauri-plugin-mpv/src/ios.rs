@@ -11,7 +11,7 @@
 //!
 //! The Swift side also runs the audio session, Now Playing and the lock
 //! screen controls. Rust calls it through the `mvp_ios_*` functions, and it
-//! calls back through the two C callbacks registered in [`install`].
+//! calls back through the C callbacks registered in [`install`].
 
 use crate::mpv::MpvState;
 use crate::renderer::PlatformRenderer;
@@ -19,7 +19,7 @@ use libmpv2::{
     events::{Event, PropertyData},
     Format, Mpv,
 };
-use std::ffi::{c_char, CString};
+use std::ffi::{c_char, c_void, CString};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
@@ -30,6 +30,7 @@ extern "C" {
     fn mvp_ios_register_callbacks(
         lifecycle: Option<extern "C" fn(bool)>,
         remote: Option<extern "C" fn(i32, f64)>,
+        resized: Option<extern "C" fn()>,
     );
     fn mvp_ios_surface_create() -> usize;
     fn mvp_ios_surface_set_frame(x: f64, y: f64, width: f64, height: f64);
@@ -39,6 +40,8 @@ extern "C" {
     fn mvp_ios_set_audio_active(active: bool);
     fn mvp_ios_now_playing(title: *const c_char, duration: f64, position: f64, playing: bool);
     fn mvp_ios_now_playing_clear();
+    // From libmpv itself. libmpv2 doesn't re-export its sys crate.
+    fn mpv_wakeup(ctx: *mut c_void);
 }
 
 /// Remote command codes from `MvpRemoteCommand` in `MpvPlugin.swift`.
@@ -84,7 +87,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
     if HANDLERS.set(with_state).is_err() {
         return;
     }
-    unsafe { mvp_ios_register_callbacks(Some(on_lifecycle), Some(on_remote)) };
+    unsafe { mvp_ios_register_callbacks(Some(on_lifecycle), Some(on_remote), Some(on_resized)) };
 }
 
 type StateFn = Box<dyn Fn(&dyn Fn(&MpvState)) + Send + Sync>;
@@ -127,6 +130,23 @@ extern "C" fn on_remote(command: i32, value: f64) {
             tracing::warn!("[MPV ios] remote command {command} failed: {e}");
         }
     });
+}
+
+/// Bumped whenever the Metal layer's drawable changes size.
+static RESIZE_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// The running watcher's mpv client as an address, so a resize can wake it.
+/// Zero while there's no watcher.
+static WATCHER_CLIENT: Mutex<usize> = Mutex::new(0);
+
+/// The video view's drawable changed size, after a rotation or a layout
+/// change. The watcher gets mpv to pick up the new size.
+extern "C" fn on_resized() {
+    RESIZE_GEN.fetch_add(1, Ordering::AcqRel);
+    let client = WATCHER_CLIENT.lock().unwrap_or_else(|p| p.into_inner());
+    if *client != 0 {
+        unsafe { mpv_wakeup(*client as *mut c_void) };
+    }
 }
 
 pub fn set_idle_timer_disabled(disabled: bool) {
@@ -262,7 +282,8 @@ const OBSERVE_DURATION: u64 = 3;
 const OBSERVE_TITLE: u64 = 4;
 
 /// Waits for the first video frame, then keeps the lock screen's Now Playing
-/// info in step with pause, seeks, duration and title.
+/// info in step with pause, seeks, duration and title. It also gets mpv to
+/// resize its output when the view changes size, see [`OutputResize`].
 fn run_watcher(
     mut client: Mpv,
     kill: Arc<AtomicBool>,
@@ -281,18 +302,32 @@ fn run_watcher(
         }
     }
 
+    let client_addr = client.ctx.as_ptr() as usize;
+    *WATCHER_CLIENT.lock().unwrap_or_else(|p| p.into_inner()) = client_addr;
+
     let mut paused = false;
     let mut duration = 0.0;
     let mut mpv_title: Option<CString> = None;
     let mut seen_gen = MEDIA_INFO_GEN.load(Ordering::Acquire);
+    let mut vo_configured = false;
+    let mut seen_resize = RESIZE_GEN.load(Ordering::Acquire);
+    let mut resize = OutputResize::default();
 
     while !kill.load(Ordering::Acquire) {
+        let mut reconfigured = false;
         let event_changed = match client.wait_event(0.5) {
             Some(Ok(Event::Shutdown)) => break,
+            Some(Ok(Event::VideoReconfig)) => {
+                reconfigured = true;
+                false
+            }
             Some(Ok(Event::PropertyChange { name, change, .. })) => match (name, change) {
-                ("vo-configured", PropertyData::Flag(true)) => {
-                    if let Some(cb) = first_frame.take() {
-                        cb();
+                ("vo-configured", PropertyData::Flag(configured)) => {
+                    vo_configured = configured;
+                    if configured {
+                        if let Some(cb) = first_frame.take() {
+                            cb();
+                        }
                     }
                     false
                 }
@@ -316,6 +351,18 @@ fn run_watcher(
             Some(Ok(Event::PlaybackRestart)) => true,
             _ => false,
         };
+        if reconfigured {
+            resize.on_reconfig(&client);
+        }
+        let resize_gen = RESIZE_GEN.load(Ordering::Acquire);
+        if resize_gen != seen_resize {
+            seen_resize = resize_gen;
+            // Before the first frame, mpv reads the size when it sets up
+            // the output anyway.
+            if vo_configured {
+                resize.start(&client);
+            }
+        }
         let gen = MEDIA_INFO_GEN.load(Ordering::Acquire);
         let info_changed = gen != seen_gen;
         seen_gen = gen;
@@ -327,6 +374,86 @@ fn run_watcher(
             // Zero duration tells Swift the stream is live.
             let length = if info.live { 0.0 } else { duration };
             unsafe { mvp_ios_now_playing(title_ptr, length, position, !paused) };
+        }
+    }
+
+    // Clear the address before the client goes, so no resize wakes a freed
+    // handle. A newer watcher may already have replaced it.
+    let mut slot = WATCHER_CLIENT.lock().unwrap_or_else(|p| p.into_inner());
+    if *slot == client_addr {
+        *slot = 0;
+    }
+}
+
+/// How far each nudge moves the pixel aspect. A 4K frame would need about
+/// 250 times this to change by one pixel.
+const NUDGE: f64 = 1e-6;
+
+/// Gets mpv to resize its output after the view changes size.
+///
+/// MPVKit's MoltenVK context reads the layer's drawable size only when mpv
+/// reconfigures its video output, and never reports a resize. mpv
+/// reconfigures when the frame parameters change, so this moves
+/// `video-aspect-override` by a few parts per million. The next frame then
+/// reconfigures the output at the new size, and the override goes back to
+/// `no`, which reconfigures once more with the stream's own aspect.
+#[derive(Default)]
+struct OutputResize {
+    /// Counts nudges, so two in a row never set the same value. mpv ignores
+    /// an option set to the value it already has.
+    step: u32,
+    /// The pixel aspect of the stream without the override.
+    base_par: f64,
+    /// The pixel aspect the output will have once the nudge reaches it.
+    /// `None` while no nudge is in flight.
+    pending_par: Option<f64>,
+}
+
+impl OutputResize {
+    fn start(&mut self, client: &Mpv) {
+        let (Ok(w), Ok(h)) = (
+            client.get_property::<i64>("video-params/w"),
+            client.get_property::<i64>("video-params/h"),
+        ) else {
+            return;
+        };
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        // While a nudge is in flight, the params may show the nudged value
+        // or the stream's own. Keep the base from before it.
+        if self.pending_par.is_none() {
+            match client.get_property::<f64>("video-params/par") {
+                Ok(par) if par > 0.0 => self.base_par = par,
+                _ => return,
+            }
+        }
+        self.step = self.step % 50 + 1;
+        let par = self.base_par * (1.0 + NUDGE * f64::from(self.step));
+        // The override is a display aspect. mpv works the pixel aspect back
+        // out from the frame size.
+        let aspect = par * w as f64 / h as f64;
+        match client.set_property("video-aspect-override", aspect) {
+            Ok(()) => self.pending_par = Some(par),
+            Err(e) => tracing::warn!("[MPV ios] resize nudge failed: {e}"),
+        }
+    }
+
+    /// Drops the override once the nudged frame is on screen. A reconfigure
+    /// for anything else leaves it, since the nudged frame is still coming.
+    fn on_reconfig(&mut self, client: &Mpv) {
+        let Some(pending) = self.pending_par else {
+            return;
+        };
+        let Ok(par) = client.get_property::<f64>("video-out-params/par") else {
+            return;
+        };
+        if (par / pending - 1.0).abs() > NUDGE / 2.0 {
+            return;
+        }
+        self.pending_par = None;
+        if let Err(e) = client.set_property("video-aspect-override", "no") {
+            tracing::warn!("[MPV ios] clearing the resize nudge failed: {e}");
         }
     }
 }
