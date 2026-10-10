@@ -42,6 +42,9 @@
 	}
 	body {
 		@apply bg-background text-foreground;
+		/* iOS: no grey flash on tap and no font resize on rotation. */
+		-webkit-tap-highlight-color: transparent;
+		-webkit-text-size-adjust: 100%;
 		font-feature-settings:
 			"rlig" 1,
 			"calt" 1;
@@ -57,6 +60,23 @@
 }
 .scrollbar-hide::-webkit-scrollbar {
 	display: none;
+}
+
+/* Room for the notch, status bar and home indicator on iOS. All four are 0
+   on desktop. */
+@layer utilities {
+	.pt-safe {
+		padding-top: env(safe-area-inset-top);
+	}
+	.pb-safe {
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+	.pl-safe {
+		padding-left: env(safe-area-inset-left);
+	}
+	.pr-safe {
+		padding-right: env(safe-area-inset-right);
+	}
 }
 
 /* Transparent video area for MPV rendering beneath */

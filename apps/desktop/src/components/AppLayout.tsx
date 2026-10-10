@@ -27,6 +27,7 @@ export const AppLayout = () => {
 		return <MobileLayout />;
 	}
 
+	// iPads in portrait use the sidebar layout for now.
 	return <DesktopLayout />;
 };
 
@@ -42,10 +43,10 @@ const DesktopLayout = () => {
 	}, [isPlayer]);
 
 	return (
-		<div className="flex h-screen overflow-hidden">
+		<div className="flex h-screen overflow-hidden pt-safe pb-safe pr-safe">
 			<aside
 				className={cn(
-					"w-16 flex flex-col items-center py-3 gap-0.5 border-r border-border bg-card shrink-0",
+					"w-16 flex flex-col items-center py-3 gap-0.5 border-r border-border bg-card shrink-0 box-content pl-safe",
 					isFullscreen && "hidden"
 				)}
 			>
@@ -81,19 +82,35 @@ const DesktopLayout = () => {
 };
 
 const MobileLayout = () => {
+	const { pathname } = useLocation();
+	const isPlayer = pathname === "/player";
+
+	// Same as desktop: the video view sits under the page, so hide it on
+	// other routes.
+	useEffect(() => {
+		mpvSetVisible(isPlayer).catch(() => {});
+	}, [isPlayer]);
+
+	// The player fills the screen and brings its own back button, so the tab
+	// bar and the top inset go away there.
 	return (
-		<div className="flex flex-col h-screen">
-			<main className="flex-1 overflow-auto">
+		<div className="flex flex-col h-screen overflow-hidden">
+			<main className={cn("flex-1 min-h-0 overflow-hidden", !isPlayer && "pt-safe")}>
 				<Outlet />
 			</main>
-			<nav className="flex items-center justify-around border-t border-border bg-card/80 backdrop-blur-sm pb-safe">
+			<nav
+				className={cn(
+					"flex items-center justify-around border-t border-border bg-card/80 backdrop-blur-sm pb-safe pl-safe pr-safe shrink-0",
+					isPlayer && "hidden"
+				)}
+			>
 				{navItems.map(({ to, label, icon: Icon }) => (
 					<NavLink
 						key={to}
 						to={to}
 						className={({ isActive }) =>
 							cn(
-								"flex flex-col items-center py-2 px-3 text-muted-foreground transition-colors",
+								"flex flex-col items-center justify-center min-h-[49px] min-w-[64px] py-1.5 px-3 text-muted-foreground transition-colors",
 								isActive ? "text-primary" : ""
 							)
 						}
