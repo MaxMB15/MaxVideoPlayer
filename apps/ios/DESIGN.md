@@ -51,6 +51,31 @@ That changes most of the plan:
 | Distribution | TestFlight, then the App Store. No `.ipa` on GitHub                      |
 | Price        | Not decided. Must be settled before milestone 5                          |
 
+## Progress
+
+As of 2026-10-10 the app builds for the iOS simulator and plays streams there.
+That covers most of milestone 2 and part of milestone 3:
+
+- The iOS target lives in `apps/desktop`, with `gen/apple` checked in.
+- Rust drives mpv through the Metal path in section 1. The Swift package runs
+  the view, the audio session, Now Playing and the lock screen controls.
+- Everything in section 2 is off on iOS.
+- Layouts are picked by width as in section 3. On the phone, live channels use
+  compact rows and the player has fewer controls. The tablet layout is still
+  the desktop sidebar.
+
+Still open:
+
+- Playback on a physical iPhone and iPad, the rest of milestone 1. Milestone 2
+  went ahead in `apps/desktop` instead of `poc/`, because the simulator showed
+  that the Rust-driven path works.
+- Background audio, Now Playing and the lock screen controls are written but
+  untested.
+- The phone tab bar from section 3. The phone still shows the desktop's
+  Channels, Player, Playlists and Settings items.
+- Sheets on the tablet and phone, the simulator build in CI, and milestones 4
+  and 5.
+
 ## 1. Playback
 
 ### How video reaches the screen
@@ -73,13 +98,21 @@ mpv renders into the layer on its own thread. There's no render context and no
 `CADisplayLink`, so iOS doesn't use `renderer.rs` the way macOS and Linux do.
 The POC in `poc/` uses exactly this setup.
 
+The view is created on the first load and reused for every stream after that.
+Stopping only hides it.
+
+MPVKit builds mpv without Lua, so the `ytdl` and `osc` options don't exist on
+iOS. Setting either one fails `mpv_initialize` with
+`MPV_ERROR_OPTION_NOT_FOUND`, so the iOS option list leaves both out.
+
 ### What Rust does
 
-`src/ios.rs` in `tauri-plugin-mpv` is a placeholder today. It gets replaced with
-the real setup above. Everything else is shared with desktop:
+`src/ios.rs` in `tauri-plugin-mpv` asks Swift for the view and passes its layer
+to mpv. Everything else is shared with desktop:
 
-- `engine.rs` for load, play, pause, seek, volume and tracks. It needs one
-  change, a way to set `wid` before initializing.
+- `engine.rs` for load, play, pause, seek, volume and tracks. iOS adds a
+  relative seek for the lock screen's skip buttons, and a way to turn video
+  output off in the background.
 - `reconnect.rs` for stalls and dropped connections.
 - The `plugin:mpv|*` commands, so `src/lib/tauri.ts` and `useMpv` work unchanged
   and the React player controls draw over the video.
@@ -92,6 +125,9 @@ iOS side, does the work that has to happen in UIKit:
 - Creates the Metal view and hands its layer to Rust.
 - Moves and resizes the view when `set_bounds` and `set_visible` arrive, and when
   the device rotates or the app enters Split View.
+- Keeps the layer's drawable size in step with the view. MoltenVK sets it to
+  1x1 when it tears a swapchain down, and mpv sizes the next swapchain from it,
+  so the layer ignores sizes that small.
 - Sets the `AVAudioSession` category to playback, so audio keeps going on the
   lock screen. `Info.plist` gets `UIBackgroundModes: audio`.
 - Fills `MPNowPlayingInfoCenter` and handles the play, pause and seek remote
@@ -101,8 +137,13 @@ iOS side, does the work that has to happen in UIKit:
 - Sets `vid=no` when the app goes to the background and `vid=auto` when it
   returns. iOS kills apps that use Metal in the background.
 
+Rust and Swift talk through plain C functions. Rust calls the `mvp_ios_*`
+functions the package exports. Swift calls back through two C callbacks that
+Rust registers at startup, one for the app moving to and from the background
+and one for lock screen commands.
+
 MPVKit comes in through Swift Package Manager in the Xcode project's
-`project.yml`, pinned to an exact version. The final Xcode link resolves the
+`project.yml`, pinned to exactly 0.41.0. The final Xcode link resolves the
 `mpv_*` symbols that `libmpv2` calls.
 
 The POC's Objective-C bridge and its native control bar don't carry over. The
@@ -122,16 +163,22 @@ and it only plays HLS and MP4. When that work starts:
 
 ## 2. What's off on iOS
 
-| Feature                       | Why                                                                                              | How                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Downloads                     | iOS can't run the ffmpeg sidecar, and App Review rejects apps that save media from other sources | `#[cfg(desktop)]` on the manager, hide the tab and settings |
-| Updater                       | The App Store updates the app                                                                    | Desktop-only plugin, `useUpdateChecker` skips iOS           |
-| Support popup and card        | Apple requires in-app purchase for tips to the developer                                         | Hidden on iOS                                               |
-| Separate player window        | iOS has one window                                                                               | No fallback. If the Metal view fails, show an error         |
-| `shell` and `process` plugins | Only used for ffmpeg and relaunching after an update                                             | Desktop-only dependencies                                   |
+| Feature                | Why                                                                                              | How                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Downloads              | iOS can't run the ffmpeg sidecar, and App Review rejects apps that save media from other sources | The download commands return an error, and the tab, buttons and settings are hidden |
+| Updater                | The App Store updates the app                                                                    | Desktop-only plugin, `useUpdateChecker` skips iOS                                   |
+| Support popup and card | Apple requires in-app purchase for tips to the developer                                         | Hidden on iOS                                                                       |
+| Separate player window | iOS has one window                                                                               | No fallback. If the Metal view fails, show an error                                 |
+| `process` plugin       | Only used to relaunch after an update                                                            | Desktop-only dependency                                                             |
+| ffmpeg sidecar         | iOS apps can't run other programs                                                                | No sidecar lookup on mobile, and its permission is desktop only                     |
+
+The `shell` plugin stays in the iOS build so the downloads code compiles
+unchanged. Nothing calls it on iOS.
 
 Rust uses `#[cfg(desktop)]` and target-specific dependencies in `Cargo.toml`.
-React checks `usePlatform()`.
+Permissions for the desktop-only plugins and the sidecar live in
+`capabilities/desktop.json`, which only applies on macOS, Linux and Windows.
+React checks `isMobilePlatform()` from `src/lib/platform.ts`.
 
 ## 3. Layouts
 
@@ -144,8 +191,9 @@ so Split View and Stage Manager work:
 | 744 to 1023 points  | Tablet portrait |
 | Under 744 points    | Phone           |
 
-`usePlatform` returns `"mobile"` for every iOS device today. It needs to watch
-the width.
+`layoutModeFor` in `src/lib/platform.ts` picks the layout, and `usePlatform`
+checks again on every resize. A device counts as an iPhone when the short side
+of its screen is under 744 points.
 
 **Desktop.** The same React tree as macOS, on an iPad in landscape.
 
@@ -188,7 +236,10 @@ battery drain over an hour. Nothing else starts until this works.
   certificate as a new secret. The App Store Connect API key in the
   `macos-signing` environment may cover the upload if its role allows it.
 - Add an iOS section to `THIRD_PARTY_NOTICES.md` for MPVKit's libraries and link
-  it from Settings > About.
+  it from Settings > About. Besides mpv and FFmpeg, the 0.41.0 link pulls in
+  OpenSSL, GnuTLS, Nettle, GMP, libass, FreeType, FriBidi, HarfBuzz, MoltenVK,
+  shaderc, Little CMS, libplacebo, libdovi, libunibreak, dav1d, uavs3d,
+  uchardet and libbluray.
 - Fill in the App Store privacy details. The app collects no data.
 
 **5. App Store release.**
@@ -222,26 +273,31 @@ Store build stays public for the same reason.
 
 ## 6. Risks
 
-1. **Playback on a device is unconfirmed.** The POC builds a signed `.ipa` but
-   hasn't played a stream on hardware. Milestone 1 settles this.
-2. **Linking.** `libmpv2` has to link against MPVKit's xcframeworks, and its
-   version has to match MPVKit's mpv. The app crate builds a `cdylib` along
-   with `staticlib` and `rlib`, and the `cdylib` may not link for iOS. The POC
-   only builds `staticlib` and `rlib`.
+1. **Playback on a device is unconfirmed.** Streams play in the simulator, but
+   not yet on hardware, where the GPU and VideoToolbox decoding differ.
+   Milestone 1 settles this.
+2. **Linking.** Settled in the simulator. The app crate dropped its `cdylib`,
+   which can't link for iOS because libmpv only shows up at the Xcode link.
+   `libmpv2` links against MPVKit 0.41.0 there. MPVKit's uavs3d library is
+   built for iOS 17.5, so the linker warns at the 17.0 minimum. See the open
+   questions.
 3. **Resizing.** The Metal layer has to follow rotation, Split View and the
    React layout without a frame of the wrong size.
 4. **Battery and heat.** Vulkan through MoltenVK may cost more power than
    AVPlayer. Milestone 1 measures it.
 5. **Transparent web view.** Tauri's iOS web view has to show the Metal view
-   through it without breaking touch input.
+   through it without breaking touch input. This works in the simulator.
 6. **App Review.** IPTV apps get extra scrutiny. The app ships with no content
    and no provider, and the review notes have to say so.
 7. **Tauri mobile.** Tauri's iOS support is younger than its desktop support.
    Expect plugin and build issues.
 8. **App Transport Security.** It only applies to URLSession and the web view.
-   mpv and `reqwest` open their own sockets. The plan is to allow only
-   `NSAllowsArbitraryLoadsInWebContent` for HTTP channel logos, not the POC's
-   `NSAllowsArbitraryLoads`. Check this on a device.
+   mpv and `reqwest` open their own sockets. `Info.ios.plist` allows only
+   `NSAllowsArbitraryLoadsInWebContent`, for HTTP channel logos, and
+   `NSAllowsLocalNetworking`. It sets `NSAllowsArbitraryLoads` to false
+   outright, because the CLI merges it over the macOS `Info.plist`, which
+   allows everything. HTTP logos load in the simulator. Check this on a
+   device.
 
 ## 7. Success criteria
 
@@ -266,3 +322,5 @@ Store build stays public for the same reason.
 - **Price.** Free, paid, or free with a purchase. Decide before milestone 5.
 - **iCloud sync.** Whether to sync favorites and history, and whether through
   CloudKit or something else.
+- **Minimum iOS version.** MPVKit 0.41.0 builds uavs3d for iOS 17.5. Either
+  raise the minimum to 17.5, or confirm the app runs on 17.0 through 17.4.
