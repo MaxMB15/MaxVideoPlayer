@@ -21,7 +21,7 @@ use libmpv2::{
 };
 use std::ffi::{c_char, CString};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
 };
 use tauri::{AppHandle, Manager, Runtime};
@@ -142,6 +142,33 @@ pub fn set_audio_active(active: bool) {
     }
 }
 
+/// What the frontend knows about the stream that mpv can't tell: the
+/// channel name, and whether it's live. mpv's `media-title` for a stream is
+/// usually the last part of the URL, and a live stream's `duration` keeps
+/// growing as it buffers.
+struct MediaInfo {
+    title: Option<CString>,
+    live: bool,
+}
+
+static MEDIA_INFO: Mutex<MediaInfo> = Mutex::new(MediaInfo {
+    title: None,
+    live: false,
+});
+
+/// Bumped on every `set_media_info` so the watcher knows to resend.
+static MEDIA_INFO_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Sets the title and live flag shown on the lock screen. They stay until
+/// the next call, so they cover the next load too.
+pub fn set_media_info(title: Option<String>, live: bool) {
+    let title = title.filter(|t| !t.is_empty()).and_then(|t| CString::new(t).ok());
+    let mut info = MEDIA_INFO.lock().unwrap_or_else(|p| p.into_inner());
+    info.title = title;
+    info.live = live;
+    MEDIA_INFO_GEN.fetch_add(1, Ordering::AcqRel);
+}
+
 /// The Metal view under the web view. The view outlives this value: Swift
 /// reuses it for the next stream and only hides it on detach.
 pub struct IosMetalRenderer {
@@ -256,10 +283,11 @@ fn run_watcher(
 
     let mut paused = false;
     let mut duration = 0.0;
-    let mut title: Option<CString> = None;
+    let mut mpv_title: Option<CString> = None;
+    let mut seen_gen = MEDIA_INFO_GEN.load(Ordering::Acquire);
 
     while !kill.load(Ordering::Acquire) {
-        let changed = match client.wait_event(0.5) {
+        let event_changed = match client.wait_event(0.5) {
             Some(Ok(Event::Shutdown)) => break,
             Some(Ok(Event::PropertyChange { name, change, .. })) => match (name, change) {
                 ("vo-configured", PropertyData::Flag(true)) => {
@@ -274,10 +302,13 @@ fn run_watcher(
                 }
                 ("duration", PropertyData::Double(d)) => {
                     duration = d;
-                    true
+                    // A live stream's duration grows with the buffer. Each
+                    // update would restart the lock screen's progress, so
+                    // only a file with a real length counts.
+                    !MEDIA_INFO.lock().unwrap_or_else(|p| p.into_inner()).live
                 }
                 ("media-title", PropertyData::Str(t)) => {
-                    title = CString::new(t).ok();
+                    mpv_title = CString::new(t).ok();
                     true
                 }
                 _ => false,
@@ -285,10 +316,17 @@ fn run_watcher(
             Some(Ok(Event::PlaybackRestart)) => true,
             _ => false,
         };
-        if changed {
+        let gen = MEDIA_INFO_GEN.load(Ordering::Acquire);
+        let info_changed = gen != seen_gen;
+        seen_gen = gen;
+        if event_changed || info_changed {
             let position = client.get_property::<f64>("time-pos").unwrap_or(0.0);
-            let title_ptr = title.as_ref().map_or(std::ptr::null(), |t| t.as_ptr());
-            unsafe { mvp_ios_now_playing(title_ptr, duration, position, !paused) };
+            let info = MEDIA_INFO.lock().unwrap_or_else(|p| p.into_inner());
+            let title = info.title.as_ref().or(mpv_title.as_ref());
+            let title_ptr = title.map_or(std::ptr::null(), |t| t.as_ptr());
+            // Zero duration tells Swift the stream is live.
+            let length = if info.live { 0.0 } else { duration };
+            unsafe { mvp_ios_now_playing(title_ptr, length, position, !paused) };
         }
     }
 }

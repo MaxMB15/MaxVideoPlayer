@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "mpv_sub_remove",
     "mpv_set_sub_pos",
     "mpv_set_sub_delay",
+    "mpv_set_media_info",
 ];
 
 fn main() {

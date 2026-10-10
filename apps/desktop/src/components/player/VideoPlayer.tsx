@@ -16,6 +16,7 @@ import { useMpv } from "@/hooks/useMpv";
 import { useChannels } from "@/hooks/useChannels";
 import {
 	mpvSetBounds,
+	mpvSetMediaInfo,
 	recordPlayStart,
 	recordPlayEnd,
 	fetchOmdbData,
@@ -466,6 +467,14 @@ export const PlayerView = () => {
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on URL only; re-running on mpv/channel refs would cause loops
 	}, [navState?.url]);
+
+	// mpv only knows the stream URL, so tell the lock screen the channel name
+	// and whether it's live.
+	const activeIsLive = activeChannel?.contentType === "live";
+	useEffect(() => {
+		if (!isMobilePlatform()) return;
+		mpvSetMediaInfo(activeChannelName, activeIsLive).catch(() => {});
+	}, [activeChannelName, activeIsLive]);
 
 	// Persist last active channel and series episode list so they can be restored when navigating back
 	useEffect(() => {

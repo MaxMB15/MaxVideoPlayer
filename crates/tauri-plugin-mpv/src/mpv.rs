@@ -481,6 +481,15 @@ impl MpvState {
         }
     }
 
+    /// The channel name and live flag for the lock screen. Only iOS shows
+    /// them.
+    pub fn set_media_info(&self, title: Option<String>, live: bool) {
+        #[cfg(target_os = "ios")]
+        crate::ios::set_media_info(title, live);
+        #[cfg(not(target_os = "ios"))]
+        let _ = (title, live);
+    }
+
     pub fn set_volume(&self, volume: f64) -> Result<(), String> {
         self.inner.lock().map_err(|e| e.to_string())?.set_volume(volume)
     }
