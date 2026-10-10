@@ -1,9 +1,9 @@
-# Max Video Player — iOS
+# Max Video Player for iOS
 
-iOS / iPadOS support is planned as a **Tauri mobile** build of the desktop app,
-sharing the React frontend and the Rust crates. The full plan, covering the dual
-playback engines (AVPlayer and libmpv), the UI tiers and distribution, is in
-[`DESIGN.md`](DESIGN.md). It is still pending approval.
+The iOS and iPadOS app will be a Tauri mobile build of the desktop app, sharing
+the React frontend and the Rust crates. Every stream plays through mpv, using
+the LGPL build of MPVKit, and builds go to TestFlight and then the App Store.
+The full plan is in [`DESIGN.md`](DESIGN.md), which is pending approval.
 
 ## Proof of concept (`poc/`)
 
@@ -73,12 +73,13 @@ The POC is not part of the root Cargo workspace or npm workspace, so root
 
 These build FFmpeg, libass, libplacebo and libmpv for iOS by hand into `libs/`.
 They were the first approach and are **not used by the current build**, which
-gets prebuilt libraries from MPVKit. They are kept for reference, e.g. for a
-future LGPL-only build for the App Store.
+gets prebuilt libraries from MPVKit. They are kept for reference only.
 
 ## Next steps
 
-1. Confirm both playback paths on a physical device.
-2. Approve or revise `DESIGN.md` (section 2 needs updating for MPVKit).
-3. Run `tauri ios init` in `apps/desktop` and port the mpv bridge into an iOS
-   module of `crates/tauri-plugin-mpv`.
+These are milestones 1 and 2 of [`DESIGN.md`](DESIGN.md).
+
+1. Drive mpv from Rust in the POC and play a `.ts` live channel, an HLS stream
+   and an `.mkv` episode on an iPhone and an iPad.
+2. Run `tauri ios init` in `apps/desktop` and move the iOS setup into
+   `crates/tauri-plugin-mpv`, with a Swift part for UIKit.
