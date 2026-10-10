@@ -1,9 +1,13 @@
 # Max Video Player for iOS
 
-The iOS and iPadOS app will be a Tauri mobile build of the desktop app, sharing
-the React frontend and the Rust crates. Every stream plays through mpv, using
-the LGPL build of MPVKit, and builds go to TestFlight and then the App Store.
-The full plan is in [`DESIGN.md`](DESIGN.md), which is pending approval.
+The iOS and iPadOS app is a Tauri mobile build of the desktop app in
+`apps/desktop`, sharing the React frontend and the Rust crates. Every stream
+plays through mpv, using the LGPL build of MPVKit, and builds go to TestFlight
+and then the App Store. Building it, CI and the TestFlight setup are in
+[`docs/ios.md`](../../docs/ios.md). The plan is in [`DESIGN.md`](DESIGN.md).
+
+This folder keeps the design spec and the proof of concept that came before the
+port.
 
 ## Proof of concept (`poc/`)
 
@@ -77,9 +81,7 @@ gets prebuilt libraries from MPVKit. They are kept for reference only.
 
 ## Next steps
 
-These are milestones 1 and 2 of [`DESIGN.md`](DESIGN.md).
-
-1. Drive mpv from Rust in the POC and play a `.ts` live channel, an HLS stream
-   and an `.mkv` episode on an iPhone and an iPad.
-2. Run `tauri ios init` in `apps/desktop` and move the iOS setup into
-   `crates/tauri-plugin-mpv`, with a Swift part for UIKit.
+Milestone 2 of [`DESIGN.md`](DESIGN.md) is done. The app builds from
+`apps/desktop` and plays streams in the simulator. Milestone 1 still needs a
+physical iPhone and iPad, and milestone 4 needs the TestFlight setup in
+[`docs/ios.md`](../../docs/ios.md#testflight-setup).
