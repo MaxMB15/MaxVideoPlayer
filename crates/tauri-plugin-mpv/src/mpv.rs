@@ -19,6 +19,9 @@ use crate::macos::{embedded_options, fallback_options, MacosGlRenderer};
 #[cfg(target_os = "linux")]
 use crate::linux::{embedded_options as linux_embedded_options, fallback_options as linux_fallback_options, LinuxGlRenderer};
 
+#[cfg(target_os = "ios")]
+use crate::ios::{embedded_options as ios_embedded_options, IosMetalRenderer};
+
 pub struct MpvState {
     inner: Mutex<MpvEngine>,
     renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
@@ -99,13 +102,15 @@ impl MpvState {
         let result = self.load_impl(url, start_pos, app);
         if result.is_ok() {
             self.idle_inhibitor.inhibit();
+            #[cfg(target_os = "ios")]
+            crate::ios::set_audio_active(true);
         }
         result
     }
 
     /// The platform's mpv options, with hardware decoding turned off if the
     /// user disabled it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "ios"))]
     fn options(
         &self,
         base: Vec<(&'static str, &'static str)>,
@@ -249,7 +254,60 @@ impl MpvState {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    /// iOS has one window, so there's no fallback. If the Metal view can't
+    /// be set up, the load fails and the frontend shows the error.
+    #[cfg(target_os = "ios")]
+    fn load_impl<R: tauri::Runtime>(
+        &self,
+        url: &str,
+        start_pos: Option<f64>,
+        app: &tauri::AppHandle<R>,
+    ) -> Result<(), String> {
+        // Creating the view runs on the main thread, so it happens before
+        // any lock is taken.
+        let mut metal_renderer = IosMetalRenderer::new()?;
+
+        {
+            use tauri::Emitter;
+            let app_clone = app.clone();
+            metal_renderer.set_first_frame_callback(Box::new(move || {
+                let _ = app_clone.emit("mpv://first-frame", ());
+            }));
+        }
+
+        let wid = metal_renderer.wid();
+        let mut options = vec![("wid", wid.as_str())];
+        options.extend(self.options(ios_embedded_options()));
+
+        let attach_result = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            match engine.create(&options) {
+                Ok(mpv) => metal_renderer.attach(mpv),
+                Err(e) => Err(e),
+            }
+        };
+        if let Err(e) = attach_result {
+            drop(metal_renderer);
+            self.inner.lock().map_err(|e| e.to_string())?.stop();
+            return Err(e);
+        }
+
+        {
+            let mut renderer = self.renderer.lock().map_err(|e| e.to_string())?;
+            *renderer = Some(Box::new(metal_renderer));
+        }
+
+        let event_client = {
+            let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
+            engine.loadfile(url, start_pos)?;
+            engine.set_current_url(url);
+            engine.create_event_client("reconnect-watcher").ok()
+        };
+        self.spawn_reconnect_monitor(event_client, url, app);
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "ios")))]
     fn load_impl<R: tauri::Runtime>(
         &self,
         url: &str,
@@ -316,7 +374,17 @@ impl MpvState {
         Ok(engine.create_event_client("reconnect-watcher").ok())
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "ios")]
+    fn launch_fallback_impl(
+        &self,
+        _url: &str,
+        _start_pos: Option<f64>,
+        reason: &str,
+    ) -> Result<Option<libmpv2::Mpv>, String> {
+        Err(format!("video output failed: {reason}"))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "ios")))]
     fn launch_fallback_impl(
         &self,
         url: &str,
@@ -388,10 +456,38 @@ impl MpvState {
             Err(p) => p.into_inner().stop(),
         }
         self.idle_inhibitor.uninhibit();
+        #[cfg(target_os = "ios")]
+        crate::ios::set_audio_active(false);
     }
 
     pub fn seek(&self, position: f64) -> Result<(), String> {
         self.inner.lock().map_err(|e| e.to_string())?.seek(position)
+    }
+
+    /// Seek forward (positive) or back (negative) by `offset` seconds.
+    pub fn seek_relative(&self, offset: f64) -> Result<(), String> {
+        self.inner.lock().map_err(|e| e.to_string())?.seek_relative(offset)
+    }
+
+    /// Turn video output off or back on while audio keeps playing. iOS
+    /// uses this when the app goes to the background.
+    pub fn set_video_enabled(&self, enabled: bool) {
+        let result = match self.inner.lock() {
+            Ok(engine) => engine.set_video_enabled(enabled),
+            Err(e) => Err(e.to_string()),
+        };
+        if let Err(e) = result {
+            tracing::debug!("[MPV] set_video_enabled({enabled}): {e}");
+        }
+    }
+
+    /// The channel name and live flag for the lock screen. Only iOS shows
+    /// them.
+    pub fn set_media_info(&self, title: Option<String>, live: bool) {
+        #[cfg(target_os = "ios")]
+        crate::ios::set_media_info(title, live);
+        #[cfg(not(target_os = "ios"))]
+        let _ = (title, live);
     }
 
     pub fn set_volume(&self, volume: f64) -> Result<(), String> {
@@ -421,7 +517,10 @@ impl MpvState {
 
 /// Replace the `hwdec` option with `no` when hardware decoding is disabled.
 /// Other options pass through unchanged.
-#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux", target_os = "ios")),
+    allow(dead_code)
+)]
 fn with_hwdec(
     mut options: Vec<(&'static str, &'static str)>,
     enabled: bool,
