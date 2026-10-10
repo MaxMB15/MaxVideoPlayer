@@ -124,11 +124,13 @@ upload, add the category it names.
 | [iOS TestFlight](../.github/workflows/ios-testflight.yml) | Manual | A release build for devices, signed for the App Store and uploaded to TestFlight |
 
 The TestFlight workflow uses the `macos-signing` environment, so a reviewer approves
-each run, and it only runs from `dev`, `main` or a `v*` tag. The version comes from
-`tauri.conf.json` as usual. The build number is the workflow's run number, which
-goes up with every run as TestFlight requires. It doesn't use `--build-number`,
-because that appends a fourth number to the version and App Store Connect rejects
-it.
+each run, and it only runs from `dev`, `main` or a `v*` tag. Its first job checks the
+ref again before the signing job starts, and stops the run if anyone other than the
+repository owner started it. The `RELEASE_ALLOWED_ACTORS` variable changes who can,
+as it does for the release workflows. The version comes from `tauri.conf.json` as
+usual. The build number is the workflow's run number, which goes up with every run
+as TestFlight requires. It doesn't use `--build-number`, because that appends a
+fourth number to the version and App Store Connect rejects it.
 
 To run it, open Actions → **iOS TestFlight** → **Run workflow**, pick `dev` or
 `main`, and approve the deployment when it asks. The same works from a terminal:

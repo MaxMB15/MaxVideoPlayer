@@ -2,7 +2,8 @@ name: iOS TestFlight
 
 # Builds the iOS app for the App Store and uploads it to TestFlight. Run it by
 # hand. The Apple secrets live in the macos-signing environment, which waits
-# for approval and only runs on dev, main and v* tags.
+# for approval and only runs on dev, main and v* tags. Only the repository
+# owner, or the users in RELEASE_ALLOWED_ACTORS, can start it.
 on:
   workflow_dispatch:
 
@@ -14,7 +15,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Runs before anything can read the signing secrets. The macos-signing
+  # environment also refuses other refs, so this is a second check.
+  authorize:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check the ref and who started the run
+        env:
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_ALLOWED_ACTORS }}
+        run: |
+          set -euo pipefail
+          case "$REF" in
+            refs/heads/dev | refs/heads/main | refs/tags/v*) ;;
+            *)
+              echo "::error::TestFlight builds only run from dev, main or a v* tag, not $REF."
+              exit 1
+              ;;
+          esac
+          # The release workflows use the same rule. The repository owner can
+          # start a run, or the comma-separated users in RELEASE_ALLOWED_ACTORS.
+          allowed="$(tr -d '[:space:]' <<<"$ALLOWED_ACTORS")"
+          allowed="${allowed:-$REPO_OWNER}"
+          if ! tr ',' '\n' <<<"$allowed" | grep -qxF "$ACTOR"; then
+            echo "::error::$ACTOR can't run TestFlight builds. Allowed: $allowed. Set the RELEASE_ALLOWED_ACTORS variable to change this."
+            exit 1
+          fi
+
   testflight:
+    needs: authorize
     runs-on: macos-26
     timeout-minutes: 90
     environment: macos-signing
