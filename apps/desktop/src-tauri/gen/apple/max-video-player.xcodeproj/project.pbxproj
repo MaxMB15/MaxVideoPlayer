@@ -28,6 +28,7 @@
 		BD5E02885DBB9E192DD584F7 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 31E5083221F1CE8B84C69112 /* LaunchScreen.storyboard */; };
 		C0B6525149364D52F86DE9B2 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 82EB03A40F038D978BB817EB /* CoreGraphics.framework */; };
 		C1BDAE40B70A4772A36A1C26 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 58140A0DE0FE5C189F1347A2 /* CoreVideo.framework */; };
+		C3804609DDBC516E5D2135BE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1FDF3C0ABA4CCC79EDC40A3C /* PrivacyInfo.xcprivacy */; };
 		D155394E98C9FC914FA40F57 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40C3DB4FB0429411A0181D3 /* Metal.framework */; };
 		DE5A0C72FF45A325AD2BC6A8 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1132019601E2245AB9CBF149 /* UIKit.framework */; };
 		E3664FED9C739F035B0AF408 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 25C0912BCC839992C5E44640 /* CoreFoundation.framework */; };
@@ -39,6 +40,7 @@
 		173E91697AB29E73D0AD7090 /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
 		1E8934988259A9F11A312126 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		1EF2353A08B03215FA6733F1 /* scheduler.rs */ = {isa = PBXFileReference; path = scheduler.rs; sourceTree = "<group>"; };
+		1FDF3C0ABA4CCC79EDC40A3C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		25C0912BCC839992C5E44640 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		31E5083221F1CE8B84C69112 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		3D7CFEB34E8297D6E716774F /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
@@ -128,6 +130,7 @@
 			children = (
 				4220F4459B84F416AD4B00CA /* Info.plist */,
 				B915B63FCDCB020258508718 /* max-video-player_iOS.entitlements */,
+				1FDF3C0ABA4CCC79EDC40A3C /* PrivacyInfo.xcprivacy */,
 			);
 			path = "max-video-player_iOS";
 			sourceTree = "<group>";
@@ -283,6 +286,7 @@
 			files = (
 				80E1FA9B0720A6DC75E939C4 /* Assets.xcassets in Resources */,
 				BD5E02885DBB9E192DD584F7 /* LaunchScreen.storyboard in Resources */,
+				C3804609DDBC516E5D2135BE /* PrivacyInfo.xcprivacy in Resources */,
 				85516C8B3A3A8EBD642BC880 /* assets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
