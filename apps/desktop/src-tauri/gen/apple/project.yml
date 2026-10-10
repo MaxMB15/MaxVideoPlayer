@@ -51,6 +51,9 @@ targets:
         UIRequiredDeviceCapabilities: [arm64, metal]
         # Audio keeps playing on the lock screen.
         UIBackgroundModes: [audio]
+        # The only encryption is HTTPS and TLS, which is exempt. Without this
+        # key App Store Connect asks about it for every build.
+        ITSAppUsesNonExemptEncryption: false
         # Channel logos are often plain HTTP. mpv and reqwest open their own
         # sockets, which App Transport Security doesn't cover.
         NSAppTransportSecurity:

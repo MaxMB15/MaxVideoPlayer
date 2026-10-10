@@ -170,8 +170,11 @@ and signing through the key needs Admin.
 
 ### 4. Answer App Store Connect's questions
 
-- **Export compliance.** Testers can't install a build until this is answered. The
-  app only uses encryption for HTTPS and other TLS connections. Apple asks again for
-  every build until `ITSAppUsesNonExemptEncryption` is set in `Info.plist`.
-- **App Privacy.** Required before submitting to the App Store. The answers should
-  match the privacy manifest, which declares no collected data.
+- **Export compliance.** `Info.plist` sets `ITSAppUsesNonExemptEncryption` to
+  `false`, because the app only uses encryption for HTTPS and other TLS connections.
+  App Store Connect then doesn't ask about it for each build.
+- **App Privacy.** Answer **Data Not Collected**. This is required before
+  submitting to the App Store, and it matches the privacy manifest. The app has no
+  server and no analytics. Requests for metadata, subtitles and category sorting go
+  straight from the device to those services, with the user's own keys where one is
+  needed.
