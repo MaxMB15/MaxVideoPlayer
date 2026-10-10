@@ -21,8 +21,11 @@ jobs:
   authorize:
     runs-on: ubuntu-latest
     permissions: {}
+    outputs:
+      attempt: ${{ steps.check.outputs.attempt }}
     steps:
       - name: Check the ref and who started the run
+        id: check
         env:
           REF: ${{ github.ref }}
           ACTOR: ${{ github.triggering_actor }}
@@ -46,6 +49,7 @@ jobs:
             echo "::error::$ACTOR can't run TestFlight builds. Allowed: $allowed. Set the RELEASE_ALLOWED_ACTORS variable to change this."
             exit 1
           fi
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   testflight:
     needs: authorize
@@ -55,15 +59,18 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Re-running only this job skips the authorize job, which already
-      # passed. So a rerun has to come from whoever started the run.
+      # Re-running only this job skips the authorize job, which passed in an
+      # earlier attempt and checked someone else. Then the rerun has to come
+      # from whoever started the run.
       - name: Check who started this attempt
         env:
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          CHECKED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
-          if [ "$TRIGGERING_ACTOR" != "$ACTOR" ]; then
-            echo "::error::$ACTOR started this run, so only $ACTOR can re-run it. Start a new run instead."
+          if [ "$CHECKED_ATTEMPT" != "$ATTEMPT" ] && [ "$TRIGGERING_ACTOR" != "$ACTOR" ]; then
+            echo "::error::$ACTOR started this run, so only $ACTOR can re-run this job on its own. Re-run all jobs or start a new run instead."
             exit 1
           fi
 

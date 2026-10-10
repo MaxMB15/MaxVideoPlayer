@@ -128,8 +128,9 @@ each run, and it only runs from `dev`, `main` or a `v*` tag. Its first job check
 ref again before the signing job starts, and checks who started the run. The users
 listed in the `RELEASE_ALLOWED_ACTORS` variable can, or the repository owner when it
 isn't set, as for the release workflows. Setting the variable replaces the owner, so
-list the owner in it too. Re-running only the signing job skips that first job, so
-the signing job refuses a rerun by anyone but the person who started the run.
+list the owner in it too. Re-running all jobs runs that check again for whoever
+starts the rerun. Re-running only the signing job skips it, so the signing job then
+refuses anyone but the person who started the run.
 
 The version comes from `tauri.conf.json` as usual. The build number is the
 workflow's run number, which goes up with every run as TestFlight requires. It
