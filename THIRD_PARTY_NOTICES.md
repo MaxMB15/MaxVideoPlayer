@@ -20,7 +20,7 @@ Max Video Player plays video with libmpv from [mpv](https://mpv.io), licensed un
 Max Video Player includes [FFmpeg](https://ffmpeg.org) in two forms. FFmpeg is a trademark of Fabrice Bellard.
 
 - **FFmpeg 7.1 libraries** (`libavcodec`, `libavfilter`, `libavformat`, `libavutil`, `libpostproc`, `libswresample`, `libswscale`), used by libmpv. The macOS app includes them as built by Homebrew's `ffmpeg@7` formula, with `--enable-gpl` and `--enable-version3`. That build is licensed under the GNU General Public License version 3 or later.
-- **FFmpeg 8.0.1 libraries** (`libavcodec`, `libavdevice`, `libavfilter`, `libavformat`, `libavutil`, `libswresample`, `libswscale`), used by libmpv in the iOS app. They're built with `--enable-version3` and without `--enable-gpl`, so they're licensed under the GNU Lesser General Public License version 3 or later.
+- **FFmpeg 9.0.2 libraries** (`libavcodec`, `libavdevice`, `libavfilter`, `libavformat`, `libavutil`, `libswresample`, `libswscale`), used by libmpv in the iOS app. They're built with `--enable-version3` and without `--enable-gpl`, so they're licensed under the GNU Lesser General Public License version 3 or later.
 - **The `ffmpeg` program**, which the desktop app runs to download movies and episodes. The iOS app doesn't include it. It is a static build licensed under the GNU General Public License version 3 or later, downloaded by [scripts/fetch-ffmpeg.sh](scripts/fetch-ffmpeg.sh) from [osxexperts.net](https://www.osxexperts.net) for macOS, [johnvansickle.com](https://johnvansickle.com/ffmpeg/) for Linux and [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) for Windows builds.
 
 ## Libraries bundled in the macOS app
@@ -111,9 +111,9 @@ The AppImage includes libmpv, built from source as above, and the shared librari
 
 ## Libraries bundled in the iOS app
 
-The iOS app gets libmpv, the FFmpeg libraries and the libraries below from release 0.41.0 of [MPVKit](https://github.com/mpvkit/MPVKit), through its LGPL `MPVKit` product. MPVKit's `MPVKit-GPL` product isn't used. Each library is a framework in the app's `Frameworks` folder, except MoltenVK, which is linked into the app itself. MPVKit's [build scripts](https://github.com/mpvkit/MPVKit/tree/0.41.0/Sources/BuildScripts) list the source and options for each one.
+The iOS app gets libmpv, the FFmpeg libraries and the libraries below from release 1.1.0-n9.0.2 of [MPVKit](https://github.com/mpvkit/MPVKit), through its LGPL `MPVKit` product. MPVKit's `MPVKit-GPL` product isn't used. MPVKit builds them all as static libraries, so they're linked into the app's executable. MPVKit's [build scripts](https://github.com/mpvkit/MPVKit/tree/1.1.0-n9.0.2/Sources/BuildScripts) list the source and options for each one.
 
-| Project | Files | License |
+| Project | MPVKit target | License |
 | --- | --- | --- |
 | [dav1d](https://code.videolan.org/videolan/dav1d) | `Libdav1d` | BSD-2-Clause |
 | [freetype](https://www.freetype.org/) | `Libfreetype` | FTL |
@@ -127,7 +127,7 @@ The iOS app gets libmpv, the FFmpeg libraries and the libraries below from relea
 | [libplacebo](https://code.videolan.org/videolan/libplacebo) | `Libplacebo` | LGPL-2.1-or-later |
 | [libunibreak](https://github.com/adah1972/libunibreak) | `Libunibreak` | Zlib |
 | [little-cms2](https://www.littlecms.com/) | `lcms2` | MIT |
-| [MoltenVK](https://github.com/KhronosGroup/MoltenVK) | linked into the app | Apache-2.0 |
+| [MoltenVK](https://github.com/KhronosGroup/MoltenVK) | `MoltenVK` | Apache-2.0 |
 | [nettle](https://www.lysator.liu.se/~nisse/nettle/) | `nettle`, `hogweed` | LGPL-3.0-or-later OR GPL-2.0-or-later |
 | [openssl](https://openssl-library.org) | `Libcrypto`, `Libssl` | Apache-2.0 |
 | [shaderc](https://github.com/google/shaderc) | `Libshaderc_combined` | Apache-2.0 |
