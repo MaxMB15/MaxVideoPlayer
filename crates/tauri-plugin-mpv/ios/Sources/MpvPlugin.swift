@@ -136,6 +136,18 @@ final class MpvHost: NSObject {
     center.addObserver(
       self, selector: #selector(audioRouteChanged(_:)),
       name: AVAudioSession.routeChangeNotification, object: nil)
+
+    // The app needs iOS 17, so this always runs. The check is for the
+    // package, which still declares iOS 13. Tauri loads plugins on the main
+    // thread.
+    if #available(iOS 17.0, *) {
+      MainActor.assumeIsolated {
+        _ = webview.registerForTraitChanges([UITraitVerticalSizeClass.self]) {
+          [weak self] (_: WKWebView, _: UITraitCollection) in
+          self?.updateSystemBars()
+        }
+      }
+    }
   }
 
   func registerCallbacks(
@@ -167,6 +179,7 @@ final class MpvHost: NSObject {
       container.insertSubview(view, belowSubview: webview)
     }
     view.isHidden = false
+    updateSystemBars()
     return UInt(bitPattern: Unmanaged.passUnretained(view.layer).toOpaque())
   }
 
@@ -183,6 +196,26 @@ final class MpvHost: NSObject {
 
   func setVisible(_ visible: Bool) {
     videoView?.isHidden = !visible
+    updateSystemBars()
+  }
+
+  /// tao's view controller always asks for the status bar, so on an iPhone
+  /// in landscape it would sit on top of the video. iOS normally hides it
+  /// there. The home indicator fades out while video is on screen.
+  private func updateSystemBars() {
+    guard let webview, let controller = webview.window?.rootViewController else { return }
+    let compactHeight = webview.traitCollection.verticalSizeClass == .compact
+    let showingVideo = videoView.map { !$0.isHidden && $0.window != nil } ?? false
+    setFlag(controller, "setPrefersStatusBarHidden:", compactHeight)
+    setFlag(controller, "setPrefersHomeIndicatorAutoHidden:", showingVideo)
+  }
+
+  /// Calls one of tao's BOOL setters, which UIKit doesn't declare.
+  private func setFlag(_ target: NSObject, _ setter: String, _ value: Bool) {
+    let selector = NSSelectorFromString(setter)
+    guard target.responds(to: selector) else { return }
+    typealias Setter = @convention(c) (NSObject, Selector, Bool) -> Void
+    unsafeBitCast(target.method(for: selector), to: Setter.self)(target, selector, value)
   }
 
   // MARK: Audio session and Now Playing
