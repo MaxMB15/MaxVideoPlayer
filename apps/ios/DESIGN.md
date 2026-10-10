@@ -1,226 +1,268 @@
-# iOS / iPadOS Support — Design Spec
+# iOS and iPadOS design spec
 
-**Date:** 2026-04-18
-**Status:** Pending Approval
-**Platforms:** iOS 17+ (iPhone + iPad, including Apple silicon iPad)
+**First written:** 2026-04-18
+**Revised:** 2026-10-10
+**Status:** pending approval
+**Platforms:** iOS and iPadOS 17 or later, on iPhone and iPad
 
-> **Update (October 2026):** still pending approval. The POC in [`poc/`](poc/)
-> moved the libmpv path to [MPVKit](https://github.com/mpvkit/MPVKit): mpv draws
-> straight into a `CAMetalLayer` (`vo=gpu-next`, Vulkan via MoltenVK,
-> `hwdec=videotoolbox`) instead of the OpenGL ES / software render route in
-> section 2. Section 2 needs updating to match before implementation starts.
+## Summary
 
----
+The iOS app is the desktop app built for one more target. It shares the React
+frontend, `mvp-core` and the Rust side of `tauri-plugin-mpv`. Every stream plays
+through mpv, using the LGPL build of [MPVKit](https://github.com/mpvkit/MPVKit).
+Builds go to TestFlight first and the App Store after that.
 
-## Overview
+The work is split into five milestones, listed in section 4.
 
-Port MaxVideoPlayer to iOS and iPadOS while preserving the existing Tauri + Rust + React architecture. The core bet: **Tauri Mobile (v2) + a dual-engine player** where AVPlayer handles App‑Store‑friendly formats (HLS/MP4) and libmpv handles everything else (RTMP/RTSP/raw‑TS/UDP/MKV) on sideloaded builds. React components are reused verbatim for iPad landscape, lightly re-composed for iPad portrait, and a subset are rebuilt as a purpose-built iPhone shell.
+## What changed since the first draft
 
-Distribution rolls out in phases: **sideload (AltStore) first**, then the **Apple Developer Program**, then optionally an **App Store build** that compiles the MPV engine out via Cargo feature.
+The April draft played HLS and MP4 with AVPlayer and everything else with mpv,
+and planned a separate App Store build with mpv removed. It assumed mpv couldn't
+go on the App Store. It can. MPVKit's default product builds mpv with
+`-Dgpl=false` and FFmpeg without `--enable-gpl`, so the whole player is LGPL.
+The App Store accepts LGPL code. VLC is the best known case, back on the store
+since 2013 after libVLC moved to the LGPL.
 
----
+That changes most of the plan:
 
-## Key Decisions
+- mpv is the only engine. AVPlayer can't play `.ts` live streams, which is the
+  Xtream default, or `.mkv` episodes, and mpv plays both.
+- There's one build. The App Store build, the remux bridge and the "use the
+  sideload build" message are gone.
+- mpv draws straight into a Metal layer. The OpenGL ES and software render
+  routes from the first draft are dropped. The POC already uses the Metal path.
+- AVPlayer comes back later, only for picture in picture and AirPlay. See
+  "Later: AVPlayer" in section 1.
+- No sideloading and no `.ipa` on GitHub releases. The paid Apple developer
+  account used for macOS signing also covers TestFlight.
+- The plugin keeps the name `tauri-plugin-mpv` until AVPlayer arrives.
 
-| Decision                 | Choice                                                                                                                                                   | Rationale                                                                                                                                    |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mobile framework         | Tauri v2 Mobile                                                                                                                                          | Preserves Rust core + React UI; already wired (`cfg_attr(mobile, tauri::mobile_entry_point)`) and `staticlib`/`cdylib` crate types in place. |
-| Player engine            | Dual: AVPlayer default, libmpv fallback via `PlayerEngine` trait + URL router                                                                            | AVPlayer covers ~80% of modern IPTV for free; libmpv fills protocol gaps. Single abstraction keeps call sites uniform.                       |
-| App Store build          | Cargo feature `mpv-engine`, default‑off on `ios-appstore` profile                                                                                        | Strips libmpv entirely — avoids GPL / binary‑size / license review risk.                                                                     |
-| Distribution order       | Sideload → Developer Program → App Store                                                                                                                 | Ship fast with full format support; App Store gets the AVPlayer‑only subset later.                                                           |
-| Device scope             | iPhone + iPad, iOS 17+                                                                                                                                   | iOS 17 unlocks modern SwiftUI/AVKit APIs and aligns with current Tauri mobile toolchain. No legacy device burden.                            |
-| UI composition           | Three-tier responsive: Desktop ≈ iPad‑Landscape (same code), iPad‑Portrait (tweaked composition), iPhone (rebuilt shell)                                 | Tauri gives us ~95% component reuse on iPad; iPhone needs native patterns (tab bar, sheets).                                                 |
-| iPhone EPG               | Hybrid A+C — "Live" tab as home (channel cards w/ now-playing + ⓘ), drawer opens per-channel vertical schedule. No standalone EPG tab, no mini timeline. | Grid is unreadable at 390 px; per-channel drawer is the iOS‑native pattern.                                                                  |
-| Rust core reuse          | 100% — mvp-core compiles clean for `aarch64-apple-ios`                                                                                                   | All deps (`reqwest`, `rusqlite` bundled, `quick-xml`, `chrono`, `rayon`, `memmap2`) are iOS‑compatible.                                      |
-| Transcoding/remux bridge | Deferred to Phase 2, App Store track only                                                                                                                | MPV handles odd protocols natively on sideload builds; remux only earns its keep when AVPlayer is the only option.                           |
+## Decisions
 
----
+| Decision     | Choice                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| App          | A Tauri 2 iOS target in `apps/desktop`, not a separate app               |
+| Player       | mpv only, from MPVKit's LGPL `MPVKit` product                            |
+| Who runs mpv | Rust, through `libmpv2` in `tauri-plugin-mpv`, same as desktop           |
+| Native code  | A small Swift part of `tauri-plugin-mpv` for UIKit and the audio session |
+| PiP, AirPlay | Later, through AVPlayer on HLS streams                                   |
+| Devices      | iPhone and iPad, iOS 17 or later                                         |
+| Layouts      | Phone, tablet portrait and desktop, picked by width                      |
+| Distribution | TestFlight, then the App Store. No `.ipa` on GitHub                      |
+| Price        | Not decided. Must be settled before milestone 5                          |
 
-## 1. Player Engine Architecture
+## 1. Playback
 
-The single largest architectural change. Today `crates/tauri-plugin-mpv` is mpv‑only. On iOS we need two engines behind one interface.
+### How video reaches the screen
 
-### `PlayerEngine` trait (new, in `crates/tauri-plugin-player`)
+A UIView backed by a `CAMetalLayer` sits under the web view, and the web view is
+transparent where the video shows. That's the same idea as the `NSOpenGLView`
+under the WKWebView on macOS.
 
-```rust
-pub trait PlayerEngine: Send + Sync {
-    fn load(&self, url: &str, opts: LoadOptions) -> Result<()>;
-    fn play(&self) -> Result<()>;
-    fn pause(&self) -> Result<()>;
-    fn stop(&self) -> Result<()>;
-    fn seek(&self, secs: f64) -> Result<()>;
-    fn set_volume(&self, v: f32) -> Result<()>;
-    fn set_subtitle_track(&self, id: Option<i64>) -> Result<()>;
-    fn state(&self) -> PlayerState;
-    fn capabilities(&self) -> Capabilities;
-}
+Rust passes the layer pointer to mpv as `wid` before `mpv_initialize`, with these
+options:
+
+```
+vo=gpu-next
+gpu-api=vulkan
+gpu-context=moltenvk
+hwdec=videotoolbox
 ```
 
-Two implementations:
+mpv renders into the layer on its own thread. There's no render context and no
+`CADisplayLink`, so iOS doesn't use `renderer.rs` the way macOS and Linux do.
+The POC in `poc/` uses exactly this setup.
 
-- **`AvPlayerEngine`** (iOS‑only, always compiled) — wraps `AVPlayer` + `AVPlayerLayer` via Tauri‑Mobile Swift plugin bridge. Provides PiP, AirPlay, CarPlay, background audio, Control Center integration for free.
-- **`MpvEngine`** (existing, gated by `#[cfg(feature = "mpv-engine")]`) — unchanged for macOS/Linux, compiled for iOS sideload via a new `ios.rs` CAMetalLayer renderer.
+### What Rust does
 
-### URL-based router
+`src/ios.rs` in `tauri-plugin-mpv` is a placeholder today. It gets replaced with
+the real setup above. Everything else is shared with desktop:
 
-```rust
-pub fn select_engine(url: &str) -> EngineKind {
-    let scheme = url.split("://").next().unwrap_or("").to_lowercase();
-    match scheme.as_str() {
-        "rtmp" | "rtmps" | "rtsp" | "udp" | "mms" => EngineKind::Mpv,
-        _ if url.ends_with(".ts") || url.ends_with(".mkv") || url.ends_with(".avi")
-            => EngineKind::Mpv,
-        _ => EngineKind::Av, // HLS .m3u8, MP4, default
-    }
-}
-```
+- `engine.rs` for load, play, pause, seek, volume and tracks. It needs one
+  change, a way to set `wid` before initializing.
+- `reconnect.rs` for stalls and dropped connections.
+- The `plugin:mpv|*` commands, so `src/lib/tauri.ts` and `useMpv` work unchanged
+  and the React player controls draw over the video.
 
-App Store build (`--no-default-features --features ios-appstore`): the match arms that return `Mpv` become `Err(UnsupportedProtocol)` — surfaced to the UI as "This format requires the sideload build."
+### What Swift does
 
-### Rust crate reorg
+A Swift package in `crates/tauri-plugin-mpv/ios/`, registered as the plugin's
+iOS side, does the work that has to happen in UIKit:
 
-- Rename `tauri-plugin-mpv` → **`tauri-plugin-player`**, keep `MpvEngine` inside feature‑gated module.
-- New modules: `engine_av.rs`, `engine_mpv.rs`, `router.rs`, `capabilities.rs`.
-- Renderer trait stays (`PlatformRenderer`), with iOS variants: `IosAvPlayerLayer` and (feature‑gated) `IosMpvMetalRenderer`.
+- Creates the Metal view and hands its layer to Rust.
+- Moves and resizes the view when `set_bounds` and `set_visible` arrive, and when
+  the device rotates or the app enters Split View.
+- Sets the `AVAudioSession` category to playback, so audio keeps going on the
+  lock screen. `Info.plist` gets `UIBackgroundModes: audio`.
+- Fills `MPNowPlayingInfoCenter` and handles the play, pause and seek remote
+  commands.
+- Turns off the idle timer during playback. `idle_inhibit.rs` only covers macOS
+  and Linux.
+- Sets `vid=no` when the app goes to the background and `vid=auto` when it
+  returns. iOS kills apps that use Metal in the background.
 
----
+MPVKit comes in through Swift Package Manager in the Xcode project's
+`project.yml`, pinned to an exact version. The final Xcode link resolves the
+`mpv_*` symbols that `libmpv2` calls.
 
-## 2. iOS Video Rendering
+The POC's Objective-C bridge and its native control bar don't carry over. The
+React controls replace them.
 
-### AVPlayer path (default)
+### Later: AVPlayer
 
-- Swift side: `AVPlayer` → `AVPlayerLayer` added to a `UIView` that Tauri Mobile creates below the WKWebView (same "native layer under webview" pattern we already use on macOS with `NSOpenGLView`).
-- WebView background set transparent so the layer shows through in a rect controlled by JS via `set_frame()` IPC.
-- PiP via `AVPictureInPictureController` — one-line enable.
-- AirPlay via `MPNowPlayingInfoCenter` + `AVRoutePickerView` surfaced in the player UI.
-- Background audio via `AVAudioSession.sharedInstance().setCategory(.playback)` + `UIBackgroundModes: [audio]` in Info.plist.
+AVPlayer is the only way to get picture in picture and AirPlay video on iOS,
+and it only plays HLS and MP4. When that work starts:
 
-### libmpv path (sideload only)
+- Rename the plugin to `tauri-plugin-player` and put both engines behind a
+  `PlayerEngine` trait.
+- Use AVPlayer only when the stream is HLS. Many Xtream providers list `m3u8` in
+  `allowed_output_formats`, so live channels can switch from `.ts` to HLS.
+- Keep mpv for everything else. Picture in picture won't work on `.ts`, and the
+  UI should say so.
 
-- Cross‑compile `libmpv.a` + LGPL ffmpeg for `aarch64-apple-ios` using `scripts/build-libmpv-ios.sh` (new) — mirrors existing macOS script but with iOS SDK sysroot and `--disable-debug --disable-programs`.
-- `ios.rs` creates a `CAMetalLayer` subview, hands it to libmpv via `mpv_render_context` with `MPV_RENDER_API_TYPE_OPENGL` (OpenGL ES 3.0 on iOS — supported but deprecated) OR pivots to libmpv's `SW` render API + Metal upload if GLES proves unstable.
-- Hardware decode: `hwdec=videotoolbox-copy` (works with render API; `videotoolbox` direct path requires private APIs).
-- NO PiP / AirPlay for the MPV path in v1 — documented limitation. Users who need PiP switch to HLS URL.
+## 2. What's off on iOS
 
-### Why not libmpv via Metal directly
+| Feature                       | Why                                                                                              | How                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Downloads                     | iOS can't run the ffmpeg sidecar, and App Review rejects apps that save media from other sources | `#[cfg(desktop)]` on the manager, hide the tab and settings |
+| Updater                       | The App Store updates the app                                                                    | Desktop-only plugin, `useUpdateChecker` skips iOS           |
+| Support popup and card        | Apple requires in-app purchase for tips to the developer                                         | Hidden on iOS                                               |
+| Separate player window        | iOS has one window                                                                               | No fallback. If the Metal view fails, show an error         |
+| `shell` and `process` plugins | Only used for ffmpeg and relaunching after an update                                             | Desktop-only dependencies                                   |
 
-libmpv exposes `MPV_RENDER_API_TYPE_OPENGL` only. Newer forks have a Metal API proposal but nothing merged. OpenGL ES still works on iOS 17, just with deprecation warnings. If Apple removes it we pivot to the SW render API (libmpv draws into a CPU buffer, we upload to `MTLTexture` per frame — ~20% overhead, acceptable).
+Rust uses `#[cfg(desktop)]` and target-specific dependencies in `Cargo.toml`.
+React checks `usePlatform()`.
 
----
+## 3. Layouts
 
-## 3. UI Composition — Three Tiers
+An iPhone always gets the phone layout. An iPad picks a layout by window width,
+so Split View and Stage Manager work:
 
-### Tier 1: Desktop + iPad Landscape — same React tree
+| Width               | Layout          |
+| ------------------- | --------------- |
+| 1024 points or more | Desktop         |
+| 744 to 1023 points  | Tablet portrait |
+| Under 744 points    | Phone           |
 
-- 3‑column layout: sidebar (providers/categories) · channel list · EPG/Now‑Playing drawer.
-- Touch adaptations globally: 44pt min hit targets (already respected by Tailwind sizes), long‑press substitutes for right‑click in channel list context menu.
-- Works on iPad 11"/13" landscape without modification.
+`usePlatform` returns `"mobile"` for every iOS device today. It needs to watch
+the width.
 
-### Tier 2: iPad Portrait — tweaked composition
+**Desktop.** The same React tree as macOS, on an iPad in landscape.
 
-- Sidebar collapses to icon rail (40pt wide) — reuses existing `<Sidebar>` with a `variant="compact"` prop.
-- Right drawer (EPG / Now Playing) becomes a bottom/side sheet via `<Sheet>` component (add — shadcn primitive).
-- Channel list + player take the main column.
-- Estimated: ~1 week of CSS breakpoint + one sheet component.
+**Tablet portrait.** The sidebar shrinks to an icon rail, and the info drawers
+open as sheets from the bottom.
 
-### Tier 3: iPhone — rebuilt shell
+**Phone.** A new shell around the same hooks and state:
 
-- **Bottom tab bar** replaces sidebar. 5 tabs: Home · Live · VoD · Favorites · Settings.
-- **Home / Live = channel cards**: logo + channel name + currently‑airing program + ⓘ button.
-- **ⓘ opens per‑channel EPG drawer** (vertical schedule, today/tomorrow sections — this is the "A" half of hybrid A+C).
-- **No EPG tab** on iPhone. Cross‑channel grid is iPad‑only.
-- **Player**: full‑screen with translucent overlay controls; swipe‑down to minimize to PiP (AVPlayer only).
-- **Drawers become iOS sheets** (presentation: `formSheet` / `pageSheet`).
-- Scope: ~40% new view code, 100% hook/state/IPC reuse. Estimated ~2 weeks.
+- A tab bar with Live, Movies, Series, Favorites and Settings. History goes in
+  Favorites.
+- Channel cards with the logo, name and the program on now.
+- An info button that opens a sheet with that channel's schedule. There's no
+  cross-channel guide on the phone.
+- A full screen player with the React controls on top.
 
-React side uses `usePlatform()` (already exists, already detects iOS/Android + derives `layoutMode`) to select between `<DesktopShell>`, `<TabletPortraitShell>`, `<PhoneShell>`.
+On every layout, tap targets are at least 44 points and a long press replaces
+right-click.
 
----
+## 4. Milestones
 
-## 4. Feature Scope — Phased
+**1. Playback on real devices.** In `poc/`, drive mpv from Rust instead of the
+Objective-C bridge and play a `.ts` live channel, an HLS stream and an `.mkv`
+episode on an iPhone and an iPad. Measure `.ipa` size, time to first frame and
+battery drain over an hour. Nothing else starts until this works.
 
-### Phase 1 — MVP (sideload ship)
+**2. iOS target in `apps/desktop`.**
 
-Xtream Codes login · M3U URL import · Live TV · VoD/Series · Search + categories · Favorites (SQLite) · Recently played · Provider CRUD · Basic subtitle toggle · PiP (AVPlayer path) · Background audio.
+- Run `tauri ios init` and commit `gen/apple` with MPVKit in `project.yml`.
+- Add `tauri.ios.conf.json`: no `externalBin`, no updater artifacts, minimum
+  iOS 17.0.
+- Put the parts in section 2 behind `#[cfg(desktop)]`.
+- Write the Swift package and the real `ios.rs`.
+- Add a CI job that builds for the simulator on every PR.
 
-### Phase 2 — after stable
+**3. Layouts.** The phone and tablet portrait layouts from section 3.
 
-M3U file import (UIDocumentPicker) · EPG / XMLTV timeline · OMDB / MDBList / Whatson drawers · OpenSubtitles download + overlay for AVPlayer · Subtitle styling / delay / pos (MPV only) · Group hierarchy mgmt · AirPlay (free on AV, work on MPV) · Watch‑history sync via CloudKit · iPad keyboard / trackpad shortcuts · External display / Stage Manager · Remux bridge (rtmp/ts/udp/mkv → HLS) **only for App Store build**.
+**4. TestFlight beta.**
 
-### Skipped / deferred
+- Sign and upload from CI on release tags. This needs an Apple Distribution
+  certificate as a new secret. The App Store Connect API key in the
+  `macos-signing` environment may cover the upload if its role allows it.
+- Add an iOS section to `THIRD_PARTY_NOTICES.md` for MPVKit's libraries and link
+  it from Settings > About.
+- Fill in the App Store privacy details. The app collects no data.
 
-Donation popup (App Store IAP rules) · Updater plugin (App Store handles it; sideload keeps Tauri updater) · Install‑info / package manager · Fallback player window (no separate windows on iOS) · ASS/SSA styled subs on AVPlayer (no libass path) · Multi‑window in‑app (Stage Manager only).
+**5. App Store release.**
 
-**Gemini categorization on mobile** — _open question._ Leaning "keep user‑key flow for power users, gate behind a settings toggle; no hosted endpoint in v1."
+- Decide the price, and add StoreKit if it isn't free.
+- Write review notes with a legal test stream, since reviewers can't use a
+  real provider.
+- Take screenshots that show no real channels or logos.
+- Have a lawyer check the licensing in section 5.
 
----
+**Later:** AVPlayer for picture in picture and AirPlay, M3U file import from
+Files, iCloud sync for favorites and history, iPad keyboard shortcuts, and
+downloads if Apple's rules allow them.
 
-## 5. Distribution Strategy
+## 5. Licensing on the App Store
 
-### Phase A — Sideload via AltStore / SideStore
+The App Store's terms add restrictions that GPLv3 forbids, so a third party
+can't put GPL code on the store. The copyright owner can, because the owner
+isn't bound by their own license. The CLA gives the owner the rights needed to
+ship contributions too.
 
-- Build: `cargo tauri ios build --target aarch64-apple-ios` + xcodebuild sign with personal team cert.
-- Includes MPV engine (`--features mpv-engine`).
-- Distributed as `.ipa` on GitHub Releases alongside desktop artifacts.
-- 7‑day re‑sign cadence for free Apple IDs; AltStore handles refresh.
+That only works if nobody else's GPL code is in the iOS build:
 
-### Phase B — Apple Developer Program ($99/yr)
+- Use the `MPVKit` product, never `MPVKit-GPL`.
+- Add no other GPL dependencies. A CI check on the iOS build's libraries
+  enforces this.
 
-- Same binary as Phase A, signed with paid cert → 1‑year re‑sign cadence.
-- Enables TestFlight for beta testers (up to 10k users).
+The LGPL requires that users can relink the app with a changed library. The
+full source is public, so anyone can rebuild it. Code written only for the App
+Store build stays public for the same reason.
 
-### Phase C — App Store
+## 6. Risks
 
-- Separate target: `cargo build --no-default-features --features ios-appstore` — strips libmpv entirely.
-- AVPlayer‑only feature set. Protocol selector in settings surfaces "For RTMP/RTSP/TS/UDP/MKV, use the sideload build."
-- Remux bridge (Phase 2 feature) lands here to recover .ts / rtmp support for App Store users without GPL code.
-- LGPL ffmpeg build only; no libmpv, no mpv Lua scripts, no mpv‑specific subs.
+1. **Playback on a device is unconfirmed.** The POC builds a signed `.ipa` but
+   hasn't played a stream on hardware. Milestone 1 settles this.
+2. **Linking.** `libmpv2` has to link against MPVKit's xcframeworks, and its
+   version has to match MPVKit's mpv. The app crate builds a `cdylib` along
+   with `staticlib` and `rlib`, and the `cdylib` may not link for iOS. The POC
+   only builds `staticlib` and `rlib`.
+3. **Resizing.** The Metal layer has to follow rotation, Split View and the
+   React layout without a frame of the wrong size.
+4. **Battery and heat.** Vulkan through MoltenVK may cost more power than
+   AVPlayer. Milestone 1 measures it.
+5. **Transparent web view.** Tauri's iOS web view has to show the Metal view
+   through it without breaking touch input.
+6. **App Review.** IPTV apps get extra scrutiny. The app ships with no content
+   and no provider, and the review notes have to say so.
+7. **Tauri mobile.** Tauri's iOS support is younger than its desktop support.
+   Expect plugin and build issues.
+8. **App Transport Security.** It only applies to URLSession and the web view.
+   mpv and `reqwest` open their own sockets. The plan is to allow only
+   `NSAllowsArbitraryLoadsInWebContent` for HTTP channel logos, not the POC's
+   `NSAllowsArbitraryLoads`. Check this on a device.
 
-CI: GitHub Actions runner `macos-14` (Apple silicon) builds both targets on tag push; draft release attaches both `.ipa` variants.
+## 7. Success criteria
 
----
+- An iPhone plays a `.ts` live channel, an HLS stream and an `.mkv` episode,
+  with the React controls over the video.
+- Audio keeps playing on the lock screen, and the lock screen controls work.
+- iPad in landscape looks like the macOS app.
+- The phone layout scrolls through 500 or more channels without dropped frames.
+- The iOS build contains no GPL code from anyone but the owner.
+- A release tag produces a TestFlight build with no manual steps.
 
-## 6. File‑Level Changes (preview)
+## Not in scope
 
-- **New:** `crates/tauri-plugin-player/` (renamed from `tauri-plugin-mpv`) with `engine.rs` (trait), `engine_av.rs`, `engine_mpv.rs`, `router.rs`, `ios.rs` (Metal + CAMetalLayer), `ios_av.swift` (iOS plugin bridge).
-- **New:** `scripts/build-libmpv-ios.sh` — cross‑compile for `aarch64-apple-ios`.
-- **New:** `apps/desktop/src-tauri/gen/apple/` — Tauri mobile Xcode project (auto‑generated by `tauri ios init`).
-- **New:** `apps/desktop/src/layouts/PhoneShell.tsx`, `TabletPortraitShell.tsx`, `DesktopShell.tsx` (wraps existing `App.tsx` body).
-- **New:** `apps/desktop/src/components/channels/ChannelCard.tsx` (iPhone Live tab).
-- **New:** `apps/desktop/src/components/epg/EpgChannelDrawer.tsx` (A‑half of hybrid).
-- **Modified:** `apps/desktop/src-tauri/tauri.conf.json` — add `bundle.iOS` block, `identifier`, `minimumSystemVersion: "17.0"`, iOS build config.
-- **Modified:** `apps/desktop/src-tauri/Cargo.toml` — add `tauri-plugin-player` dep with `mpv-engine` feature, iOS target deps.
-- **Modified:** `apps/desktop/src/App.tsx` — platform switch via `usePlatform().layoutMode`.
-- **Modified:** `apps/desktop/src/lib/tauri.ts` — rename MPV namespace calls to `plugin:player|*`, keep same shapes.
+- Android and Fire TV, which need their own spec.
+- tvOS, which needs a focus-based UI.
+- Mac Catalyst. The native macOS app already exists.
+- Downloads on iOS, for now.
+- Swift rewrites of anything React already does.
 
----
+## Open questions
 
-## 7. Risks & Open Questions
-
-1. **libmpv Metal integration is novel territory.** OpenGL ES path works today but is deprecated. Mitigation: SW‑render fallback documented; pivot is ~3 days of work.
-2. **WKWebView transparency under AVPlayerLayer** — same trick as macOS NSView; should work, but needs confirmation on first `tauri ios dev` run.
-3. **App Store review risk for sideload‑adjacent language** — README for App Store build must not mention sideloading / MPV / RTMP as _App Store_ features.
-4. **Binary size** — MPV sideload build estimated 35–50 MB `.ipa`. Under App Store 200 MB cellular threshold (App Store build is far smaller — no MPV).
-5. **Tauri Mobile maturity** — v2 mobile is stable but less battle‑tested than desktop. Risk: hot reload quirks, plugin bridge edge cases. Mitigation: lots of `#[cfg(debug_assertions)]` logging in the iOS plugin.
-6. **Open: Gemini categorization on mobile** — user-key / hosted / drop. Leaning user‑key + toggle.
-7. **Open: iCloud sync for Favorites/History** — deferred to Phase 2; CloudKit vs custom sync endpoint decision not made.
-
----
-
-## 8. Success Criteria
-
-- `cargo tauri ios dev` launches on iPhone 15 simulator, loads an Xtream provider, plays an HLS channel via AVPlayer with < 2s start‑to‑first‑frame.
-- Same build plays an RTMP stream via MPV engine on a physical device.
-- iPad landscape: visually indistinguishable from desktop at 1366×1024.
-- iPhone: bottom tab bar + Live tab renders 500+ channel cards at 60fps (virtualized list).
-- App Store build target compiles clean with `--no-default-features --features ios-appstore` and `cargo deny check` passes (no GPL deps).
-
----
-
-## Non‑Goals (explicitly)
-
-- Android port — separate future spec.
-- tvOS / Fire Stick — different UI paradigm (focus engine), out of scope here.
-- macOS Catalyst — not worth the tradeoffs given we already have a native macOS build.
-- Custom video filters / shaders on iOS — mpv scripts banned on App Store, and AVPlayer doesn't expose shader hooks.
-- Rewriting anything in Swift beyond the thin AVPlayer bridge. React + Rust core stay authoritative.
+- **Price.** Free, paid, or free with a purchase. Decide before milestone 5.
+- **iCloud sync.** Whether to sync favorites and history, and whether through
+  CloudKit or something else.
