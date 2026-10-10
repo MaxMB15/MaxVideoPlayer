@@ -97,10 +97,15 @@ const MobileLayout = () => {
 	}, [isPlayer]);
 
 	// The player fills the screen and brings its own back button, so the tab
-	// bar and the top inset go away there.
+	// bar and the insets go away there.
 	return (
 		<div className="flex flex-col h-screen overflow-hidden">
-			<main className={cn("flex-1 min-h-0 overflow-hidden", !isPlayer && "pt-safe")}>
+			<main
+				className={cn(
+					"flex-1 min-h-0 overflow-hidden",
+					!isPlayer && "pt-safe pl-safe pr-safe"
+				)}
+			>
 				<Outlet />
 			</main>
 			<nav
