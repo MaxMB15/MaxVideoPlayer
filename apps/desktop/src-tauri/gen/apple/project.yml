@@ -12,7 +12,7 @@ packages:
   # the App Store build can't contain anyone else's GPL code.
   MPVKit:
     url: https://github.com/mpvkit/MPVKit
-    exactVersion: 0.41.0
+    exactVersion: 1.1.0-n9.0.2
 settingGroups:
   app:
     base:

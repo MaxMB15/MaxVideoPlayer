@@ -543,7 +543,7 @@
 			repositoryURL = "https://github.com/mpvkit/MPVKit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.41.0;
+				version = "1.1.0-n9.0.2";
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
