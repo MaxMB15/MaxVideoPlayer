@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
@@ -51,6 +54,8 @@ describe("useMpv", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockListenCallbacks.clear();
+		sessionStorage.clear();
+		localStorage.clear();
 		mockMpvGetState.mockResolvedValue({
 			isPlaying: false,
 			isPaused: false,
@@ -108,7 +113,7 @@ describe("useMpv", () => {
 			await result.current.load("http://stream.url");
 		});
 
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url", undefined);
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://stream.url", undefined, true);
 		expect(result.current.state.currentUrl).toBe("http://stream.url");
 	});
 
@@ -137,7 +142,7 @@ describe("useMpv", () => {
 
 		// Only one call should have been made
 		expect(mockMpvLoad).toHaveBeenCalledTimes(1);
-		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url", undefined);
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://first.url", undefined, true);
 
 		// Resolve first load
 		await act(async () => {
@@ -269,6 +274,97 @@ describe("useMpv", () => {
 
 		expect(mockMpvSetVolume).toHaveBeenCalledWith(75);
 		expect(result.current.state.volume).toBe(75);
+	});
+
+	it("toggleMute mutes and restores the previous volume", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(60);
+		});
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(0);
+		expect(result.current.state.volume).toBe(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(60);
+		expect(result.current.state.volume).toBe(60);
+	});
+
+	it("re-applies the user's volume after a load", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.setVolume(40);
+		});
+		mockMpvSetVolume.mockClear();
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(40);
+		expect(result.current.state.volume).toBe(40);
+	});
+
+	it("does not touch volume on load when the user never changed it", async () => {
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).not.toHaveBeenCalled();
+	});
+
+	it("starts at the default volume from Settings", async () => {
+		localStorage.setItem("mvp_default_volume", "60");
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(60);
+	});
+
+	it("passes the hardware decoding setting to mpvLoad", async () => {
+		localStorage.setItem("mvp_hwdec", "off");
+		const { result } = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvLoad).toHaveBeenCalledWith("http://test/next.m3u8", undefined, false);
+	});
+
+	it("keeps the volume and mute state when the player is reopened", async () => {
+		const first = renderHook(() => useMpv());
+		await waitFor(() => expect(mockMpvGetState).toHaveBeenCalled());
+		await act(async () => {
+			await first.result.current.setVolume(40);
+		});
+		await act(async () => {
+			await first.result.current.toggleMute();
+		});
+		first.unmount();
+
+		mockMpvSetVolume.mockClear();
+		const { result } = renderHook(() => useMpv());
+		await act(async () => {
+			await result.current.load("http://test/next.m3u8");
+		});
+		expect(mockMpvSetVolume).toHaveBeenCalledWith(0);
+
+		await act(async () => {
+			await result.current.toggleMute();
+		});
+		expect(mockMpvSetVolume).toHaveBeenLastCalledWith(40);
 	});
 
 	// ── Tauri events ──────────────────────────────────────────────────
@@ -537,7 +633,7 @@ describe("useMpv", () => {
 			});
 
 			expect(mockMpvLoad).toHaveBeenCalledTimes(1);
-			expect(mockMpvLoad).toHaveBeenCalledWith("http://s", 42);
+			expect(mockMpvLoad).toHaveBeenCalledWith("http://s", 42, true);
 		});
 
 		it("online event is a no-op when not in a failure state", async () => {

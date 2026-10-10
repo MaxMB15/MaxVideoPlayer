@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Create draft GitHub release (if missing)
         env:
@@ -39,14 +39,19 @@ jobs:
 
   release-macos:
     needs: [prepare-release]
-    runs-on: macos-latest
+    # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
+    # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
+    runs-on: macos-15
+    # The Apple signing secrets live in this environment, which waits for a
+    # reviewer to approve the job before it starts.
+    environment: macos-signing
     env:
       CARGO_HOME: /Users/runner/.cargo
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -55,10 +60,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-macos
+          save-if: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -75,6 +83,9 @@ jobs:
 
       - name: Build libmpv
         run: ./scripts/build-libmpv.sh macos
+
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh macos
 
       - name: Prepare signing key
         run: |
@@ -133,23 +144,52 @@ jobs:
           print("[signing] Key written to GITHUB_ENV.")
           EOF
 
+      - name: Set up Developer ID signing
+        id: apple
+        # Tauri signs and notarizes the app during the build when these secrets are
+        # set. Without them the release is built unsigned, as before.
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          api-private-key: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+
       - name: Build Tauri app
         # Build without updater artifacts so bundle_dmg.sh doesn't race with
         # hdiutil over the .app bundle. We create the updater artifacts manually below.
         run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Notarize the DMG
+        if: steps.apple.outputs.notarizing == 'true'
+        run: ./scripts/notarize-macos.sh target/release/bundle/dmg/*.dmg
+
+      - name: Verify signing
+        if: steps.apple.outputs.signing == 'true'
+        run: >-
+          ./scripts/verify-macos-signing.sh
+          ${{ steps.apple.outputs.notarizing == 'true' && '--notarized' || '' }}
+          target/release/bundle/macos/*.app target/release/bundle/dmg/*.dmg
 
       - name: Create updater artifacts
         run: |
           set -euo pipefail
           VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # productName contains spaces ("Max Video Player"), so the bundler emits
+          # "Max Video Player.app" / "Max Video Player_<v>_aarch64.dmg". Release
+          # assets keep the space-free "MaxVideoPlayer" prefix so download URLs
+          # and latest.json stay stable.
+          PRODUCT_NAME=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['productName'])")
+          echo "PRODUCT_NAME=$PRODUCT_NAME" >> "$GITHUB_ENV"
 
           BUNDLE_DIR="target/release/bundle/macos"
           UPDATER="$BUNDLE_DIR/MaxVideoPlayer.app.tar.gz"
 
           # Create the .tar.gz updater archive from the built .app
           cd "$BUNDLE_DIR"
-          tar czf MaxVideoPlayer.app.tar.gz MaxVideoPlayer.app
+          tar czf MaxVideoPlayer.app.tar.gz "${PRODUCT_NAME}.app"
           cd -
 
           # tauri signer sign -k always base64-decodes its argument (no raw-format
@@ -170,7 +210,7 @@ jobs:
           fi
 
       - name: Upload macOS updater signature
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-updater-sig
           path: target/release/bundle/macos/MaxVideoPlayer.app.tar.gz.sig
@@ -181,9 +221,15 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$VERSION"
-          DMG="target/release/bundle/dmg/MaxVideoPlayer_${VERSION}_aarch64.dmg"
+          DMG_BUILT="target/release/bundle/dmg/${PRODUCT_NAME}_${VERSION}_aarch64.dmg"
+          # No version in the name, so the README's releases/latest/download link
+          # always points at the newest DMG.
+          DMG="target/release/bundle/dmg/MaxVideoPlayer_aarch64.dmg"
           UPDATER="target/release/bundle/macos/MaxVideoPlayer.app.tar.gz"
           UPDATER_VERSIONED="target/release/bundle/macos/MaxVideoPlayer_${VERSION}_aarch64.app.tar.gz"
+
+          # Space-free asset name (GitHub would otherwise rewrite spaces to dots)
+          cp "$DMG_BUILT" "$DMG"
 
           # Rename updater files so the download URL matches what latest.json expects
           cp "$UPDATER" "$UPDATER_VERSIONED"
@@ -205,7 +251,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -214,10 +260,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-on-failure: true
+          # build.yml saves this cache on main. A cache saved from a tag can only be
+          # used by that same tag, so saving here would just take up space.
+          shared-key: desktop-linux
+          save-if: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -225,25 +274,15 @@ jobs:
         run: rm -f package-lock.json && npm install
 
       - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libayatana-appindicator3-dev \
-            libegl-dev libssl-dev pkg-config librsvg2-dev \
-            patchelf rpm \
-            meson ninja-build \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev \
-            libplacebo-dev \
-            libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev \
-            libwayland-dev
+        uses: ./.github/actions/install-linux-deps
 
       - name: Build libmpv from source
         run: |
           ./scripts/build-libmpv.sh linux
           echo "LD_LIBRARY_PATH=$(pwd)/libs/linux:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh linux
 
       - name: Prepare signing key
         run: |
@@ -291,6 +330,25 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
           BUNDLE_DIR="target/release/bundle"
+
+          # productName contains spaces ("Max Video Player"), which the bundler
+          # copies into the artifact filenames. Rename to space-free names without
+          # a version, so the README's releases/latest/download links always
+          # point at the newest packages; latest.json links to them by tag.
+          # (Package identity is unaffected: deb/rpm names are kebab-cased
+          # from productName, so they stay "max-video-player".)
+          shopt -s nullglob
+          for f in "$BUNDLE_DIR"/deb/*.deb; do
+            mv "$f" "$BUNDLE_DIR/deb/MaxVideoPlayer_amd64.deb"
+          done
+          for f in "$BUNDLE_DIR"/rpm/*.rpm; do
+            mv "$f" "$BUNDLE_DIR/rpm/MaxVideoPlayer_x86_64.rpm"
+          done
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
+            mv "$f" "$BUNDLE_DIR/appimage/MaxVideoPlayer_amd64.AppImage"
+          done
+          shopt -u nullglob
+
           APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" | head -1)
 
           if [[ -n "$APPIMAGE" ]]; then
@@ -308,7 +366,7 @@ jobs:
           fi
 
       - name: Upload Linux updater signature
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-updater-sig
           path: target/release/bundle/MaxVideoPlayer_linux.tar.gz.sig
@@ -359,10 +417,10 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download updater signatures
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: sigs
 
@@ -400,8 +458,8 @@ jobs:
               }
           base_url = f"https://github.com/MaxMB15/MaxVideoPlayer/releases/download/v{version}"
           packages = {
-              "linux-deb-x86_64": f"{base_url}/MaxVideoPlayer_{version}_amd64.deb",
-              "linux-rpm-x86_64": f"{base_url}/MaxVideoPlayer-{version}-1.x86_64.rpm",
+              "linux-deb-x86_64": f"{base_url}/MaxVideoPlayer_amd64.deb",
+              "linux-rpm-x86_64": f"{base_url}/MaxVideoPlayer_x86_64.rpm",
           }
           data = {
               "version": version,
@@ -429,7 +487,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_AUTOMATION_PAT || github.token }}

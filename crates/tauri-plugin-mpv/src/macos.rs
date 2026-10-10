@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 //! macOS MPV embedding — NSOpenGLView with OpenGL Core 3.2 render context.
 //!
 //! Root cause fixes vs previous implementation:

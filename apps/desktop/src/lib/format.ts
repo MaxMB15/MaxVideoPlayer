@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /**
  * Format seconds into a human-readable time string.
  * - Under 1 hour: "M:SS" (e.g. "3:07")

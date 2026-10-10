@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 """
 test-release-consistency.py — Static analysis of release.yml to verify that
 the asset filenames referenced in latest.json match the filenames actually

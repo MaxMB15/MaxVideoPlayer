@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 /**
  * Returns the delay step size (seconds) based on how long the button has been held.
  * elapsed is in milliseconds.

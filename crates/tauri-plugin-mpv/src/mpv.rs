@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 //! Thread-safe MPV plugin state.
 //! Owns MpvEngine + the platform renderer, coordinates load/fallback.
 
@@ -20,6 +23,10 @@ pub struct MpvState {
     inner: Mutex<MpvEngine>,
     renderer: Mutex<Option<Box<dyn PlatformRenderer>>>,
     fallback_active: AtomicBool,
+    /// Whether the next mpv instance may use hardware decoding. Set from the
+    /// Settings toggle on every `load()`; mpv is recreated per load, so a
+    /// change applies to the next stream.
+    hwdec_enabled: AtomicBool,
     idle_inhibitor: IdleInhibitor,
     /// Kill flag for the in-flight reconnect monitor thread, if any.
     ///
@@ -42,6 +49,7 @@ impl MpvState {
             inner: Mutex::new(MpvEngine::new()),
             renderer: Mutex::new(None),
             fallback_active: AtomicBool::new(false),
+            hwdec_enabled: AtomicBool::new(true),
             idle_inhibitor: IdleInhibitor::new(),
             reconnect_kill: Mutex::new(None),
         }
@@ -69,6 +77,7 @@ impl MpvState {
         &self,
         url: &str,
         start_pos: Option<f64>,
+        hwdec: bool,
         app: &tauri::AppHandle<R>,
     ) -> Result<(), String> {
         // Trip the old reconnect monitor BEFORE we destroy the parent mpv,
@@ -85,12 +94,23 @@ impl MpvState {
         self.inner.lock().map_err(|e| e.to_string())?.stop();
         self.idle_inhibitor.uninhibit();
         self.fallback_active.store(false, Ordering::Release);
+        self.hwdec_enabled.store(hwdec, Ordering::Release);
 
         let result = self.load_impl(url, start_pos, app);
         if result.is_ok() {
             self.idle_inhibitor.inhibit();
         }
         result
+    }
+
+    /// The platform's mpv options, with hardware decoding turned off if the
+    /// user disabled it.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn options(
+        &self,
+        base: Vec<(&'static str, &'static str)>,
+    ) -> Vec<(&'static str, &'static str)> {
+        with_hwdec(base, self.hwdec_enabled.load(Ordering::Acquire))
     }
 
     /// Helper: spawn the auto-reconnect monitor for the currently loaded URL.
@@ -154,7 +174,7 @@ impl MpvState {
         // Create mpv with embedded options and attach the renderer.
         let attach_result = {
             let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-            match engine.create(&embedded_options()) {
+            match engine.create(&self.options(embedded_options())) {
                 Ok(mpv) => gl_renderer.attach(mpv),
                 Err(e) => Err(e),
             }
@@ -202,7 +222,7 @@ impl MpvState {
 
         let attach_result = {
             let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-            match engine.create(&linux_embedded_options()) {
+            match engine.create(&self.options(linux_embedded_options())) {
                 Ok(mpv) => gl_renderer.attach(mpv),
                 Err(e) => Err(e),
             }
@@ -275,7 +295,7 @@ impl MpvState {
         _reason: &str,
     ) -> Result<Option<libmpv2::Mpv>, String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&fallback_options())?;
+        engine.create(&self.options(fallback_options()))?;
         engine.loadfile(url, start_pos)?;
         engine.set_current_url(url);
         Ok(engine.create_event_client("reconnect-watcher").ok())
@@ -289,7 +309,7 @@ impl MpvState {
         _reason: &str,
     ) -> Result<Option<libmpv2::Mpv>, String> {
         let mut engine = self.inner.lock().map_err(|e| e.to_string())?;
-        engine.create(&linux_fallback_options())?;
+        engine.create(&self.options(linux_fallback_options()))?;
         engine.configure_audio()?;
         engine.loadfile(url, start_pos)?;
         engine.set_current_url(url);
@@ -396,5 +416,49 @@ impl MpvState {
 
     pub fn get_state(&self) -> PlayerState {
         self.inner.lock().unwrap().get_state()
+    }
+}
+
+/// Replace the `hwdec` option with `no` when hardware decoding is disabled.
+/// Other options pass through unchanged.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+fn with_hwdec(
+    mut options: Vec<(&'static str, &'static str)>,
+    enabled: bool,
+) -> Vec<(&'static str, &'static str)> {
+    if !enabled {
+        for (key, value) in options.iter_mut() {
+            if *key == "hwdec" {
+                *value = "no";
+            }
+        }
+    }
+    options
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_hwdec;
+
+    const OPTIONS: [(&str, &str); 3] =
+        [("vo", "libmpv"), ("hwdec", "videotoolbox"), ("cache", "yes")];
+
+    #[test]
+    fn keeps_platform_hwdec_when_enabled() {
+        assert_eq!(with_hwdec(OPTIONS.to_vec(), true), OPTIONS.to_vec());
+    }
+
+    #[test]
+    fn turns_hwdec_off_when_disabled() {
+        assert_eq!(
+            with_hwdec(OPTIONS.to_vec(), false),
+            vec![("vo", "libmpv"), ("hwdec", "no"), ("cache", "yes")]
+        );
+    }
+
+    #[test]
+    fn leaves_options_without_hwdec_alone() {
+        let opts = vec![("vo", "gpu")];
+        assert_eq!(with_hwdec(opts.clone(), false), opts);
     }
 }

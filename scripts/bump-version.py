@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 """
 Bump the desktop app version in:
   - apps/desktop/src-tauri/tauri.conf.json
@@ -53,8 +56,8 @@ def bump(new: str) -> None:
 
     raw = SETTINGS_TSX.read_text(encoding="utf-8")
     updated = re.sub(
-        r"MaxVideoPlayer v\d+\.\d+\.\d+",
-        f"MaxVideoPlayer v{new}",
+        r"Max Video Player v\d+\.\d+\.\d+",
+        f"Max Video Player v{new}",
         raw,
         count=1,
     )

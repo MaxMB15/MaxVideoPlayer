@@ -1,40 +1,57 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useMemo, useEffect } from "react";
-import { X, Play, ChevronLeft, ChevronRight, MonitorPlay, Loader2 } from "lucide-react";
-import type { Channel, OmdbData, WhatsonData } from "@/lib/types";
-import { fetchOmdbData, fetchWhatsonData } from "@/lib/tauri";
+import { X, Play, ChevronLeft, ChevronRight, MonitorPlay, Loader2, Layers } from "lucide-react";
+import type {
+	Channel,
+	OmdbData,
+	WhatsonData,
+	DownloadRecord,
+	AggregateDownloadState,
+} from "@/lib/types";
+import {
+	fetchOmdbData,
+	fetchWhatsonData,
+	enqueueEpisodeDownload,
+	enqueueEpisodesBatch,
+	stopDownload,
+	stopDownloads,
+	removeDownload,
+	removeDownloads,
+	cacheSeriesEpisodes,
+} from "@/lib/tauri";
 import { RatingsRow } from "@/components/ui/ratings-row";
+import { channelSources, withSource, describeSource } from "@/lib/sources";
+import { dedupeEpisodes } from "@/lib/episodes";
+import { useDownloads, aggregateForSeries } from "@/hooks/useDownloads";
+import { DownloadButton, type DownloadIconState } from "@/components/downloads/DownloadButton";
+import { ConfirmDialog } from "@/components/downloads/ConfirmDialog";
 
 interface SeriesDetailDrawerProps {
 	showTitle: string;
 	episodes: Channel[];
+	/** Series card channel id — used to group episode download records so the
+	 *  card/drawer aggregate state stays consistent. */
+	seriesChannelId: string;
 	onClose: () => void;
 	onPlay: (channel: Channel) => void;
+	/** URL currently playing (when opened from the player), highlighted in the source list. */
+	currentUrl?: string;
 	// Optional pre-fetched data from PlayerView to avoid double-fetch
 	prefetchedOmdbData?: OmdbData | null;
 	prefetchedWhatsonData?: WhatsonData | null;
 }
 
+const aggToIcon = (a: AggregateDownloadState): DownloadIconState => (a === "none" ? "idle" : a);
+
+/** Whether an episode already has a download in flight or done (not re-enqueued). */
+const isCovered = (r: DownloadRecord | undefined): boolean =>
+	!!r && (r.status === "completed" || r.status === "downloading" || r.status === "queued");
+
 const episodeTitle = (name: string): string => {
 	const stripped = name.replace(/^.*?\bS\d{1,3}E\d{1,3}\s*/i, "").trim();
 	return stripped || name;
-};
-
-const dedupeEpisodes = (episodes: Channel[]): Channel[] => {
-	const seen = new Map<string, { ch: Channel; extraSources: string[] }>();
-	for (const ep of episodes) {
-		const key = `${ep.season ?? 0}x${ep.episode ?? ep.name}`;
-		if (!seen.has(key)) {
-			seen.set(key, { ch: { ...ep }, extraSources: [...ep.sources] });
-		} else {
-			const entry = seen.get(key)!;
-			entry.extraSources.push(ep.url, ...ep.sources);
-			if (!entry.ch.logoUrl && ep.logoUrl) entry.ch.logoUrl = ep.logoUrl;
-		}
-	}
-	return Array.from(seen.values()).map(({ ch, extraSources }) => ({
-		...ch,
-		sources: extraSources,
-	}));
 };
 
 type Step = "seasons" | "episodes" | "sources";
@@ -42,13 +59,19 @@ type Step = "seasons" | "episodes" | "sources";
 export const SeriesDetailModal = ({
 	showTitle,
 	episodes,
+	seriesChannelId,
 	onClose,
 	onPlay,
+	currentUrl,
 	prefetchedOmdbData,
 	prefetchedWhatsonData,
 }: SeriesDetailDrawerProps) => {
 	const [visible, setVisible] = useState(false);
 	const [step, setStep] = useState<Step>("seasons");
+	const [batchConfirm, setBatchConfirm] = useState<{
+		count: number;
+		onConfirm: () => void;
+	} | null>(null);
 	const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
 	const [sourceEp, setSourceEp] = useState<Channel | null>(null);
 	const [omdbData, setOmdbData] = useState<OmdbData | null>(prefetchedOmdbData ?? null);
@@ -100,6 +123,42 @@ export const SeriesDetailModal = ({
 		setTimeout(onClose, 300);
 	};
 
+	const { bySeries } = useDownloads();
+	// Episode channelId → its download record, for this series.
+	const episodeDownloadMap = useMemo(() => {
+		const map = new Map<string, DownloadRecord>();
+		for (const rec of bySeries.get(seriesChannelId) ?? []) {
+			map.set(rec.channelId, rec);
+		}
+		return map;
+	}, [bySeries, seriesChannelId]);
+
+	// Persist the full episode list so the selector works offline once any
+	// episode of this series has been downloaded.
+	const persistEpisodeList = () => {
+		void cacheSeriesEpisodes(seriesChannelId, episodes);
+	};
+
+	/** Enqueue a batch, prompting first when it's large (≥10 episodes). */
+	const startBatch = (missing: Channel[]) => {
+		if (missing.length === 0) return;
+		const run = () => {
+			persistEpisodeList();
+			void enqueueEpisodesBatch(missing, seriesChannelId, showTitle);
+		};
+		if (missing.length >= 10) {
+			setBatchConfirm({
+				count: missing.length,
+				onConfirm: () => {
+					setBatchConfirm(null);
+					run();
+				},
+			});
+		} else {
+			run();
+		}
+	};
+
 	const deduped = useMemo(() => dedupeEpisodes(episodes), [episodes]);
 
 	const seasons = useMemo(() => {
@@ -121,19 +180,32 @@ export const SeriesDetailModal = ({
 		[seasons, selectedSeason]
 	);
 
+	// Whole-series aggregate + scoped id lists for the header download control.
+	const seriesRecs = deduped
+		.map((e) => episodeDownloadMap.get(e.id))
+		.filter((r): r is DownloadRecord => !!r);
+	const seriesState = aggToIcon(aggregateForSeries(seriesRecs, deduped.length));
+	const seriesMissing = deduped.filter((e) => !isCovered(episodeDownloadMap.get(e.id)));
+	const seriesActiveIds = seriesRecs
+		.filter((r) => r.status === "downloading" || r.status === "queued")
+		.map((r) => r.id);
+	const seriesCompletedIds = seriesRecs.filter((r) => r.status === "completed").map((r) => r.id);
+
 	const handleSeasonClick = (season: number) => {
 		setSelectedSeason(season);
 		setStep("episodes");
 	};
 
+	// Clicking an episode plays its default source; other sources are picked
+	// via the episode's "sources" button (or the player's source menu).
 	const handleEpisodeClick = (ep: Channel) => {
-		if (ep.sources.length > 0) {
-			setSourceEp(ep);
-			setStep("sources");
-		} else {
-			onPlay(ep);
-			handleClose();
-		}
+		onPlay(ep);
+		handleClose();
+	};
+
+	const handleShowSources = (ep: Channel) => {
+		setSourceEp(ep);
+		setStep("sources");
 	};
 
 	const handleBack = () => {
@@ -214,7 +286,18 @@ export const SeriesDetailModal = ({
 							{backLabel}
 						</button>
 					) : (
-						<div className="flex-1" />
+						<div className="flex-1">
+							<DownloadButton
+								showLabel
+								state={seriesState}
+								onStart={() => startBatch(seriesMissing)}
+								onStop={() => void stopDownloads(seriesActiveIds)}
+								stopCount={seriesActiveIds.length}
+								onRemove={() => void removeDownloads(seriesCompletedIds)}
+								removeSummary={`${seriesCompletedIds.length} ${seriesCompletedIds.length === 1 ? "episode" : "episodes"}`}
+								className="text-sm text-muted-foreground hover:text-foreground"
+							/>
+						</div>
 					)}
 					<button
 						onClick={handleClose}
@@ -342,28 +425,56 @@ export const SeriesDetailModal = ({
 				{/* Step: Seasons */}
 				{step === "seasons" && (
 					<div className="overflow-y-auto flex-1 px-3 py-2">
-						{seasons.map(([s, eps]) => (
-							<button
-								key={s}
-								onClick={() => handleSeasonClick(s)}
-								className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
-							>
-								<div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-									<span className="text-[10px] font-bold text-muted-foreground">
-										{s === 0 ? "?" : String(s)}
-									</span>
+						{seasons.map(([s, eps]) => {
+							const recs = eps
+								.map((e) => episodeDownloadMap.get(e.id))
+								.filter((r): r is DownloadRecord => !!r);
+							const seasonState = aggToIcon(aggregateForSeries(recs, eps.length));
+							const missing = eps.filter(
+								(e) => !isCovered(episodeDownloadMap.get(e.id))
+							);
+							const activeIds = recs
+								.filter((r) => r.status === "downloading" || r.status === "queued")
+								.map((r) => r.id);
+							const completedIds = recs
+								.filter((r) => r.status === "completed")
+								.map((r) => r.id);
+							return (
+								<div
+									key={s}
+									className="w-full flex items-center gap-3 px-3 rounded-xl hover:bg-accent transition-colors"
+								>
+									<button
+										onClick={() => handleSeasonClick(s)}
+										className="flex-1 flex items-center gap-3 py-3 text-left min-w-0"
+									>
+										<div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+											<span className="text-[10px] font-bold text-muted-foreground">
+												{s === 0 ? "?" : String(s)}
+											</span>
+										</div>
+										<div className="flex-1 min-w-0">
+											<p className="text-sm font-medium">
+												{s === 0 ? "Unknown Season" : `Season ${s}`}
+											</p>
+											<p className="text-xs text-muted-foreground mt-0.5">
+												{eps.length} episodes
+											</p>
+										</div>
+										<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+									</button>
+									<DownloadButton
+										state={seasonState}
+										onStart={() => startBatch(missing)}
+										onStop={() => void stopDownloads(activeIds)}
+										stopCount={activeIds.length}
+										onRemove={() => void removeDownloads(completedIds)}
+										removeSummary={`${completedIds.length} ${completedIds.length === 1 ? "episode" : "episodes"}`}
+										className="shrink-0 h-8 w-8 justify-center rounded-md hover:bg-accent"
+									/>
 								</div>
-								<div className="flex-1 min-w-0">
-									<p className="text-sm font-medium">
-										{s === 0 ? "Unknown Season" : `Season ${s}`}
-									</p>
-									<p className="text-xs text-muted-foreground mt-0.5">
-										{eps.length} episodes
-									</p>
-								</div>
-								<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-							</button>
-						))}
+							);
+						})}
 						{seasons.length === 0 && (
 							<p className="text-sm text-muted-foreground text-center py-8">
 								No episodes found
@@ -375,30 +486,71 @@ export const SeriesDetailModal = ({
 				{/* Step: Episodes */}
 				{step === "episodes" && (
 					<div className="overflow-y-auto flex-1 px-3 py-2">
-						{currentEpisodes.map((ep) => (
-							<button
-								key={ep.id}
-								onClick={() => handleEpisodeClick(ep)}
-								className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-accent transition-colors text-left"
-							>
-								<div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-									<span className="text-[10px] font-bold text-muted-foreground">
-										{ep.episode != null
-											? String(ep.episode).padStart(2, "0")
-											: "?"}
-									</span>
+						{currentEpisodes.map((ep) => {
+							const sourceCount = channelSources(ep).length;
+							const epDl = episodeDownloadMap.get(ep.id);
+							const epState: DownloadIconState =
+								epDl?.status === "completed"
+									? "complete"
+									: epDl?.status === "downloading" || epDl?.status === "queued"
+										? "downloading"
+										: epDl?.status === "failed"
+											? "failed"
+											: "idle";
+							return (
+								<div
+									key={ep.id}
+									className="flex items-center gap-1 pr-2 rounded-xl hover:bg-accent transition-colors"
+								>
+									<button
+										onClick={() => handleEpisodeClick(ep)}
+										className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 text-left"
+									>
+										<div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+											<span className="text-[10px] font-bold text-muted-foreground">
+												{ep.episode != null
+													? String(ep.episode).padStart(2, "0")
+													: "?"}
+											</span>
+										</div>
+										<div className="flex-1 min-w-0">
+											<p className="text-sm truncate">
+												{episodeTitle(ep.name)}
+											</p>
+										</div>
+										{sourceCount <= 1 && (
+											<Play className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+										)}
+									</button>
+									{sourceCount > 1 && (
+										<button
+											onClick={() => handleShowSources(ep)}
+											title="Choose source"
+											aria-label={`Choose from ${sourceCount} sources`}
+											className="flex items-center gap-1 px-2 py-1 rounded-full bg-secondary/80 hover:bg-secondary text-[10px] font-medium text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+										>
+											<Layers className="h-3 w-3" />
+											{sourceCount} sources
+											<ChevronRight className="h-3 w-3" />
+										</button>
+									)}
+									<DownloadButton
+										state={epState}
+										onStart={() => {
+											persistEpisodeList();
+											void enqueueEpisodeDownload(
+												ep,
+												seriesChannelId,
+												showTitle
+											);
+										}}
+										onStop={() => epDl && void stopDownload(epDl.id)}
+										onRemove={() => epDl && void removeDownload(epDl.id)}
+										className="shrink-0 h-8 w-8 justify-center rounded-md hover:bg-accent"
+									/>
 								</div>
-								<div className="flex-1 min-w-0">
-									<p className="text-sm truncate">{episodeTitle(ep.name)}</p>
-								</div>
-								{ep.sources.length > 0 && (
-									<span className="text-[10px] bg-secondary/80 px-1.5 py-0.5 rounded-full shrink-0 text-muted-foreground font-medium">
-										{ep.sources.length + 1} src
-									</span>
-								)}
-								<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-							</button>
-						))}
+							);
+						})}
 						{currentEpisodes.length === 0 && (
 							<p className="text-sm text-muted-foreground text-center py-8">
 								No episodes
@@ -420,40 +572,66 @@ export const SeriesDetailModal = ({
 						</div>
 						<div className="border-t border-border mx-4 shrink-0" />
 						<div className="overflow-y-auto flex-1 py-2 px-3">
-							<button
-								className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
-								onClick={() => handleSourcePick(sourceEp)}
-							>
-								<div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-									<Play className="h-3.5 w-3.5 text-primary ml-0.5" />
-								</div>
-								<div className="flex-1">
-									<p className="text-sm font-medium">Source 1</p>
-									<p className="text-xs text-muted-foreground">Default</p>
-								</div>
-								<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-							</button>
-							{sourceEp.sources.map((src, idx) => (
-								<button
-									key={idx}
-									className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
-									onClick={() => handleSourcePick({ ...sourceEp, url: src })}
-								>
-									<div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-										<Play className="h-3.5 w-3.5 text-muted-foreground ml-0.5" />
-									</div>
-									<div className="flex-1">
-										<p className="text-sm font-medium">Source {idx + 2}</p>
-									</div>
-									<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-								</button>
-							))}
+							{channelSources(sourceEp).map((src, idx) => {
+								const detail = describeSource(src);
+								return (
+									<button
+										key={src}
+										className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-accent transition-colors text-left"
+										onClick={() =>
+											handleSourcePick(
+												src === sourceEp.url
+													? sourceEp
+													: withSource(sourceEp, src)
+											)
+										}
+									>
+										<div
+											className={
+												idx === 0
+													? "w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"
+													: "w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0"
+											}
+										>
+											<Play
+												className={
+													idx === 0
+														? "h-3.5 w-3.5 text-primary ml-0.5"
+														: "h-3.5 w-3.5 text-muted-foreground ml-0.5"
+												}
+											/>
+										</div>
+										<div className="flex-1 min-w-0">
+											<p className="text-sm font-medium">Source {idx + 1}</p>
+											<p className="text-xs text-muted-foreground truncate">
+												{[
+													idx === 0 ? "Default" : null,
+													src === currentUrl ? "Playing" : null,
+													detail,
+												]
+													.filter(Boolean)
+													.join(" · ")}
+											</p>
+										</div>
+										<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+									</button>
+								);
+							})}
 						</div>
 					</div>
 				)}
 
 				<div className="shrink-0 pb-2" />
 			</div>
+
+			<ConfirmDialog
+				open={batchConfirm !== null}
+				title="Download episodes?"
+				message={`Download ${batchConfirm?.count ?? 0} episodes? This may use significant disk space and bandwidth.`}
+				confirmLabel="Download"
+				onConfirm={() => batchConfirm?.onConfirm()}
+				onCancel={() => setBatchConfirm(null)}
+			/>
 		</div>
 	);
 };

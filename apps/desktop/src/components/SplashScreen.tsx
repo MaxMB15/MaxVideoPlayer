@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { UpdateState } from "@/hooks/useUpdateChecker";
@@ -62,7 +65,7 @@ const LeftPanel = ({
 				</div>
 				<div>
 					<h1 className="text-2xl font-bold tracking-tight">Max Video Player</h1>
-					<p className="text-sm text-muted-foreground mt-0.5">Open Source IPTV Player</p>
+					<p className="text-sm text-muted-foreground mt-0.5">IPTV Player</p>
 				</div>
 			</div>
 
@@ -238,7 +241,7 @@ const RightPanel = () => {
 			{/* Header */}
 			<div className="flex flex-col items-center gap-2 text-center">
 				<span className="text-4xl">☕</span>
-				<h2 className="text-lg font-bold">Support free & open source software</h2>
+				<h2 className="text-lg font-bold">Support Max Video Player</h2>
 				<p className="text-xs text-muted-foreground">No account needed · takes 2 seconds</p>
 			</div>
 
