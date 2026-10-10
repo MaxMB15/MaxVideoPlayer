@@ -6,8 +6,8 @@
 //! mpv draws straight into a `CAMetalLayer` through MoltenVK
 //! (`vo=gpu-next`, `gpu-context=moltenvk`), with the layer pointer passed as
 //! `wid`. mpv owns the draw loop, so there's no render context to drive like
-//! on macOS and Linux. The layer belongs to a UIView that the plugin's Swift
-//! package (`ios/Sources/MpvPlugin.swift`) keeps under the web view.
+//! on macOS and Linux. The layer is a sublayer of a UIView that the plugin's
+//! Swift package (`ios/Sources/MpvPlugin.swift`) keeps under the web view.
 //!
 //! The Swift side also runs the audio session, Now Playing and the lock
 //! screen controls. Rust calls it through the `mvp_ios_*` functions, and it

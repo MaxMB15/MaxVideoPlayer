@@ -43,9 +43,10 @@ final class MpvMetalLayer: CAMetalLayer {
 /// Sits right under the web view and shows mpv's output. It never takes
 /// touches, so the React controls drawn over it keep working.
 final class MpvVideoView: UIView {
-  override class var layerClass: AnyClass { MpvMetalLayer.self }
-
-  var metalLayer: MpvMetalLayer { layer as! MpvMetalLayer }
+  /// mpv draws into this sublayer, not the view's own layer. MoltenVK changes
+  /// the layer from mpv's thread, and UIKit warns when that happens to a
+  /// layer that belongs to a view.
+  let metalLayer = MpvMetalLayer()
 
   /// Called after the drawable changes size.
   var onDrawableResize: (() -> Void)?
@@ -62,6 +63,7 @@ final class MpvVideoView: UIView {
     backgroundColor = .black
     metalLayer.framebufferOnly = true
     metalLayer.backgroundColor = UIColor.black.cgColor
+    layer.addSublayer(metalLayer)
   }
 
   required init?(coder: NSCoder) {
@@ -86,6 +88,12 @@ final class MpvVideoView: UIView {
   /// again when told to, through `onDrawableResize`.
   private func updateDrawableSize() {
     let scale = contentScaleFactor
+    // Without this the layer would animate to its new frame.
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    metalLayer.frame = bounds
+    metalLayer.contentsScale = scale
+    CATransaction.commit()
     let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
     metalLayer.drawableSize = size
     guard size.width > 1, size.height > 1, size != reportedSize else { return }
@@ -180,7 +188,7 @@ final class MpvHost: NSObject {
     }
     view.isHidden = false
     updateSystemBars()
-    return UInt(bitPattern: Unmanaged.passUnretained(view.layer).toOpaque())
+    return UInt(bitPattern: Unmanaged.passUnretained(view.metalLayer).toOpaque())
   }
 
   /// Moves the video view to a rect in the page's CSS pixels.
