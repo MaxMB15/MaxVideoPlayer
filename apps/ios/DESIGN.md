@@ -54,7 +54,7 @@ That changes most of the plan:
 ## Progress
 
 As of 2026-10-10 the app builds for the iOS simulator and plays streams there.
-That covers most of milestone 2 and part of milestone 3:
+That covers most of milestone 2 and part of milestones 3 and 4:
 
 - The iOS target lives in `apps/desktop`, with `gen/apple` checked in.
 - Rust drives mpv through the Metal path in section 1. The Swift package runs
@@ -63,6 +63,10 @@ That covers most of milestone 2 and part of milestone 3:
 - Layouts are picked by width as in section 3. On the phone, live channels use
   compact rows and the player has fewer controls. The tablet layout is still
   the desktop sidebar.
+- CI builds for the simulator on pull requests. A manual workflow builds for
+  the App Store and uploads to TestFlight, but it hasn't run yet.
+- The app needs iOS 17.5, has a privacy manifest, and declares that it only
+  uses exempt encryption. `THIRD_PARTY_NOTICES.md` lists MPVKit's libraries.
 
 Still open:
 
@@ -71,10 +75,10 @@ Still open:
   that the Rust-driven path works.
 - Background audio, Now Playing and the lock screen controls are written but
   untested.
-- The phone tab bar from section 3. The phone still shows the desktop's
-  Channels, Player, Playlists and Settings items.
-- Sheets on the tablet and phone, the simulator build in CI, and milestones 4
-  and 5.
+- The phone tab bar from section 3 waits until the phone layout has been used
+  on a device. The phone still shows the desktop's Channels, Player, Playlists
+  and Settings items.
+- Sheets on the tablet and phone, the first TestFlight upload, and milestone 5.
 
 ## 1. Playback
 
@@ -232,9 +236,10 @@ battery drain over an hour. Nothing else starts until this works.
 
 **4. TestFlight beta.**
 
-- Sign and upload from CI on release tags. This needs an Apple Distribution
-  certificate as a new secret. The App Store Connect API key in the
-  `macos-signing` environment may cover the upload if its role allows it.
+- Sign and upload from a workflow that runs by hand, with an approval in the
+  `macos-signing` environment. It signs with an Apple Distribution
+  certificate, or with cloud-managed certificates if the App Store Connect API
+  key has the Admin role. The same key uploads the build.
 - Add an iOS section to `THIRD_PARTY_NOTICES.md` for MPVKit's libraries and link
   it from Settings > About. Besides mpv and FFmpeg, the 0.41.0 link pulls in
   OpenSSL, GnuTLS, Nettle, GMP, libass, FreeType, FriBidi, HarfBuzz, MoltenVK,
@@ -278,11 +283,14 @@ Store build stays public for the same reason.
    Milestone 1 settles this.
 2. **Linking.** Settled in the simulator. The app crate dropped its `cdylib`,
    which can't link for iOS because libmpv only shows up at the Xcode link.
-   `libmpv2` links against MPVKit 0.41.0 there. MPVKit's uavs3d library is
-   built for iOS 17.5, so the linker warns at the 17.0 minimum. See the open
-   questions.
+   `libmpv2` links against MPVKit 0.41.0 there. MPVKit builds its uavs3d
+   library for iOS 17.5, which is why the app needs 17.5.
 3. **Resizing.** The Metal layer has to follow rotation, Split View and the
-   React layout without a frame of the wrong size.
+   React layout without a frame of the wrong size. MPVKit's MoltenVK context
+   only reads the layer's size when the video reconfigures
+   ([MPVKit#3](https://github.com/mpvkit/MPVKit/issues/3)). Until MPVKit fixes
+   that, `ios.rs` changes `video-aspect-override` by a few parts per million
+   after each resize, which makes mpv reconfigure.
 4. **Battery and heat.** Vulkan through MoltenVK may cost more power than
    AVPlayer. Milestone 1 measures it.
 5. **Transparent web view.** Tauri's iOS web view has to show the Metal view
@@ -307,7 +315,7 @@ Store build stays public for the same reason.
 - iPad in landscape looks like the macOS app.
 - The phone layout scrolls through 500 or more channels without dropped frames.
 - The iOS build contains no GPL code from anyone but the owner.
-- A release tag produces a TestFlight build with no manual steps.
+- One workflow run and one approval produce a TestFlight build.
 
 ## Not in scope
 
@@ -322,5 +330,3 @@ Store build stays public for the same reason.
 - **Price.** Free, paid, or free with a purchase. Decide before milestone 5.
 - **iCloud sync.** Whether to sync favorites and history, and whether through
   CloudKit or something else.
-- **Minimum iOS version.** MPVKit 0.41.0 builds uavs3d for iOS 17.5. Either
-  raise the minimum to 17.5, or confirm the app runs on 17.0 through 17.4.
