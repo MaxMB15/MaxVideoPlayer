@@ -52,8 +52,27 @@ Always build through `npx tauri ios build`. The Xcode project's "Build Rust Code
 step asks the Tauri CLI that started the build for its options, so a plain
 `xcodebuild` run stops there with `ConnectionRefused`.
 
-A device build has to be signed. CI does that for TestFlight, as described below.
-Running the app on a physical iPhone or iPad hasn't been tested yet.
+### On your own iPhone or iPad
+
+The app hasn't run on a physical device yet, so treat this as the first test.
+
+1. On the device, turn on Developer Mode in Settings → Privacy & Security, and
+   connect it to the Mac with a cable.
+2. Start the dev server and open the project in Xcode:
+
+   ```bash
+   cd apps/desktop
+   npx tauri ios dev --open --host
+   ```
+
+   Pick the Mac's Wi-Fi address if it asks. Keep the command running, because the
+   app loads its pages from it and Xcode's "Build Rust Code" step talks to it.
+3. In Xcode, choose the device as the run destination and click Run. The project
+   signs automatically with team `3MLC4VWP96`. The first time, Xcode registers
+   `com.maxvideoplayer.app` and makes a development profile for it.
+
+The phone and the Mac have to be on the same network. TestFlight builds don't need
+the Mac, as described below.
 
 ## The Xcode project
 
