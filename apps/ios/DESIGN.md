@@ -46,7 +46,7 @@ That changes most of the plan:
 | Who runs mpv | Rust, through `libmpv2` in `tauri-plugin-mpv`, same as desktop           |
 | Native code  | A small Swift part of `tauri-plugin-mpv` for UIKit and the audio session |
 | PiP, AirPlay | Later, through AVPlayer on HLS streams                                   |
-| Devices      | iPhone and iPad, iOS 17 or later                                         |
+| Devices      | iPhone and iPad, iOS 17.5 or later                                       |
 | Layouts      | Phone, tablet portrait and desktop, picked by width                      |
 | Distribution | TestFlight, then the App Store. No `.ipa` on GitHub                      |
 | Price        | Not decided. Must be settled before milestone 5                          |
@@ -175,7 +175,7 @@ battery drain over an hour. Nothing else starts until this works.
 
 - Run `tauri ios init` and commit `gen/apple` with MPVKit in `project.yml`.
 - Add `tauri.ios.conf.json`: no `externalBin`, no updater artifacts, minimum
-  iOS 17.0.
+  iOS 17.5.
 - Put the parts in section 2 behind `#[cfg(desktop)]`.
 - Write the Swift package and the real `ios.rs`.
 - Add a CI job that builds for the simulator on every PR.

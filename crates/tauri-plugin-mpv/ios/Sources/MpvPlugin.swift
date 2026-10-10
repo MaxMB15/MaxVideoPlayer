@@ -137,7 +137,7 @@ final class MpvHost: NSObject {
       self, selector: #selector(audioRouteChanged(_:)),
       name: AVAudioSession.routeChangeNotification, object: nil)
 
-    // The app needs iOS 17, so this always runs. The check is for the
+    // The app needs iOS 17.5, so this always runs. The check is for the
     // package, which still declares iOS 13. Tauri loads plugins on the main
     // thread.
     if #available(iOS 17.0, *) {

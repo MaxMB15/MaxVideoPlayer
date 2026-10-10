@@ -1,7 +1,7 @@
 # Uncomment the next line to define a global platform for your project
 
 target 'max-video-player_iOS' do
-platform :ios, '17.0'
+platform :ios, '17.5'
   # Pods for max-video-player_iOS
 end
 
