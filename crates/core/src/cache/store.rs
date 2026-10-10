@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
+use crate::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
 use crate::iptv::m3u::parse_series_name;
 use crate::iptv::mdblist::MdbListData;
 use crate::iptv::omdb::OmdbData;
@@ -73,6 +77,18 @@ pub struct PinnedGroup {
     pub content_type: String,
     pub group_name: String,
     pub sort_order: i64,
+}
+
+/// Last known playback position for a piece of VOD content (movie or episode),
+/// keyed by a frontend-derived content key so it survives provider refreshes
+/// (channel IDs are index-based) and source switches.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackPosition {
+    pub content_key: String,
+    pub position_seconds: f64,
+    pub duration_seconds: f64,
+    pub updated_at: i64,
 }
 
 pub struct CacheStore {
@@ -223,6 +239,14 @@ impl CacheStore {
             );"
         )?;
         self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS playback_positions (
+                content_key      TEXT PRIMARY KEY,
+                position_seconds REAL NOT NULL,
+                duration_seconds REAL NOT NULL,
+                updated_at       INTEGER NOT NULL
+            );"
+        )?;
+        self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS pinned_groups (
                 provider_id TEXT NOT NULL,
                 content_type TEXT NOT NULL,
@@ -230,6 +254,35 @@ impl CacheStore {
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (provider_id, content_type, group_name)
             );"
+        )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS downloads (
+                id                 TEXT PRIMARY KEY,
+                channel_id         TEXT NOT NULL,
+                title              TEXT NOT NULL,
+                kind               TEXT NOT NULL,
+                series_channel_id  TEXT,
+                status             TEXT NOT NULL,
+                dest_path          TEXT NOT NULL,
+                total_bytes        INTEGER,
+                downloaded_bytes   INTEGER NOT NULL DEFAULT 0,
+                avg_rate_bps       INTEGER,
+                error              TEXT,
+                created_at         INTEGER NOT NULL,
+                finished_at        INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_downloads_channel ON downloads(channel_id);
+            CREATE INDEX IF NOT EXISTS idx_downloads_series ON downloads(series_channel_id);
+            CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);",
+        )?;
+        // Full episode list per series, cached so the season/episode selector
+        // works offline once any episode of the series has been downloaded.
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS series_episode_cache (
+                series_channel_id  TEXT PRIMARY KEY,
+                episodes_json      TEXT NOT NULL,
+                updated_at         INTEGER NOT NULL
+            );",
         )?;
         Ok(())
     }
@@ -528,6 +581,52 @@ impl CacheStore {
             params![new_val, channel_id],
         )?;
         Ok(new_val == 1)
+    }
+
+    /// Insert or update a single channel row, keyed on `channel.id`.
+    /// On conflict, mutable fields are updated but `is_favorite` and `provider_id` are preserved.
+    /// Ensures the `provider_id` row exists in the `providers` table (idempotent INSERT OR IGNORE).
+    pub fn upsert_channel(&self, provider_id: &str, ch: &Channel) -> Result<(), CacheError> {
+        // Satisfy the FK constraint: ensure the provider row exists.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO providers (id, name, provider_type, url, channel_count) VALUES (?1, ?2, 'sentinel', '', 0)",
+            params![provider_id, provider_id],
+        )?;
+
+        let sources_json = serde_json::to_string(&ch.sources).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "INSERT INTO channels (id, provider_id, name, url, logo_url, group_title, tvg_id, tvg_name, is_favorite, content_type, sources, series_title, season, episode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET
+               name         = excluded.name,
+               url          = excluded.url,
+               logo_url     = excluded.logo_url,
+               group_title  = excluded.group_title,
+               tvg_id       = excluded.tvg_id,
+               tvg_name     = excluded.tvg_name,
+               content_type = excluded.content_type,
+               sources      = excluded.sources,
+               series_title = excluded.series_title,
+               season       = excluded.season,
+               episode      = excluded.episode",
+            params![
+                ch.id,
+                provider_id,
+                ch.name,
+                ch.url,
+                ch.logo_url,
+                ch.group_title,
+                ch.tvg_id,
+                ch.tvg_name,
+                ch.is_favorite as i32,
+                &ch.content_type,
+                sources_json,
+                ch.series_title,
+                ch.season.map(|s| s as i64),
+                ch.episode.map(|e| e as i64),
+            ],
+        )?;
+        Ok(())
     }
 
     // --- EPG Cache ---
@@ -950,9 +1049,67 @@ impl CacheStore {
         Ok(())
     }
 
-    /// Delete all watch history entries.
+    /// Delete all watch history entries, including saved resume positions.
     pub fn clear_watch_history(&self) -> Result<(), CacheError> {
         self.conn.execute("DELETE FROM watch_history", [])?;
+        self.conn.execute("DELETE FROM playback_positions", [])?;
+        Ok(())
+    }
+
+    // --- Playback Positions ---
+
+    /// Insert or overwrite the saved position for `content_key`.
+    pub fn save_playback_position(
+        &self,
+        content_key: &str,
+        position_seconds: f64,
+        duration_seconds: f64,
+    ) -> Result<(), CacheError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO playback_positions (content_key, position_seconds, duration_seconds, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(content_key) DO UPDATE SET
+                position_seconds = excluded.position_seconds,
+                duration_seconds = excluded.duration_seconds,
+                updated_at       = excluded.updated_at",
+            params![content_key, position_seconds, duration_seconds, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_playback_position(
+        &self,
+        content_key: &str,
+    ) -> Result<Option<PlaybackPosition>, CacheError> {
+        let result = self.conn.query_row(
+            "SELECT content_key, position_seconds, duration_seconds, updated_at
+             FROM playback_positions WHERE content_key = ?1",
+            params![content_key],
+            |row| {
+                Ok(PlaybackPosition {
+                    content_key: row.get(0)?,
+                    position_seconds: row.get(1)?,
+                    duration_seconds: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        );
+        match result {
+            Ok(pos) => Ok(Some(pos)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CacheError::Db(e)),
+        }
+    }
+
+    pub fn delete_playback_position(&self, content_key: &str) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM playback_positions WHERE content_key = ?1",
+            params![content_key],
+        )?;
         Ok(())
     }
 
@@ -1132,6 +1289,203 @@ impl CacheStore {
             })
         })?.collect::<Result<Vec<_>, _>>()?;
         Ok(pins)
+    }
+
+    // --- Downloads ---
+
+    pub fn upsert_download(&self, rec: &DownloadRecord) -> Result<(), CacheError> {
+        let kind = match rec.kind {
+            DownloadKind::Movie => "movie",
+            DownloadKind::Episode => "episode",
+        };
+        self.conn.execute(
+            "INSERT INTO downloads
+                (id, channel_id, title, kind, series_channel_id, status, dest_path,
+                 total_bytes, downloaded_bytes, avg_rate_bps, error, created_at, finished_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+             ON CONFLICT(id) DO UPDATE SET
+                status=excluded.status,
+                dest_path=excluded.dest_path,
+                total_bytes=excluded.total_bytes,
+                downloaded_bytes=excluded.downloaded_bytes,
+                avg_rate_bps=excluded.avg_rate_bps,
+                error=excluded.error,
+                finished_at=excluded.finished_at",
+            params![
+                rec.id, rec.channel_id, rec.title, kind, rec.series_channel_id,
+                rec.status.as_str(), rec.dest_path, rec.total_bytes, rec.downloaded_bytes,
+                rec.avg_rate_bps, rec.error, rec.created_at, rec.finished_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // Column order in SELECT * matches CREATE TABLE:
+    // 0=id, 1=channel_id, 2=title, 3=kind, 4=series_channel_id, 5=status,
+    // 6=dest_path, 7=total_bytes, 8=downloaded_bytes, 9=avg_rate_bps,
+    // 10=error, 11=created_at, 12=finished_at
+    fn row_to_download(row: &rusqlite::Row) -> SqlResult<DownloadRecord> {
+        let kind_str: String = row.get(3)?;
+        let status_str: String = row.get(5)?;
+        Ok(DownloadRecord {
+            id: row.get(0)?,
+            channel_id: row.get(1)?,
+            title: row.get(2)?,
+            kind: if kind_str == "episode" {
+                DownloadKind::Episode
+            } else {
+                DownloadKind::Movie
+            },
+            series_channel_id: row.get(4)?,
+            status: DownloadStatus::from_str(&status_str).unwrap_or(DownloadStatus::Failed),
+            dest_path: row.get(6)?,
+            total_bytes: row.get(7)?,
+            downloaded_bytes: row.get(8)?,
+            avg_rate_bps: row.get(9)?,
+            error: row.get(10)?,
+            created_at: row.get(11)?,
+            finished_at: row.get(12)?,
+        })
+    }
+
+    pub fn get_download(&self, id: &str) -> Result<Option<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare("SELECT * FROM downloads WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_download)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_downloads(&self) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM downloads ORDER BY created_at DESC")?;
+        let rows = stmt.query_map([], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    pub fn delete_download(&self, id: &str) -> Result<(), CacheError> {
+        self.conn
+            .execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Drop any prior failed/cancelled records for a channel before a fresh
+    /// enqueue, so a successful retry doesn't leave a stale error behind.
+    /// (Active records are left untouched.)
+    pub fn delete_terminal_downloads_for_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM downloads WHERE channel_id = ?1 AND status IN ('failed','cancelled')",
+            params![channel_id],
+        )?;
+        Ok(())
+    }
+
+    /// Collapse the history to a single record per channel: a completed record
+    /// always wins, otherwise the most recent attempt is kept. Removes stale
+    /// duplicates left over from older builds (e.g. a failed attempt sitting
+    /// next to a later successful one). Returns the deleted ids.
+    pub fn prune_redundant_downloads(&self) -> Result<Vec<String>, CacheError> {
+        let ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM downloads WHERE id NOT IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY channel_id
+                            ORDER BY (status = 'completed') DESC, created_at DESC
+                        ) AS rn
+                        FROM downloads
+                    ) WHERE rn = 1
+                )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqlResult<Vec<_>>>()?
+        };
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
+        }
+        Ok(ids)
+    }
+
+    pub fn list_downloads_for_series(
+        &self,
+        series_channel_id: &str,
+    ) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE series_channel_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![series_channel_id], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    /// Queued or actively downloading items, oldest first (FIFO scheduling).
+    pub fn list_active_downloads(&self) -> Result<Vec<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE status IN ('queued','downloading') ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], Self::row_to_download)?;
+        Ok(rows.collect::<SqlResult<Vec<_>>>()?)
+    }
+
+    /// Whether a completed download already exists for a given channel id.
+    pub fn completed_download_for_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<Option<DownloadRecord>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM downloads WHERE channel_id = ?1 AND status = 'completed' LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![channel_id], Self::row_to_download)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    // --- Series episode cache (for offline season/episode selector) ---
+
+    /// Persist the full episode list for a series so its selector works offline.
+    pub fn save_series_episodes(
+        &self,
+        series_channel_id: &str,
+        episodes: &[Channel],
+    ) -> Result<(), CacheError> {
+        let json = serde_json::to_string(episodes).unwrap_or_else(|_| "[]".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO series_episode_cache (series_channel_id, episodes_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(series_channel_id) DO UPDATE SET
+               episodes_json = excluded.episodes_json,
+               updated_at    = excluded.updated_at",
+            params![series_channel_id, json, now],
+        )?;
+        Ok(())
+    }
+
+    /// Read the cached episode list for a series (empty if nothing cached).
+    pub fn get_series_episodes(
+        &self,
+        series_channel_id: &str,
+    ) -> Result<Vec<Channel>, CacheError> {
+        let json: Result<String, rusqlite::Error> = self.conn.query_row(
+            "SELECT episodes_json FROM series_episode_cache WHERE series_channel_id = ?1",
+            params![series_channel_id],
+            |row| row.get(0),
+        );
+        match json {
+            Ok(s) => Ok(serde_json::from_str(&s).unwrap_or_default()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -1917,5 +2271,259 @@ mod tests {
         let pins = store.get_pinned_groups("p1", "live").unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].group_name, "UK: News");
+    }
+
+    // --- Playback Position Tests ---
+
+    #[test]
+    fn test_playback_position_roundtrip() {
+        let store = CacheStore::open_in_memory().unwrap();
+        assert!(store.get_playback_position("movie:dune").unwrap().is_none());
+
+        store.save_playback_position("movie:dune", 1234.5, 9000.0).unwrap();
+        let pos = store.get_playback_position("movie:dune").unwrap().unwrap();
+        assert_eq!(pos.content_key, "movie:dune");
+        assert_eq!(pos.position_seconds, 1234.5);
+        assert_eq!(pos.duration_seconds, 9000.0);
+        assert!(pos.updated_at > 0);
+    }
+
+    #[test]
+    fn test_playback_position_overwrites() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("k", 10.0, 100.0).unwrap();
+        store.save_playback_position("k", 55.0, 100.0).unwrap();
+        let pos = store.get_playback_position("k").unwrap().unwrap();
+        assert_eq!(pos.position_seconds, 55.0);
+    }
+
+    #[test]
+    fn test_delete_playback_position() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("a", 10.0, 100.0).unwrap();
+        store.save_playback_position("b", 20.0, 100.0).unwrap();
+        store.delete_playback_position("a").unwrap();
+        assert!(store.get_playback_position("a").unwrap().is_none());
+        assert!(store.get_playback_position("b").unwrap().is_some());
+        // Deleting a missing key is a no-op
+        store.delete_playback_position("missing").unwrap();
+    }
+
+    #[test]
+    fn test_clear_watch_history_clears_playback_positions() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.save_playback_position("a", 10.0, 100.0).unwrap();
+        store.clear_watch_history().unwrap();
+        assert!(store.get_playback_position("a").unwrap().is_none());
+    }
+
+    // --- Downloads Tests ---
+
+    use crate::downloads::model::{DownloadKind, DownloadRecord, DownloadStatus};
+
+    fn movie_record(id: &str, channel: &str) -> DownloadRecord {
+        DownloadRecord {
+            id: id.into(),
+            channel_id: channel.into(),
+            title: "A Movie".into(),
+            kind: DownloadKind::Movie,
+            series_channel_id: None,
+            status: DownloadStatus::Queued,
+            dest_path: format!("/tmp/{id}.mkv.part"),
+            total_bytes: None,
+            downloaded_bytes: 0,
+            avg_rate_bps: None,
+            error: None,
+            created_at: 100,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn insert_and_get_download() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let rec = movie_record("d1", "c1");
+        store.upsert_download(&rec).unwrap();
+
+        let got = store.get_download("d1").unwrap().unwrap();
+        assert_eq!(got, rec);
+        assert!(store.get_download("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn list_downloads_returns_all() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&movie_record("d1", "c1")).unwrap();
+        store.upsert_download(&movie_record("d2", "c2")).unwrap();
+        let all = store.list_downloads().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    fn episode_record(id: &str, series: &str, status: DownloadStatus) -> DownloadRecord {
+        let mut r = movie_record(id, id);
+        r.kind = DownloadKind::Episode;
+        r.series_channel_id = Some(series.into());
+        r.status = status;
+        r
+    }
+
+    #[test]
+    fn lists_downloads_for_series() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&episode_record("e1", "S1", DownloadStatus::Completed)).unwrap();
+        store.upsert_download(&episode_record("e2", "S1", DownloadStatus::Downloading)).unwrap();
+        store.upsert_download(&episode_record("e3", "S2", DownloadStatus::Completed)).unwrap();
+
+        let s1 = store.list_downloads_for_series("S1").unwrap();
+        assert_eq!(s1.len(), 2);
+    }
+
+    #[test]
+    fn prune_keeps_completed_over_failed_for_same_channel() {
+        let store = CacheStore::open_in_memory().unwrap();
+        // Two records for the same channel "c1": an old failed attempt and a
+        // later completed one (different download ids).
+        let mut failed = movie_record("d-failed", "c1");
+        failed.status = DownloadStatus::Failed;
+        failed.error = Some("boom".into());
+        failed.created_at = 100;
+        store.upsert_download(&failed).unwrap();
+
+        let mut done = movie_record("d-done", "c1");
+        done.status = DownloadStatus::Completed;
+        done.created_at = 200;
+        store.upsert_download(&done).unwrap();
+
+        // An unrelated channel should be left alone.
+        store.upsert_download(&movie_record("d-other", "c2")).unwrap();
+
+        let pruned = store.prune_redundant_downloads().unwrap();
+        assert_eq!(pruned, vec!["d-failed".to_string()]);
+
+        let all = store.list_downloads().unwrap();
+        let ids: Vec<_> = all.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"d-done"));
+        assert!(ids.contains(&"d-other"));
+        assert!(!ids.contains(&"d-failed"));
+    }
+
+    #[test]
+    fn delete_terminal_clears_failed_but_keeps_active() {
+        let store = CacheStore::open_in_memory().unwrap();
+        let mut failed = movie_record("d-failed", "c1");
+        failed.status = DownloadStatus::Failed;
+        store.upsert_download(&failed).unwrap();
+        let mut active = movie_record("d-active", "c1");
+        active.status = DownloadStatus::Downloading;
+        store.upsert_download(&active).unwrap();
+
+        store.delete_terminal_downloads_for_channel("c1").unwrap();
+
+        let all = store.list_downloads().unwrap();
+        let ids: Vec<_> = all.iter().map(|r| r.id.as_str()).collect();
+        assert!(!ids.contains(&"d-failed"));
+        assert!(ids.contains(&"d-active"));
+    }
+
+    #[test]
+    fn lists_active_downloads() {
+        let store = CacheStore::open_in_memory().unwrap();
+        store.upsert_download(&movie_record("d1", "c1")).unwrap(); // queued
+        let mut dl = movie_record("d2", "c2");
+        dl.status = DownloadStatus::Downloading;
+        store.upsert_download(&dl).unwrap();
+        let mut done = movie_record("d3", "c3");
+        done.status = DownloadStatus::Completed;
+        store.upsert_download(&done).unwrap();
+
+        let active = store.list_active_downloads().unwrap();
+        let ids: Vec<_> = active.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"d1"));
+        assert!(ids.contains(&"d2"));
+        assert!(!ids.contains(&"d3"));
+    }
+
+    #[test]
+    fn upsert_channel_insert_and_update() {
+        let store = CacheStore::open_in_memory().unwrap();
+        // upsert_channel uses a sentinel provider_id that need not exist in providers table.
+        let ch = Channel {
+            id: "ep-001".into(),
+            name: "Episode 1".into(),
+            url: "http://stream.example.com/ep001".into(),
+            logo_url: None,
+            group_title: "Drama".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: Some("Great Show".into()),
+            season: Some(1),
+            episode: Some(1),
+        };
+
+        // Insert via upsert_channel.
+        store.upsert_channel("__downloads__", &ch).unwrap();
+
+        // Read it back.
+        let loaded = store.get_channel_by_id("ep-001").unwrap().expect("channel should exist");
+        assert_eq!(loaded.id, "ep-001");
+        assert_eq!(loaded.name, "Episode 1");
+        assert_eq!(loaded.url, "http://stream.example.com/ep001");
+        assert_eq!(loaded.content_type, "series");
+        assert_eq!(loaded.series_title, Some("Great Show".into()));
+        assert_eq!(loaded.season, Some(1));
+        assert_eq!(loaded.episode, Some(1));
+        assert!(!loaded.is_favorite);
+
+        // Upsert again with a changed name; is_favorite should NOT be overwritten.
+        let ch2 = Channel {
+            name: "Episode 1 (Updated)".into(),
+            url: "http://stream.example.com/ep001v2".into(),
+            ..ch.clone()
+        };
+        store.upsert_channel("__downloads__", &ch2).unwrap();
+
+        let updated = store.get_channel_by_id("ep-001").unwrap().expect("channel should still exist");
+        assert_eq!(updated.name, "Episode 1 (Updated)");
+        assert_eq!(updated.url, "http://stream.example.com/ep001v2");
+        // is_favorite must be preserved (not overwritten).
+        assert!(!updated.is_favorite);
+    }
+
+    #[test]
+    fn series_episode_cache_round_trips() {
+        let store = CacheStore::open_in_memory().unwrap();
+
+        // Empty before anything is cached.
+        assert!(store.get_series_episodes("series-1").unwrap().is_empty());
+
+        let make_ep = |id: &str, ep: u32| Channel {
+            id: id.into(),
+            name: format!("S01E{ep:02}"),
+            url: format!("http://h/ep/{id}"),
+            logo_url: None,
+            group_title: "Drama".into(),
+            tvg_id: None,
+            tvg_name: None,
+            is_favorite: false,
+            content_type: "series".into(),
+            sources: Vec::new(),
+            series_title: Some("Homeland".into()),
+            season: Some(1),
+            episode: Some(ep),
+        };
+        let eps = vec![make_ep("e1", 1), make_ep("e2", 2)];
+        store.save_series_episodes("series-1", &eps).unwrap();
+
+        let loaded = store.get_series_episodes("series-1").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "e1");
+        assert_eq!(loaded[1].episode, Some(2));
+
+        // Overwrite replaces the previous list.
+        store.save_series_episodes("series-1", &[make_ep("e1", 1)]).unwrap();
+        assert_eq!(store.get_series_episodes("series-1").unwrap().len(), 1);
     }
 }

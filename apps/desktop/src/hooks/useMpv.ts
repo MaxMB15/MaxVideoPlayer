@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useCallback, useRef, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { PlayerState } from "@/lib/types";
@@ -10,6 +13,7 @@ import {
 	mpvSetVolume,
 	mpvGetState,
 } from "@/lib/tauri";
+import { readHwdecEnabled, readVolumePreference, writeVolumePreference } from "@/lib/player-prefs";
 
 const DEFAULT_STATE: PlayerState = {
 	isPlaying: false,
@@ -60,6 +64,19 @@ export const useMpv = () => {
 	}, []);
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const loadingRef = useRef(false);
+	// The volume the user last chose this session, or the default volume from
+	// Settings. mpv is recreated on every load and starts at 100, so this is
+	// re-applied after each load to keep volume / mute consistent across
+	// channel and episode switches. The preference outlives the hook: the
+	// player can be left and reopened (remounting it) while the app runs.
+	const [savedVolume] = useState(readVolumePreference);
+	const userVolumeRef = useRef(savedVolume.volume);
+	// Volume to restore when unmuting.
+	const preMuteVolumeRef = useRef(savedVolume.preMute);
+	const volumeRef = useRef(DEFAULT_STATE.volume);
+	useEffect(() => {
+		volumeRef.current = state.volume;
+	}, [state.volume]);
 
 	// Listen for fallback event emitted when embedded renderer fails.
 	useEffect(() => {
@@ -244,7 +261,16 @@ export const useMpv = () => {
 			duration: 0,
 		}));
 		try {
-			await mpvLoad(url, startPos);
+			await mpvLoad(url, startPos, readHwdecEnabled());
+			const userVolume = userVolumeRef.current;
+			if (userVolume !== 100) {
+				try {
+					await mpvSetVolume(userVolume);
+					setState((s) => ({ ...s, volume: userVolume }));
+				} catch (e) {
+					console.warn("[useMpv] re-applying volume failed:", e);
+				}
+			}
 			// Don't set isPlaying optimistically — let the next poll confirm it from Rust
 			// so transparency only kicks in once MPV is actually rendering frames.
 			setState((s) => ({ ...s, currentUrl: url }));
@@ -331,6 +357,9 @@ export const useMpv = () => {
 
 	const setVolume = useCallback(async (volume: number) => {
 		console.log("[useMpv] setVolume volume=", volume);
+		userVolumeRef.current = volume;
+		volumeRef.current = volume;
+		writeVolumePreference({ volume, preMute: preMuteVolumeRef.current });
 		try {
 			await mpvSetVolume(volume);
 			setState((s) => ({ ...s, volume }));
@@ -338,6 +367,17 @@ export const useMpv = () => {
 			console.error("[useMpv] mpvSetVolume failed:", e);
 		}
 	}, []);
+
+	// Mute is volume 0; unmuting restores the volume from before the mute.
+	const toggleMute = useCallback(async () => {
+		const current = volumeRef.current;
+		if (current > 0) {
+			preMuteVolumeRef.current = current;
+			await setVolume(0);
+		} else {
+			await setVolume(preMuteVolumeRef.current > 0 ? preMuteVolumeRef.current : 100);
+		}
+	}, [setVolume]);
 
 	// Read-only accessor for the sticky last-known position. Callers (e.g.
 	// the Retry button) should prefer this over `state.position` for resume
@@ -390,6 +430,7 @@ export const useMpv = () => {
 		stop,
 		seek,
 		setVolume,
+		toggleMute,
 		refresh,
 	};
 };

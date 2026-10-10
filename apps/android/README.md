@@ -1,4 +1,4 @@
-# MaxVideoPlayer — Android
+# Max Video Player — Android
 
 Native Android app using Kotlin/Jetpack Compose with ExoPlayer for video playback.
 

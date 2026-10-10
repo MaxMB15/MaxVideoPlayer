@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 use chrono::NaiveDateTime;
 use quick_xml::events::Event;
 use quick_xml::Reader;

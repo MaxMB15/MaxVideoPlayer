@@ -2,7 +2,8 @@
 name = "mvp-core"
 version = "0.1.0"
 edition = "2021"
-description = "Core business logic for MaxVideoPlayer"
+license = "GPL-3.0-only"
+description = "Core business logic for Max Video Player"
 
 [dependencies]
 serde = { workspace = true }

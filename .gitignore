@@ -7,7 +7,9 @@ dist/
 *.tsbuildinfo
 
 # Tauri
-apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen/*
+# The Xcode project is hand-edited (MPVKit, signing), so it's checked in.
+!apps/desktop/src-tauri/gen/apple/
 apps/desktop/src-tauri/target/
 
 # IDE
@@ -35,6 +37,9 @@ coverage/
 # Bundled resources
 apps/desktop/resources/
 
+# ffmpeg sidecar binaries (fetched via scripts/fetch-ffmpeg.sh)
+apps/desktop/src-tauri/binaries/
+
 # Pre-built libraries (workspace: desktop uses macos/linux/windows, ios uses ios/, android uses android/)
 libs/macos/*.dylib
 libs/macos-bundle/
@@ -50,7 +55,10 @@ libs/macos/
 
 # AI Generated Files
 .claude/
-docs/
+docs/plans/
+docs/superpowers/
 CLAUDE.md
 .superpowers/
 
+# Copied in by tauri-plugin-mpv's build script for the iOS Swift package
+crates/tauri-plugin-mpv/.tauri/

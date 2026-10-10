@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useEffect, useRef } from "react";
 import { openUrl } from "@/lib/openUrl";
 import bmcQr from "@/assets/bmc-qr.png";
@@ -6,12 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { usePlatform } from "@/hooks/usePlatform";
+import { isMobilePlatform, platformName } from "@/lib/platform";
 import type { UpdateState } from "@/hooks/useUpdateChecker";
 import { getVersion } from "@tauri-apps/api/app";
 import {
 	Settings as SettingsIcon,
 	Monitor,
 	Smartphone,
+	Tablet,
 	Tv,
 	Eye,
 	EyeOff,
@@ -19,6 +24,7 @@ import {
 	XCircle,
 	Download,
 	RefreshCw,
+	FolderOpen,
 } from "lucide-react";
 import {
 	getOmdbApiKey,
@@ -32,8 +38,21 @@ import {
 	setGeminiApiKey,
 	testGeminiApiKey,
 	clearAllCaches,
+	getDownloadFolder,
+	setDownloadFolder,
+	getDownloadConcurrency,
+	setDownloadConcurrency,
 } from "@/lib/tauri";
-import { ask } from "@tauri-apps/plugin-dialog";
+import {
+	MAX_VOLUME,
+	readDefaultVolume,
+	readHwdecEnabled,
+	writeDefaultVolume,
+	writeHwdecEnabled,
+} from "@/lib/player-prefs";
+import { ask, open } from "@tauri-apps/plugin-dialog";
+import { LegalNotices } from "./LegalNotices";
+import { DownloadHistoryDialog } from "./DownloadHistory";
 
 type OmdbStatus = "idle" | "valid" | "invalid";
 type SaveStatus = "idle" | "saved" | "error";
@@ -73,8 +92,19 @@ interface SettingsProps {
 export const Settings = ({ updateState }: SettingsProps) => {
 	const { platform, layoutMode } = usePlatform();
 	const [appVersion, setAppVersion] = useState("");
-	const [hwAccel, setHwAccel] = useState(true);
-	const [defaultVolume, setDefaultVolume] = useState(100);
+	const [hwAccel, setHwAccel] = useState(readHwdecEnabled);
+	const [defaultVolume, setDefaultVolume] = useState(readDefaultVolume);
+
+	const handleHwAccelToggle = () => {
+		const next = !hwAccel;
+		setHwAccel(next);
+		writeHwdecEnabled(next);
+	};
+
+	const handleDefaultVolumeChange = (volume: number) => {
+		setDefaultVolume(volume);
+		writeDefaultVolume(volume);
+	};
 
 	// OMDB state
 	const [omdbKey, setOmdbKey] = useState("");
@@ -112,6 +142,14 @@ export const Settings = ({ updateState }: SettingsProps) => {
 	const [cacheError, setCacheError] = useState<string | null>(null);
 	const cacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Downloads state
+	const [downloadFolder, setDownloadFolderState] = useState("");
+	const [folderInput, setFolderInput] = useState("");
+	const [folderStatus, setFolderStatus] = useState<SaveStatus>("idle");
+	const [concurrency, setConcurrency] = useState(3);
+	const [showDownloadHistory, setShowDownloadHistory] = useState(false);
+	const folderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	useEffect(() => {
 		getVersion()
 			.then(setAppVersion)
@@ -130,21 +168,35 @@ export const Settings = ({ updateState }: SettingsProps) => {
 				if (key) setGeminiKey(key);
 			})
 			.catch(() => {});
+		getDownloadFolder()
+			.then((p) => {
+				setDownloadFolderState(p);
+				setFolderInput(p);
+			})
+			.catch(() => {});
+		getDownloadConcurrency()
+			.then(setConcurrency)
+			.catch(() => {});
 		return () => {
 			if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 			if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
 			if (openSubtitlesSaveTimerRef.current) clearTimeout(openSubtitlesSaveTimerRef.current);
 			if (geminiSaveTimerRef.current) clearTimeout(geminiSaveTimerRef.current);
 			if (cacheTimerRef.current) clearTimeout(cacheTimerRef.current);
+			if (folderTimerRef.current) clearTimeout(folderTimerRef.current);
 		};
 	}, []);
 
 	const platformIcon = {
 		desktop: Monitor,
+		tablet: Tablet,
 		mobile: Smartphone,
 		tv: Tv,
 	}[layoutMode];
 	const PlatformIcon = platformIcon;
+	// The mobile apps have no downloads, and App Store rules don't allow a
+	// donation link.
+	const mobile = isMobilePlatform(platform);
 
 	const handleSaveOmdbKey = async () => {
 		try {
@@ -262,6 +314,43 @@ export const Settings = ({ updateState }: SettingsProps) => {
 		}
 	};
 
+	const applyFolder = async (path: string) => {
+		const trimmed = path.trim();
+		if (!trimmed) return;
+		try {
+			await setDownloadFolder(trimmed);
+			setDownloadFolderState(trimmed);
+			setFolderInput(trimmed);
+			setFolderStatus("saved");
+			if (folderTimerRef.current) clearTimeout(folderTimerRef.current);
+			folderTimerRef.current = setTimeout(() => setFolderStatus("idle"), 2000);
+		} catch {
+			setFolderStatus("error");
+			if (folderTimerRef.current) clearTimeout(folderTimerRef.current);
+			folderTimerRef.current = setTimeout(() => setFolderStatus("idle"), 3000);
+		}
+	};
+
+	const handleBrowseFolder = async () => {
+		try {
+			const selected = await open({
+				directory: true,
+				defaultPath: downloadFolder || undefined,
+			});
+			if (typeof selected === "string") {
+				await applyFolder(selected);
+			}
+		} catch {
+			// Dialog unavailable — the text input below remains the fallback.
+		}
+	};
+
+	const handleConcurrencyChange = (n: number) => {
+		const clamped = Math.max(1, Math.min(10, Math.round(n)));
+		setConcurrency(clamped);
+		setDownloadConcurrency(clamped).catch(() => {});
+	};
+
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="flex flex-col gap-6 p-4 max-w-2xl mx-auto">
@@ -278,7 +367,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 						<div className="flex items-center gap-3">
 							<PlatformIcon className="h-5 w-5 text-muted-foreground" />
 							<div>
-								<p className="text-sm font-medium capitalize">{platform}</p>
+								<p className="text-sm font-medium">{platformName(platform)}</p>
 								<p className="text-xs text-muted-foreground">
 									Layout: {layoutMode}
 								</p>
@@ -294,15 +383,18 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					<CardContent className="space-y-4">
 						<div className="flex items-center justify-between">
 							<div>
-								<p className="text-sm font-medium">Hardware Acceleration</p>
+								<p className="text-sm font-medium">Hardware decoding</p>
 								<p className="text-xs text-muted-foreground">
-									Use GPU decoding when available
+									Decode video on the GPU when possible. Turn off if video shows
+									artifacts or green frames. Applies to the next video you play.
 								</p>
 							</div>
 							<Button
 								variant={hwAccel ? "default" : "secondary"}
 								size="sm"
-								onClick={() => setHwAccel(!hwAccel)}
+								aria-label="Hardware decoding"
+								aria-pressed={hwAccel}
+								onClick={handleHwAccelToggle}
 							>
 								{hwAccel ? "On" : "Off"}
 							</Button>
@@ -310,7 +402,7 @@ export const Settings = ({ updateState }: SettingsProps) => {
 
 						<div>
 							<div className="flex items-center justify-between mb-2">
-								<p className="text-sm font-medium">Default Volume</p>
+								<p className="text-sm font-medium">Default volume</p>
 								<span className="text-sm text-muted-foreground">
 									{defaultVolume}%
 								</span>
@@ -318,10 +410,15 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							<Slider
 								value={defaultVolume}
 								min={0}
-								max={150}
+								max={MAX_VOLUME}
 								step={5}
-								onValueChange={setDefaultVolume}
+								onValueChange={handleDefaultVolumeChange}
+								aria-label="Default volume"
 							/>
+							<p className="text-xs text-muted-foreground mt-2">
+								Playback starts at this volume. Changes you make in the player last
+								until you quit the app.
+							</p>
 						</div>
 					</CardContent>
 				</Card>
@@ -613,6 +710,97 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardContent>
 				</Card>
 
+				{/* Downloads section */}
+				{!mobile && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Downloads</CardTitle>
+						</CardHeader>
+						<CardContent className="space-y-5">
+							{/* Folder */}
+							<div>
+								<p className="text-sm font-medium mb-1">Download folder</p>
+								<p className="text-xs text-muted-foreground mb-2">
+									Where movies and series episodes are saved.
+								</p>
+								<div className="flex items-center gap-2">
+									<Input
+										value={folderInput}
+										placeholder="/path/to/downloads"
+										onChange={(e) => {
+											setFolderInput(e.target.value);
+											setFolderStatus("idle");
+										}}
+									/>
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={handleBrowseFolder}
+										aria-label="Browse for folder"
+									>
+										<FolderOpen className="h-4 w-4" />
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										onClick={() => applyFolder(folderInput)}
+										disabled={
+											!folderInput.trim() ||
+											folderInput.trim() === downloadFolder
+										}
+									>
+										{folderStatus === "saved" ? (
+											<span className="flex items-center gap-1 text-green-500">
+												<CheckCircle className="h-4 w-4" /> Saved
+											</span>
+										) : folderStatus === "error" ? (
+											<span className="text-destructive">Failed</span>
+										) : (
+											"Save"
+										)}
+									</Button>
+								</div>
+							</div>
+
+							{/* Concurrency */}
+							<div>
+								<div className="flex items-center justify-between mb-1">
+									<p className="text-sm font-medium">Simultaneous downloads</p>
+									<span className="text-sm text-muted-foreground tabular-nums">
+										{concurrency}
+									</span>
+								</div>
+								<p className="text-xs text-muted-foreground mb-2">
+									How many downloads run at once (1–10).
+								</p>
+								<Input
+									type="number"
+									min={1}
+									max={10}
+									value={concurrency}
+									onChange={(e) =>
+										handleConcurrencyChange(Number(e.target.value))
+									}
+									className="w-24"
+								/>
+							</div>
+
+							{/* History — opened in a wide popup (Settings is too narrow). */}
+							<div>
+								<p className="text-sm font-medium mb-2">Download history</p>
+								<Button
+									size="sm"
+									variant="secondary"
+									onClick={() => setShowDownloadHistory(true)}
+								>
+									<Download className="h-4 w-4 mr-1.5" />
+									View download history
+								</Button>
+							</div>
+						</CardContent>
+					</Card>
+				)}
+
 				{/* History section */}
 				<Card>
 					<CardHeader>
@@ -667,44 +855,46 @@ export const Settings = ({ updateState }: SettingsProps) => {
 					</CardContent>
 				</Card>
 
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-base">Support</CardTitle>
-					</CardHeader>
-					<CardContent className="space-y-3">
-						<p className="text-sm text-muted-foreground">
-							Max Video Player is free and open source. If you find it useful,
-							consider supporting development.
-						</p>
-						<div className="flex items-center gap-4">
-							<button
-								type="button"
-								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
-								className="w-32 shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-								aria-label="Donate via Buy Me a Coffee"
-							>
-								<img
-									src={bmcQr}
-									alt="Buy me a coffee QR code"
-									className="w-full h-auto"
-								/>
-							</button>
-							<button
-								type="button"
-								onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
-								className="text-sm font-semibold bg-[#5F7FFF] text-white px-5 py-2 rounded-lg hover:opacity-90 transition-opacity"
-							>
-								Buy me a coffee
-							</button>
-						</div>
-						<div className="pt-1 border-t border-border">
-							<p className="text-xs text-muted-foreground mb-2">
-								Reset the donation reminder to show it again.
+				{!mobile && (
+					<Card>
+						<CardHeader>
+							<CardTitle className="text-base">Support</CardTitle>
+						</CardHeader>
+						<CardContent className="space-y-3">
+							<p className="text-sm text-muted-foreground">
+								Max Video Player is free and open source. If you find it useful,
+								consider supporting development.
 							</p>
-							<DonationReset />
-						</div>
-					</CardContent>
-				</Card>
+							<div className="flex items-center gap-4">
+								<button
+									type="button"
+									onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+									className="w-32 shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+									aria-label="Donate via Buy Me a Coffee"
+								>
+									<img
+										src={bmcQr}
+										alt="Buy me a coffee QR code"
+										className="w-full h-auto"
+									/>
+								</button>
+								<button
+									type="button"
+									onClick={() => openUrl("https://buymeacoffee.com/MaxMB15")}
+									className="text-sm font-semibold bg-[#5F7FFF] text-white px-5 py-2 rounded-lg hover:opacity-90 transition-opacity"
+								>
+									Buy me a coffee
+								</button>
+							</div>
+							<div className="pt-1 border-t border-border">
+								<p className="text-xs text-muted-foreground mb-2">
+									Reset the donation reminder to show it again.
+								</p>
+								<DonationReset />
+							</div>
+						</CardContent>
+					</Card>
+				)}
 
 				<Card>
 					<CardHeader>
@@ -715,77 +905,89 @@ export const Settings = ({ updateState }: SettingsProps) => {
 							Max Video Player {appVersion ? `v${appVersion}` : ""}
 						</p>
 
-						<div className="space-y-3">
-							<div className="flex items-center gap-3">
-								<Button
-									size="sm"
-									variant="secondary"
-									onClick={() => updateState.checkForUpdates()}
-									disabled={updateState.checking}
-								>
-									{updateState.checking ? (
-										<span className="flex items-center gap-1.5">
-											<RefreshCw className="h-3 w-3 animate-spin" />
-											Checking…
-										</span>
-									) : (
-										"Check for Updates"
-									)}
-								</Button>
-								{!updateState.checking && !updateState.update && (
-									<span className="text-xs text-muted-foreground">
-										You're up to date.
-									</span>
-								)}
-							</div>
+						<LegalNotices version={appVersion || undefined} />
 
-							{updateState.update && (
-								<div className="rounded-lg bg-primary/10 border border-primary/25 px-4 py-3 space-y-2">
-									<p className="text-sm font-semibold text-primary">
-										Update available — v{updateState.update.version}
-									</p>
-									<p className="text-xs text-muted-foreground leading-relaxed">
-										{updateState.update.body ??
-											"A new version is ready to install."}
-									</p>
-									{updateState.installing && updateState.progress !== null && (
-										<div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
-											<div
-												className="h-full bg-primary transition-all duration-200"
-												style={{ width: `${updateState.progress}%` }}
-											/>
-										</div>
-									)}
-									{updateState.error && (
-										<p className="text-xs text-destructive">
-											{updateState.error}
-										</p>
-									)}
+						{updateState.supported && (
+							<div className="space-y-3">
+								<div className="flex items-center gap-3">
 									<Button
 										size="sm"
-										onClick={updateState.install}
-										disabled={updateState.installing}
+										variant="secondary"
+										onClick={() => updateState.checkForUpdates()}
+										disabled={updateState.checking}
 									>
-										{updateState.installing ? (
+										{updateState.checking ? (
 											<span className="flex items-center gap-1.5">
 												<RefreshCw className="h-3 w-3 animate-spin" />
-												{updateState.progress !== null
-													? `Downloading… ${updateState.progress}%`
-													: "Installing…"}
+												Checking…
 											</span>
 										) : (
-											<span className="flex items-center gap-1.5">
-												<Download className="h-3 w-3" />
-												Install Update
-											</span>
+											"Check for Updates"
 										)}
 									</Button>
+									{!updateState.checking && !updateState.update && (
+										<span className="text-xs text-muted-foreground">
+											You're up to date.
+										</span>
+									)}
 								</div>
-							)}
-						</div>
+
+								{updateState.update && (
+									<div className="rounded-lg bg-primary/10 border border-primary/25 px-4 py-3 space-y-2">
+										<p className="text-sm font-semibold text-primary">
+											Update available — v{updateState.update.version}
+										</p>
+										<p className="text-xs text-muted-foreground leading-relaxed">
+											{updateState.update.body ??
+												"A new version is ready to install."}
+										</p>
+										{updateState.installing &&
+											updateState.progress !== null && (
+												<div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
+													<div
+														className="h-full bg-primary transition-all duration-200"
+														style={{
+															width: `${updateState.progress}%`,
+														}}
+													/>
+												</div>
+											)}
+										{updateState.error && (
+											<p className="text-xs text-destructive">
+												{updateState.error}
+											</p>
+										)}
+										<Button
+											size="sm"
+											onClick={updateState.install}
+											disabled={updateState.installing}
+										>
+											{updateState.installing ? (
+												<span className="flex items-center gap-1.5">
+													<RefreshCw className="h-3 w-3 animate-spin" />
+													{updateState.progress !== null
+														? `Downloading… ${updateState.progress}%`
+														: "Installing…"}
+												</span>
+											) : (
+												<span className="flex items-center gap-1.5">
+													<Download className="h-3 w-3" />
+													Install Update
+												</span>
+											)}
+										</Button>
+									</div>
+								)}
+							</div>
+						)}
 					</CardContent>
 				</Card>
 			</div>
+
+			<DownloadHistoryDialog
+				open={showDownloadHistory}
+				onClose={() => setShowDownloadHistory(false)}
+			/>
 		</div>
 	);
 };

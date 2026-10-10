@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { Download, RefreshCw, Play } from "lucide-react";
 import type { SplashScreenState, SplashStep, StepStatus } from "@/hooks/useSplashScreen";
 import type { UpdateState } from "@/hooks/useUpdateChecker";
 import { openUrl } from "@/lib/openUrl";
+import { isMobilePlatform } from "@/lib/platform";
 import bmcQr from "@/assets/bmc-qr.png";
 
 const BMC_URL = "https://buymeacoffee.com/MaxMB15";
@@ -13,9 +17,12 @@ interface SplashScreenProps {
 
 export const SplashScreen = ({ splash, updateState }: SplashScreenProps) => {
 	const { steps, allDone, progress, update, hasProviders, dismiss } = splash;
+	// App Store rules don't allow a donation link, so the mobile apps leave out
+	// the support panel.
+	const showSupport = !isMobilePlatform();
 
 	return (
-		<div className="fixed inset-0 z-50 flex bg-background">
+		<div className="fixed inset-0 z-50 flex bg-background pt-safe pb-safe pl-safe pr-safe">
 			<LeftPanel
 				steps={steps}
 				allDone={allDone}
@@ -25,7 +32,7 @@ export const SplashScreen = ({ splash, updateState }: SplashScreenProps) => {
 				onDismiss={dismiss}
 				updateState={updateState}
 			/>
-			<RightPanel />
+			{showSupport && <RightPanel />}
 		</div>
 	);
 };
@@ -54,7 +61,7 @@ const LeftPanel = ({
 	const { installing, progress: installProgress, error, install: handleInstall } = updateState;
 
 	return (
-		<div className="flex-1 flex flex-col items-center justify-center gap-10 px-16 border-r border-border">
+		<div className="flex-1 flex flex-col items-center justify-center gap-10 px-6 sm:px-16">
 			{/* Logo + branding */}
 			<div className="flex flex-col items-center gap-4 text-center">
 				<div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground shadow-lg">
@@ -62,7 +69,7 @@ const LeftPanel = ({
 				</div>
 				<div>
 					<h1 className="text-2xl font-bold tracking-tight">Max Video Player</h1>
-					<p className="text-sm text-muted-foreground mt-0.5">Open Source IPTV Player</p>
+					<p className="text-sm text-muted-foreground mt-0.5">IPTV Player</p>
 				</div>
 			</div>
 
@@ -238,7 +245,7 @@ const RightPanel = () => {
 			{/* Header */}
 			<div className="flex flex-col items-center gap-2 text-center">
 				<span className="text-4xl">☕</span>
-				<h2 className="text-lg font-bold">Support free & open source software</h2>
+				<h2 className="text-lg font-bold">Support Max Video Player</h2>
 				<p className="text-xs text-muted-foreground">No account needed · takes 2 seconds</p>
 			</div>
 

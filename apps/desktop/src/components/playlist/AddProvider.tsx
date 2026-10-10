@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Upload, FileText, Link, X } from "lucide-react";
 import { usePlatform } from "@/hooks/usePlatform";
+import { isMobilePlatform } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { ContentDisclaimer } from "./ContentDisclaimer";
 
 type M3uMode = "url" | "file";
 
@@ -38,7 +43,8 @@ export const AddProvider = ({ onAddM3u, onAddM3uFile, onAddXtream }: AddProvider
 	const [fileName, setFileName] = useState<string | null>(null);
 	const [isDragOver, setIsDragOver] = useState(false);
 
-	const showDragDrop = layoutMode === "desktop";
+	// An iPad in landscape gets the desktop layout but can't drop files.
+	const showDragDrop = layoutMode === "desktop" && !isMobilePlatform();
 	const showFileBrowse = layoutMode !== "tv";
 
 	const acceptFileDrop = useCallback(
@@ -310,6 +316,9 @@ export const AddProvider = ({ onAddM3u, onAddM3uFile, onAddXtream }: AddProvider
 							: "Connect"}
 					</Button>
 				</form>
+				<div className="mt-4">
+					<ContentDisclaimer />
+				</div>
 			</CardContent>
 		</Card>
 	);

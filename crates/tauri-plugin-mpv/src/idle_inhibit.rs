@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 //! Platform-native idle/sleep inhibition.
 //!
 //! Prevents the display from dimming or the system from sleeping while
@@ -5,6 +8,7 @@
 //!
 //! - macOS: IOPMAssertionCreateWithName / IOPMAssertionRelease
 //! - Linux: D-Bus org.freedesktop.ScreenSaver.Inhibit / UnInhibit
+//! - iOS: UIApplication.isIdleTimerDisabled
 
 use std::sync::Mutex;
 
@@ -78,7 +82,7 @@ impl IdleInhibitor {
 
         // kIOPMAssertionTypePreventUserIdleDisplaySleep
         let assertion_type = cfstring("PreventUserIdleDisplaySleep");
-        let reason = cfstring("MaxVideoPlayer: video playback active");
+        let reason = cfstring("Max Video Player: video playback active");
         if assertion_type.is_null() || reason.is_null() {
             if !assertion_type.is_null() { unsafe { CFRelease(assertion_type) }; }
             if !reason.is_null() { unsafe { CFRelease(reason) }; }
@@ -154,14 +158,28 @@ impl IdleInhibitor {
         }
     }
 
+    // ── iOS ──────────────────────────────────────────────────────────────
+
+    /// `UIApplication.isIdleTimerDisabled`, set by the plugin's Swift side.
+    #[cfg(target_os = "ios")]
+    fn platform_inhibit(&self, _state: &mut InhibitState) -> bool {
+        crate::ios::set_idle_timer_disabled(true);
+        true
+    }
+
+    #[cfg(target_os = "ios")]
+    fn platform_uninhibit(&self, _state: &mut InhibitState) {
+        crate::ios::set_idle_timer_disabled(false);
+    }
+
     // ── Fallback (other platforms) ───────────────────────────────────────
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "ios")))]
     fn platform_inhibit(&self, _state: &mut InhibitState) -> bool {
         false
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "ios")))]
     fn platform_uninhibit(&self, _state: &mut InhibitState) {}
 }
 
@@ -264,7 +282,7 @@ fn dbus_screensaver_inhibit() -> Option<u32> {
         "org.freedesktop.ScreenSaver",
         "/org/freedesktop/ScreenSaver",
         "org.freedesktop.ScreenSaver.Inhibit",
-        &["MaxVideoPlayer", "Video playback active"],
+        &["Max Video Player", "Video playback active"],
     )
 }
 
@@ -286,7 +304,7 @@ fn dbus_gnome_inhibit() -> Option<u32> {
         "org.gnome.SessionManager",
         "/org/gnome/SessionManager",
         "org.gnome.SessionManager.Inhibit",
-        &["MaxVideoPlayer", "uint32 0", "Video playback active", "uint32 8"],
+        &["Max Video Player", "uint32 0", "Video playback active", "uint32 8"],
     )
 }
 

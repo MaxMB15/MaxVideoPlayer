@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 mod commands;
+mod downloads;
 
 use commands::AppState;
 use mvp_core::cache::store::CacheStore;
@@ -44,14 +48,20 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     apply_linux_workarounds();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // On iOS the App Store handles updates, and there's nothing to relaunch.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_mpv::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::load_m3u_playlist,
             commands::load_m3u_file,
@@ -88,6 +98,9 @@ pub fn run() {
             commands::get_watch_history,
             commands::delete_history_entry,
             commands::clear_watch_history,
+            commands::save_playback_position,
+            commands::get_playback_position,
+            commands::delete_playback_position,
             commands::get_group_hierarchy,
             commands::update_group_hierarchy_entry,
             commands::delete_group_hierarchy,
@@ -105,6 +118,21 @@ pub fn run() {
             commands::delete_super_category,
             commands::get_install_info,
             commands::package_update,
+            commands::enqueue_movie_download,
+            commands::enqueue_episode_download,
+            commands::enqueue_episodes_batch,
+            commands::list_downloads,
+            commands::cache_series_episodes,
+            commands::get_cached_series_episodes,
+            commands::stop_download,
+            commands::stop_downloads,
+            commands::remove_download,
+            commands::remove_downloads,
+            commands::set_download_concurrency,
+            commands::get_download_concurrency,
+            commands::set_download_folder,
+            commands::get_download_folder,
+            commands::resolve_local_download,
         ])
         .setup(|app| {
             let app_dir = app
@@ -117,9 +145,33 @@ pub fn run() {
             let cache = CacheStore::open(&db_path)
                 .expect("failed to open database");
 
+            // Collapse any leftover duplicate download rows (e.g. a failed
+            // attempt sitting next to a later successful one) to one record
+            // per channel so the UI doesn't show a stale error after reboot.
+            match cache.prune_redundant_downloads() {
+                Ok(ids) if !ids.is_empty() => {
+                    tracing::info!("Pruned {} redundant download record(s)", ids.len());
+                }
+                Err(e) => tracing::warn!("Failed to prune download records: {e}"),
+                _ => {}
+            }
+
             app.manage(AppState {
                 cache: Mutex::new(cache),
             });
+
+            let downloads_root = app_dir.join("downloads");
+            app.manage(crate::downloads::manager::DownloadManager::new(downloads_root));
+            crate::downloads::manager::restore_settings(app.handle());
+
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_shell::ShellExt;
+                match app.shell().sidecar("ffmpeg") {
+                    Ok(_) => tracing::info!("ffmpeg sidecar resolved"),
+                    Err(e) => tracing::error!("ffmpeg sidecar missing: {e}"),
+                }
+            }
 
             // Set the WebView's native background to fully transparent so the
             // video surface (positioned below the WebView) is visible through it.

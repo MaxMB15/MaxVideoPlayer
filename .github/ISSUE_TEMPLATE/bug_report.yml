@@ -13,10 +13,10 @@ body:
       label: Environment
       description: Your system and app details.
       placeholder: |
-        - OS: e.g. Pop!_OS (COSMIC / Wayland), macOS 15.3, Windows 11
-        - GPU: e.g. Intel (Mesa), NVIDIA 535
-        - App version: e.g. MaxVideoPlayer 0.3.8
-        - Install method: e.g. .deb, .dmg, built from source
+        - OS: e.g. macOS 15.3, Ubuntu 24.04 (GNOME, Wayland), Pop!_OS (COSMIC, Wayland)
+        - GPU: e.g. Apple M2, Intel (Mesa), NVIDIA 535
+        - App version (shown in Settings): e.g. 0.5.2
+        - Install method: e.g. .dmg, AppImage, .deb, .rpm, built from source
         - mpv version (if relevant): e.g. 0.37.0
     validations:
       required: true
@@ -63,7 +63,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Paste any relevant log output or terminal output. This will be automatically formatted as code.
+      description: Paste any relevant log or terminal output. It's formatted as code automatically. Remove playlist URLs, usernames and passwords first.
       render: shell
 
   - type: textarea

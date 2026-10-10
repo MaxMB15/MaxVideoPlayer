@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 use crate::mpv::{MpvState, PlayerState};
 use tauri::{command, AppHandle, Runtime, State};
 
@@ -7,9 +10,11 @@ pub async fn mpv_load<R: Runtime>(
     state: State<'_, MpvState>,
     url: String,
     start_pos: Option<f64>,
+    hwdec: Option<bool>,
 ) -> Result<(), String> {
-    tracing::info!("[MPV cmd] load url={} start_pos={:?}", url, start_pos);
-    state.load(&url, start_pos, &app)?;
+    let hwdec = hwdec.unwrap_or(true);
+    tracing::info!("[MPV cmd] load url={} start_pos={:?} hwdec={}", url, start_pos, hwdec);
+    state.load(&url, start_pos, hwdec, &app)?;
     tracing::debug!("[MPV cmd] load complete, state={:?}", state.get_state());
     Ok(())
 }
@@ -86,6 +91,17 @@ pub async fn mpv_set_visible<R: Runtime>(
     visible: bool,
 ) -> Result<(), String> {
     state.set_visible(visible);
+    Ok(())
+}
+
+#[command]
+pub async fn mpv_set_media_info<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, MpvState>,
+    title: Option<String>,
+    live: bool,
+) -> Result<(), String> {
+    state.set_media_info(title, live);
     Ok(())
 }
 

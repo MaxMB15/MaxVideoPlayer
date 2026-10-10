@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { UpdateBanner } from "./UpdateBanner";
@@ -18,6 +21,7 @@ const makeState = (overrides: Partial<UpdateState> = {}): UpdateState => ({
 	progress: null,
 	error: null,
 	packageInstall: false,
+	supported: true,
 	dismiss: vi.fn(),
 	install: vi.fn().mockResolvedValue(undefined),
 	checkForUpdates: vi.fn().mockResolvedValue(null),

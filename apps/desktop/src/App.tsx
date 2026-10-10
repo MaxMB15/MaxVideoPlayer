@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { Routes, Route } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { PlayerView } from "./components/player/VideoPlayer";
@@ -12,6 +15,8 @@ import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { useSplashScreen } from "./hooks/useSplashScreen";
 import { useDonationPrompt } from "./hooks/useDonationPrompt";
 import { FullscreenProvider } from "./lib/fullscreen-context";
+import { DownloadsProvider } from "@/hooks/useDownloads";
+import { isMobilePlatform } from "@/lib/platform";
 
 export default function App() {
 	const channelsValue = useChannelsProvider();
@@ -20,7 +25,9 @@ export default function App() {
 	return (
 		<ChannelsContext.Provider value={channelsValue}>
 			<FullscreenProvider>
-				<AppRoutes updateState={updateState} />
+				<DownloadsProvider>
+					<AppRoutes updateState={updateState} />
+				</DownloadsProvider>
 			</FullscreenProvider>
 		</ChannelsContext.Provider>
 	);
@@ -46,7 +53,8 @@ const AppRoutes = ({ updateState }: AppRoutesProps) => {
 		},
 	});
 
-	const donation = useDonationPrompt({ enabled: splash.dismissed });
+	// No donation prompt on mobile, where App Store rules don't allow one.
+	const donation = useDonationPrompt({ enabled: splash.dismissed && !isMobilePlatform() });
 
 	return (
 		<>

@@ -19,9 +19,13 @@ on:
       - "docs/**"
       - ".vscode/**"
       - ".idea/**"
+  # A manual run builds only macOS, signed and notarized when the Apple secrets
+  # are set, so signing can be tested without making a release.
+  workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.ref }}
+  # Keep a manual run from cancelling, or being cancelled by, a push build.
+  group: build-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && '-manual' || '' }}
   cancel-in-progress: true
 
 env:
@@ -47,13 +51,14 @@ jobs:
   # ── Detect which platform-specific files changed ─────────────────────────
   # On PRs: uses dorny/paths-filter to check changed files.
   # On push: outputs 'true' for both so builds always run.
+  # On manual runs: macOS only.
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
       linux: ${{ steps.push-all.outputs.linux || steps.filter.outputs.linux }}
-      macos: ${{ steps.push-all.outputs.macos || steps.filter.outputs.macos }}
+      macos: ${{ steps.push-all.outputs.macos || steps.manual.outputs.macos || steps.filter.outputs.macos }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Push — always build both platforms
         id: push-all
@@ -61,6 +66,11 @@ jobs:
         run: |
           echo "linux=true" >> "$GITHUB_OUTPUT"
           echo "macos=true" >> "$GITHUB_OUTPUT"
+
+      - name: Manual run — build macOS only
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "macos=true" >> "$GITHUB_OUTPUT"
 
       - name: PR — detect changed paths
         if: github.event_name == 'pull_request'
@@ -84,6 +94,8 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv-linux.sh'
+              - 'scripts/fetch-ffmpeg.sh'
+              - '.github/actions/install-linux-deps/**'
             macos:
               - 'crates/tauri-plugin-mpv/src/macos.rs'
               - 'crates/tauri-plugin-mpv/src/renderer.rs'
@@ -100,12 +112,13 @@ jobs:
               - 'Cargo.lock'
               - 'scripts/build-libmpv.sh'
               - 'scripts/bundle-libmpv.sh'
+              - 'scripts/fetch-ffmpeg.sh'
 
   # ── Tests (run on every push and PR) ────────────────────────────────────
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -114,12 +127,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Only branch pushes save. A PR's caches can only be used by that PR, and
+          # its three jobs add ~1.7 GB against the repo's 10 GB limit, which was
+          # evicting the dev and main caches that PRs restore from.
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -143,7 +160,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: apps/desktop/coverage/
@@ -157,7 +174,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: coverage-report
           path: coverage
@@ -181,9 +198,14 @@ jobs:
   build-macos:
     if: needs.detect-changes.outputs.macos == 'true' && !startsWith(github.head_ref, 'chore-bump-v')
     needs: [test, detect-changes]
-    runs-on: macos-latest
+    # Pinned: the bundle ships Homebrew dylibs, which require the runner's macOS
+    # version. macos-latest moved to macOS 26 and v0.5.0 stopped launching on 15.
+    runs-on: macos-15
+    # Manual runs sign, so they use the environment that holds the Apple
+    # secrets and wait for approval. Push and PR builds use no environment.
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'macos-signing' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -192,9 +214,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-macos
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -212,16 +237,42 @@ jobs:
       - name: Prepare libmpv for bundle
         run: ./scripts/build-libmpv.sh macos
 
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh macos
+
       - name: Build frontend
         run: npm run build:desktop
+
+      - name: Set up Developer ID signing
+        id: apple
+        # Only manual runs sign, so push and PR builds don't wait on Apple.
+        if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          api-private-key: ${{ secrets.APPLE_API_PRIVATE_KEY }}
 
       - name: Build Tauri app (macOS)
         # Override createUpdaterArtifacts=false so Tauri doesn't require a signing key in CI.
         # The updater artifact + signature is only needed in the release workflow.
         run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
+      - name: Notarize the DMG
+        if: steps.apple.outputs.notarizing == 'true'
+        run: ./scripts/notarize-macos.sh target/release/bundle/dmg/*.dmg
+
+      - name: Verify signing
+        if: steps.apple.outputs.signing == 'true'
+        run: >-
+          ./scripts/verify-macos-signing.sh
+          ${{ steps.apple.outputs.notarizing == 'true' && '--notarized' || '' }}
+          target/release/bundle/macos/*.app target/release/bundle/dmg/*.dmg
+
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MaxVideoPlayer-macOS
           path: |
@@ -235,7 +286,7 @@ jobs:
     needs: [test, detect-changes]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -244,33 +295,26 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml, which restores it from main.
+          shared-key: desktop-linux
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
 
       - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libayatana-appindicator3-dev \
-            libegl-dev libssl-dev pkg-config librsvg2-dev \
-            patchelf rpm \
-            meson ninja-build \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-            libass-dev libpulse-dev libasound2-dev \
-            libplacebo-dev \
-            libx11-dev libxss-dev libxext-dev libxpresent-dev libxrandr-dev \
-            libwayland-dev
+        uses: ./.github/actions/install-linux-deps
 
       - name: Build libmpv from source
         run: |
           ./scripts/build-libmpv.sh linux
           echo "LD_LIBRARY_PATH=$(pwd)/libs/linux:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Fetch ffmpeg sidecar (used for offline downloads)
+        run: ./scripts/fetch-ffmpeg.sh linux
 
       - name: Install frontend deps
         run: |
@@ -289,7 +333,7 @@ jobs:
         run: cd apps/desktop && npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MaxVideoPlayer-Linux
           path: |

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import bmcQr from "@/assets/bmc-qr.png";
@@ -49,7 +52,7 @@ export const DonationPopup = ({ onDismiss }: DonationPopupProps) => {
 			</button>
 
 			<p className="text-[10px] text-muted-foreground text-center">
-				Free &amp; open source forever ·{" "}
+				Free and open source ·{" "}
 				<button onClick={onDismiss} className="underline hover:text-foreground">
 					dismiss
 				</button>

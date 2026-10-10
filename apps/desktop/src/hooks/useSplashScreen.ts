@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { refreshProvider, refreshEpg } from "@/lib/tauri";
@@ -47,14 +50,17 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 	// Consume providers from ChannelsContext (already loaded on mount — no extra Tauri calls)
 	const { providers, initialized } = useChannels();
 
-	// Initialize all 4 steps immediately so they're visible from the first render
+	// Initialize all steps immediately so they're visible from the first render.
+	// The app store updates the mobile apps, so they skip the update check.
 	const [steps, setSteps] = useState<SplashStep[]>(() => {
 		if (alreadyShownRef.current) return [];
 		return [
 			{ id: "providers", label: "Loading providers & channels", status: "active" },
 			{ id: "playlists", label: "Checking playlists…", status: "pending" },
 			{ id: "epg", label: "Checking EPG…", status: "pending" },
-			{ id: "updates", label: "Checking for updates", status: "pending" },
+			...(updateState.supported
+				? [{ id: "updates", label: "Checking for updates", status: "pending" as const }]
+				: []),
 		];
 	});
 	const [allDone, setAllDone] = useState(alreadyShownRef.current);
@@ -118,9 +124,22 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 			// Step 2: Refresh playlists (always shown; mark done immediately if nothing to do)
 			setStepStatus("playlists", "active", "Refreshing playlists…");
 			if (didRefreshProviders) {
-				await Promise.allSettled(providerRefreshIds.map((id) => refreshProvider(id)));
+				const results = await Promise.allSettled(
+					providerRefreshIds.map((id) => refreshProvider(id))
+				);
 				if (cancelled) return;
-				setStepStatus("playlists", "done", "Playlists refreshed");
+				const failed = results.filter((r) => r.status === "rejected").length;
+				if (failed === results.length) {
+					setStepStatus("playlists", "error", "Failed to refresh playlists");
+				} else if (failed > 0) {
+					setStepStatus(
+						"playlists",
+						"error",
+						`Failed to refresh ${failed} of ${results.length} playlists`
+					);
+				} else {
+					setStepStatus("playlists", "done", "Playlists refreshed");
+				}
 			} else {
 				setStepStatus(
 					"playlists",
@@ -132,21 +151,34 @@ export const useSplashScreen = (options: UseSplashScreenOptions): SplashScreenSt
 			// Step 3: Refresh EPG (always shown; mark done immediately if nothing to do)
 			setStepStatus("epg", "active", "Checking EPG…");
 			if (epgRefreshIds.length > 0) {
-				await Promise.allSettled(
-					epgRefreshIds.map((id) =>
-						refreshEpg(id)
-							.then(() => setEpgLastRefresh(id))
-							.catch(() => {})
-					)
+				const results = await Promise.allSettled(
+					epgRefreshIds.map((id) => refreshEpg(id).then(() => setEpgLastRefresh(id)))
 				);
 				if (cancelled) return;
-				setStepStatus("epg", "done", "EPG refreshed");
+				const failed = results.filter((r) => r.status === "rejected").length;
+				if (failed === results.length) {
+					setStepStatus("epg", "error", "Failed to refresh EPG");
+				} else if (failed > 0) {
+					setStepStatus(
+						"epg",
+						"error",
+						`Failed to refresh ${failed} of ${results.length} EPG sources`
+					);
+				} else {
+					setStepStatus("epg", "done", "EPG refreshed");
+				}
 			} else {
 				setStepStatus(
 					"epg",
 					"done",
 					hasAnyProviders ? "EPG up to date" : "No EPG configured"
 				);
+			}
+
+			if (!updateState.supported) {
+				setAllDone(true);
+				onCompleteRef.current?.(didRefreshProviders);
+				return;
 			}
 
 			// Step 4: Check for updates via the shared hook.

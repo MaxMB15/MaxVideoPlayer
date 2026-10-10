@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Max Boksem. See NOTICE for additional terms under GPLv3 section 7.
+
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+	addWatchedTime,
+	consumeBrowseState,
+	saveBrowseSearch,
+	saveBrowseTab,
+	SEARCH_RESET_AFTER_MS,
+} from "./browse-state";
+
+describe("browse-state", () => {
+	beforeEach(() => sessionStorage.clear());
+
+	it("returns defaults when nothing is stored", () => {
+		expect(consumeBrowseState()).toEqual({ tab: undefined, search: "" });
+	});
+
+	it("restores tab and search", () => {
+		saveBrowseTab("movie");
+		saveBrowseSearch("matrix");
+		expect(consumeBrowseState()).toEqual({ tab: "movie", search: "matrix" });
+	});
+
+	it("keeps the search after a short watch", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		expect(consumeBrowseState().search).toBe("matrix");
+	});
+
+	it("clears the search after watching for a minute", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS);
+		expect(consumeBrowseState().search).toBe("");
+		// The cleared search sticks.
+		expect(consumeBrowseState().search).toBe("");
+	});
+
+	it("adds up watch time across player visits", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS / 2);
+		addWatchedTime(SEARCH_RESET_AFTER_MS / 2);
+		expect(consumeBrowseState().search).toBe("");
+	});
+
+	it("resets the watch time once consumed", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		consumeBrowseState();
+		addWatchedTime(1);
+		expect(consumeBrowseState().search).toBe("matrix");
+	});
+
+	it("ignores non-positive amounts", () => {
+		saveBrowseSearch("matrix");
+		addWatchedTime(0);
+		addWatchedTime(-SEARCH_RESET_AFTER_MS);
+		addWatchedTime(SEARCH_RESET_AFTER_MS - 1);
+		expect(consumeBrowseState().search).toBe("matrix");
+	});
+});
