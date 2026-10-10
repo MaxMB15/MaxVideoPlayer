@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2, Tv2, MonitorPlay, Heart, Clapperboard, History, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { SearchBar } from "./SearchBar";
 import { CategoryFilter } from "./CategoryFilter";
 import { ChannelCard, COMPACT_ROW_HEIGHT, ROW_CARD_LEFT_WIDTH } from "./ChannelCard";
@@ -694,86 +695,109 @@ export const ChannelList = () => {
 
 	return (
 		<div ref={rootRef} className="flex flex-col h-full">
-			{/* Tab bar */}
-			<div className="flex items-center gap-0 border-b border-border px-3 shrink-0">
-				{TABS.map(({ id, label, icon: Icon }) => {
-					const count =
-						id === "history"
-							? null
-							: id === "favorites"
-								? totalFavorites
-								: id === "downloads"
-									? downloadCount
-									: id === "series"
-										? seriesShows.length
-										: id === "movie"
-											? movieTitles.length
-											: byType[id as "live"].length;
-					return (
-						<button
-							key={id}
-							onClick={() => handleTabChange(id)}
-							className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-								activeTab === id
-									? "border-primary text-primary"
-									: "border-transparent text-muted-foreground hover:text-foreground"
-							}`}
-						>
-							<Icon className="h-3.5 w-3.5" />
-							{label}
-							{count !== null && (
-								<span
-									className={`text-[11px] px-1.5 py-0.5 rounded-full tabular-nums ${
-										activeTab === id
-											? "bg-primary/15 text-primary"
-											: "bg-muted text-muted-foreground"
-									}`}
-								>
-									{count.toLocaleString()}
-								</span>
-							)}
-						</button>
-					);
-				})}
-				<div className="flex-1" />
-				{activeTab !== "history" && activeTab !== "downloads" && (
-					<SearchBar value={search} onChange={setSearch} />
+			{/* Tab bar. The tabs scroll sideways when they don't fit; on phones the
+			    search and filters move to a row of their own below them. */}
+			<div
+				className={cn(
+					"border-b border-border shrink-0",
+					!compactRows && "flex items-center px-3"
 				)}
-				{activeTab !== "favorites" &&
-					activeTab !== "history" &&
-					activeTab !== "downloads" && (
-						<button
-							onClick={() => setShowFavoritesOnly((v) => !v)}
-							className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-								showFavoritesOnly
-									? "text-red-500 bg-red-500/10"
-									: "text-muted-foreground hover:text-foreground hover:bg-accent"
-							}`}
-							aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
-							aria-pressed={showFavoritesOnly}
-						>
-							<Heart
-								className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`}
-							/>
-						</button>
+			>
+				<div
+					className={cn(
+						"flex items-center min-w-0 overflow-x-auto scrollbar-hide",
+						compactRows ? "px-1" : "flex-1"
 					)}
-				{activeTab !== "favorites" &&
-					activeTab !== "history" &&
-					activeTab !== "downloads" &&
-					!isMobilePlatform() && (
-						<button
-							onClick={() => setShowDownloadsOnly((v) => !v)}
-							className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-								showDownloadsOnly
-									? "text-blue-400 bg-blue-400/10"
-									: "text-muted-foreground hover:text-foreground hover:bg-accent"
-							}`}
-							aria-label={showDownloadsOnly ? "Show all" : "Show downloaded only"}
-							aria-pressed={showDownloadsOnly}
-						>
-							<Download className="h-4 w-4" />
-						</button>
+				>
+					{TABS.map(({ id, label, icon: Icon }) => {
+						const count =
+							id === "history"
+								? null
+								: id === "favorites"
+									? totalFavorites
+									: id === "downloads"
+										? downloadCount
+										: id === "series"
+											? seriesShows.length
+											: id === "movie"
+												? movieTitles.length
+												: byType[id as "live"].length;
+						return (
+							<button
+								key={id}
+								onClick={() => handleTabChange(id)}
+								className={`flex items-center gap-1.5 ${compactRows ? "px-3" : "px-4"} py-3 text-sm font-medium whitespace-nowrap shrink-0 border-b-2 transition-colors ${
+									activeTab === id
+										? "border-primary text-primary"
+										: "border-transparent text-muted-foreground hover:text-foreground"
+								}`}
+							>
+								<Icon className="h-3.5 w-3.5" />
+								{label}
+								{count !== null && (
+									<span
+										className={`text-[11px] px-1.5 py-0.5 rounded-full tabular-nums ${
+											activeTab === id
+												? "bg-primary/15 text-primary"
+												: "bg-muted text-muted-foreground"
+										}`}
+									>
+										{count.toLocaleString()}
+									</span>
+								)}
+							</button>
+						);
+					})}
+				</div>
+				<div
+					className={cn(
+						"flex items-center shrink-0",
+						compactRows && "px-3 pb-2 empty:hidden"
 					)}
+				>
+					{activeTab !== "history" && activeTab !== "downloads" && (
+						<SearchBar
+							value={search}
+							onChange={setSearch}
+							className={compactRows ? "flex-1 w-auto" : undefined}
+						/>
+					)}
+					{activeTab !== "favorites" &&
+						activeTab !== "history" &&
+						activeTab !== "downloads" && (
+							<button
+								onClick={() => setShowFavoritesOnly((v) => !v)}
+								className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+									showFavoritesOnly
+										? "text-red-500 bg-red-500/10"
+										: "text-muted-foreground hover:text-foreground hover:bg-accent"
+								}`}
+								aria-label={showFavoritesOnly ? "Show all" : "Show favorites only"}
+								aria-pressed={showFavoritesOnly}
+							>
+								<Heart
+									className={`h-4 w-4 ${showFavoritesOnly ? "fill-current" : ""}`}
+								/>
+							</button>
+						)}
+					{activeTab !== "favorites" &&
+						activeTab !== "history" &&
+						activeTab !== "downloads" &&
+						!isMobilePlatform() && (
+							<button
+								onClick={() => setShowDownloadsOnly((v) => !v)}
+								className={`h-8 w-8 flex items-center justify-center rounded-md ml-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+									showDownloadsOnly
+										? "text-blue-400 bg-blue-400/10"
+										: "text-muted-foreground hover:text-foreground hover:bg-accent"
+								}`}
+								aria-label={showDownloadsOnly ? "Show all" : "Show downloaded only"}
+								aria-pressed={showDownloadsOnly}
+							>
+								<Download className="h-4 w-4" />
+							</button>
+						)}
+				</div>
 			</div>
 
 			{/* Hierarchy navigation — replaces flat CategoryFilter */}
