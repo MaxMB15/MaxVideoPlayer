@@ -44,6 +44,10 @@ xcrun simctl install booted "src-tauri/gen/apple/build/arm64-sim/Max Video Playe
 xcrun simctl launch booted com.maxvideoplayer.app
 ```
 
+Before building for the simulator again, move or delete
+`src-tauri/gen/apple/build/arm64-sim`. The CLI fails when the app from the last build
+is still there.
+
 Always build through `npx tauri ios build`. The Xcode project's "Build Rust Code"
 step asks the Tauri CLI that started the build for its options, so a plain
 `xcodebuild` run stops there with `ConnectionRefused`.
