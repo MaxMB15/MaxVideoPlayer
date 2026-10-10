@@ -2,7 +2,7 @@
 
 The iPhone and iPad app is the desktop app built with Tauri's mobile tooling. It
 lives in `apps/desktop` and shares the React frontend and the Rust crates. Video plays
-through libmpv from [MPVKit](https://github.com/mpvkit/MPVKit) 0.41.0, so live `.ts`
+through libmpv from [MPVKit](https://github.com/mpvkit/MPVKit) 1.1.0, so live `.ts`
 channels, HLS and `.mkv` files all play the same way they do on desktop. The app
 needs iOS or iPadOS 17.5 and ships through TestFlight and then the App Store.
 
