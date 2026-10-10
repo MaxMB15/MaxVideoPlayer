@@ -43,7 +43,12 @@ const DesktopLayout = () => {
 	}, [isPlayer]);
 
 	return (
-		<div className="flex h-screen overflow-hidden pt-safe pb-safe pr-safe">
+		<div
+			className={cn(
+				"flex h-screen overflow-hidden pt-safe pb-safe pr-safe",
+				isPlayer && "safe-insets-black"
+			)}
+		>
 			<aside
 				className={cn(
 					"w-16 flex flex-col items-center py-3 gap-0.5 border-r border-border bg-card shrink-0 box-content pl-safe",
